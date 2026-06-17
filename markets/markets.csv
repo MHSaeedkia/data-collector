@@ -1,0 +1,10 @@
+exchange,market,action
+nobitex,BTCUSDT,subscribe
+nobitex,ETHUSDT,subscribe
+nobitex,XRPUSDT,subscribe
+bitpin,BTC_USDT,subscribe
+bitpin,ETH_USDT,subscribe
+bitpin,XRP_USDT,subscribe
+wallex,BTCUSDT,subscribe
+wallex,ETHUSDT,subscribe
+wallex,XRPUSDT,subscribe
