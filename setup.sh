@@ -91,7 +91,7 @@ ok "markets table created successfully."
 # ─────────────────────────────────────────────
 log "Waiting for NiFi container to be running..."
 RETRIES=20
-until [ "$(docker inspect -f '{{.State.Running}}' nifi-1 2>/dev/null)" = "true" ]; do
+until [ "$(docker inspect -f '{{.State.Running}}' nifi-ecosystem 2>/dev/null)" = "true" ]; do
   RETRIES=$((RETRIES - 1))
   if [ "$RETRIES" -le 0 ]; then
     error "NiFi container did not start in time."
@@ -104,8 +104,8 @@ ok "NiFi container is running."
 
 # ─────────────────────────────────────────────
 log "Copying postgresql JAR into NiFi at /home/..."
-docker cp "$JAR_FILE" nifi-1:/home/postgresql-42.7.11.jar
-ok "JAR copied to nifi-1:/home/postgresql-42.7.11.jar"
+docker cp "$JAR_FILE" nifi-ecosystem:/home/postgresql-42.7.11.jar
+ok "JAR copied to nifi-ecosystem:/home/postgresql-42.7.11.jar"
 
 # ─────────────────────────────────────────────
 echo ""
