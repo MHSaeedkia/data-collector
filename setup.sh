@@ -52,41 +52,14 @@ echo ""
 ok "Postgres is ready."
 
 # ─────────────────────────────────────────────
-log "Creating enum and markets table in Postgres..."
-docker exec -i postgres psql -U postgres -d postgres <<'EOF'
--- create enum for status
-DO $$ BEGIN
-  CREATE TYPE market_status AS ENUM (
-    'subscribe',
-    'unsubscribe',
-    'pending-subscribe',
-    'pending-unsubscribe'
-  );
-EXCEPTION
-  WHEN duplicate_object THEN
-    RAISE NOTICE 'market_status enum already exists, skipping.';
-END $$;
+log "Running migration.sql in Postgres..."
 
--- create table
-CREATE TABLE IF NOT EXISTS markets (
-    id SERIAL PRIMARY KEY,
-    exchange VARCHAR(100) NOT NULL,
-    market VARCHAR(100) NOT NULL,
-    status market_status NOT NULL DEFAULT 'pending-subscribe'
-);
-
--- unique constraint (idempotent)
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'unique_exchange_market'
-  ) THEN
-    ALTER TABLE markets
-      ADD CONSTRAINT unique_exchange_market UNIQUE (exchange, market);
-  END IF;
-END $$;
-
-EOF
-ok "markets table created successfully."
+if docker exec -i postgres psql -U postgres -d postgres < migration.sql; then
+  ok "Migration executed successfully."
+else
+  fail "Migration failed!"
+  exit 1
+fi
 
 # ─────────────────────────────────────────────
 log "Waiting for NiFi container to be running..."
