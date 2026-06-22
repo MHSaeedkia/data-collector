@@ -1,3 +1,7 @@
+CREATE DATABASE markets;
+
+\c markets
+
 -- create enum for status
 DO $$ BEGIN
   CREATE TYPE subscription_status AS ENUM (
@@ -28,5 +32,5 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     price_precision INTEGER,
     quantity_precision INTEGER,
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
-    CONSTRAINT unique_exchange_symbol UNIQUE (exchange, symbol)
+    CONSTRAINT unique_exchange_market UNIQUE (exchange, market)
 );
