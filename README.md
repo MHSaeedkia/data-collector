@@ -8,38 +8,36 @@ A real-time crypto market data pipeline that ingests order book data from multip
 Exchanges (nobitex, bitpin, wallex)
         │
         ▼
-    Apache NiFi          ← normalize & transform raw market data
+    Apache NiFi          ← fetch data, normalize & transform raw market data
         │
         ▼
   Kafka + Schema Registry  ← stream normalized Avro events
         │
         ▼
   Apache Flink           ← generate cleaned order book
-        │
-        ▼
-    PostgreSQL           ← market metadata & subscription state
+
 ```
 
 ## Services
 
-| Service           | Port (host)     | Purpose                            |
-|-------------------|-----------------|------------------------------------|
-| NiFi              | 8443 (HTTPS UI) | Data ingestion & normalization     |
-| Flink JobManager  | 7070            | Stream processing UI & REST API    |
-| Kafka             | 9092            | Message broker (KRaft mode)        |
-| Schema Registry   | 8082            | Avro schema management             |
-| Kafka UI          | 8080            | Kafka web UI                       |
-| PostgreSQL        | 5432            | Market metadata store              |
+| Service          | Port (host)     | Purpose                         |
+| ---------------- | --------------- | ------------------------------- |
+| NiFi             | 8443 (HTTPS UI) | Data ingestion & normalization  |
+| Flink JobManager | 7070            | Stream processing UI & REST API |
+| Kafka            | 9092            | Message broker (KRaft mode)     |
+| Schema Registry  | 8082            | Avro schema management          |
+| Kafka UI         | 8080            | Kafka web UI                    |
+| PostgreSQL       | 5432            | Market metadata store           |
 
 ## Markets
 
 Tracked pairs across exchanges:
 
-| Exchange | Markets                                                  |
-|----------|----------------------------------------------------------|
-| nobitex  | BTCUSDT, ETHUSDT, XRPUSDT, BNBUSDT, ARBUSDT, SOLUSDT    |
+| Exchange | Markets                                                    |
+| -------- | ---------------------------------------------------------- |
+| nobitex  | BTCUSDT, ETHUSDT, XRPUSDT, BNBUSDT, ARBUSDT, SOLUSDT       |
 | bitpin   | BTC_USDT, ETH_USDT, XRP_USDT, BNB_USDT, ARB_USDT, SOL_USDT |
-| wallex   | BTCUSDT, ETHUSDT, XRPUSDT, BNBUSDT, ARBUSDT, SOLUSDT    |
+| wallex   | BTCUSDT, ETHUSDT, XRPUSDT, BNBUSDT, ARBUSDT, SOLUSDT       |
 
 ## Getting Started
 
