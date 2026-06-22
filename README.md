@@ -1,155 +1,103 @@
-# NiFi Ecosystem Setup
+# data-collector
 
-Automated setup for **Apache NiFi** + **Apache Kafka** + **PostgreSQL** on Docker.
+A real-time crypto market data pipeline that ingests order book data from multiple exchanges, normalizes it through NiFi, streams it via Kafka, and produces a cleaned order book using Flink.
 
----
-
-## File Structure
+## Architecture
 
 ```
-project-folder/
-├── docker-compose.yml         # Service definitions
-├── setup.sh                   # Setup script
-├── postgresql-42.7.11.jar     # JDBC driver (must be next to setup.sh)
-└── README.md
+Exchanges (nobitex, bitpin, wallex)
+        │
+        ▼
+    Apache NiFi          ← normalize & transform raw market data
+        │
+        ▼
+  Kafka + Schema Registry  ← stream normalized Avro events
+        │
+        ▼
+  Apache Flink           ← generate cleaned order book
+        │
+        ▼
+    PostgreSQL           ← market metadata & subscription state
 ```
-
----
-
-## Prerequisites
-
-- Docker (v20+)
-- Docker Compose Plugin (v2+)
-- `postgresql-42.7.11.jar` placed next to `setup.sh`
-
----
-
-## Getting Started
-
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-The script performs the following steps in order:
-
-1. Verifies Docker and the JAR file are present
-2. Brings up all services with `docker compose up -d`
-3. Waits until Postgres is fully ready
-4. Creates the `market_status` enum and `markets` table in Postgres
-5. Copies the JAR file to `/home/` inside the NiFi container
-
----
 
 ## Services
 
-| Service | Port | Access |
-|---|---|---|
-| NiFi UI | `8453` | https://localhost:8453/nifi |
-| Kafka | `9092` | Inside Docker network only (`kafka:9092`) |
-| PostgreSQL | `5432` | localhost:5432 |
+| Service           | Port (host)     | Purpose                            |
+|-------------------|-----------------|------------------------------------|
+| NiFi              | 8443 (HTTPS UI) | Data ingestion & normalization     |
+| Flink JobManager  | 7070            | Stream processing UI & REST API    |
+| Kafka             | 9092            | Message broker (KRaft mode)        |
+| Schema Registry   | 8082            | Avro schema management             |
+| Kafka UI          | 8080            | Kafka web UI                       |
+| PostgreSQL        | 5432            | Market metadata store              |
 
-### PostgreSQL Connection Details
+## Markets
 
-| Parameter | Value |
-|---|---|
-| Host | `localhost` |
-| Port | `5432` |
-| Database | `postgres` |
-| User | `postgres` |
-| Password | `123` |
+Tracked pairs across exchanges:
 
-### Kafka Connection Details (inside Docker)
+| Exchange | Markets                                                  |
+|----------|----------------------------------------------------------|
+| nobitex  | BTCUSDT, ETHUSDT, XRPUSDT, BNBUSDT, ARBUSDT, SOLUSDT    |
+| bitpin   | BTC_USDT, ETH_USDT, XRP_USDT, BNB_USDT, ARB_USDT, SOL_USDT |
+| wallex   | BTCUSDT, ETHUSDT, XRPUSDT, BNBUSDT, ARBUSDT, SOLUSDT    |
 
-| Parameter | Value |
-|---|---|
-| Bootstrap Server | `kafka:9092` |
-| Cluster ID | `1cPr_gg8R0iGWbVpNAefFA` |
+## Getting Started
 
----
+### Prerequisites
 
-## Docker Network
+- Docker & Docker Compose
 
-All services are connected to the `nifi-net` network and can reach each other by hostname:
-
-- NiFi → Kafka: `kafka:9092`
-- NiFi → Postgres: `postgres:5432`
-
----
-
-## Database Schema
-
-### Enum: `market_status`
-
-```sql
-'subscribe' | 'unsubscribe' | 'pending-subscribe' | 'pending-unsubscribe'
-```
-
-### Table: `markets`
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | SERIAL PRIMARY KEY | Auto-increment ID |
-| `exchange` | VARCHAR(100) NOT NULL | Exchange name |
-| `market` | VARCHAR(100) NOT NULL | Market name |
-| `status` | market_status NOT NULL | Status (default: `pending-subscribe`) |
-
-**Constraint:** The combination of `(exchange, market)` must be unique.
-
----
-
-## JAR in NiFi
-
-After running the setup script, the JDBC driver is available at this path inside the NiFi container:
-
-```
-/home/postgresql-42.7.11.jar
-```
-
-When configuring a `DBCPConnectionPool` controller service in NiFi, use this path as the **Database Driver Location**.
-
----
-
-## Volumes
-
-Data is stored in Docker volumes and persists across container restarts:
-
-| Volume | Contents |
-|---|---|
-| `postgres_data` | PostgreSQL data |
-| `nifi_conf` | NiFi configuration |
-| `nifi_state` | NiFi internal state |
-| `nifi_logs` | NiFi logs |
-| `nifi_data` | NiFi data |
-
----
-
-## Useful Commands
+### Start the stack
 
 ```bash
-# Check service status
-docker compose ps
-
-# Follow logs for a service
-docker compose logs -f nifi
-docker compose logs -f kafka
-docker compose logs -f postgres
-
-# Stop all services
-docker compose down
-
-# Stop and remove all data (volumes)
-docker compose down -v
-
-# Connect to Postgres
-docker exec -it postgres psql -U postgres
+docker compose up -d
 ```
 
----
+Services start in dependency order. NiFi takes ~90 seconds to become healthy.
 
-## Notes
+### NiFi credentials
 
-- The script is **idempotent** — running it multiple times will not cause errors.
-- Kafka is only accessible from inside the Docker network. To expose it to the host, an `EXTERNAL` listener would need to be configured.
-- NiFi may take 1–2 minutes to fully initialize before the UI becomes available.
-# Nifi-Ecosystem-Setup
+```
+Username: admin
+Password: admin123456789
+```
+
+Access the UI at `https://localhost:8443/nifi`
+
+## Market Sync
+
+The `markets/market-sync.sh` script registers or unregisters markets against the control-plane API.
+
+```bash
+# Subscribe all markets
+./markets/market-sync.sh
+
+# Unsubscribe all markets
+./markets/market-sync.sh --reverse
+```
+
+Markets are defined in [markets/markets.csv](markets/markets.csv).
+
+## Database
+
+PostgreSQL is initialized with a `markets` database containing two tables:
+
+- **markets** — canonical base/quote pairs (e.g. BTC/USDT)
+- **exchange_markets** — per-exchange market instances with subscription state and precision metadata
+
+## Project Structure
+
+```
+.
+├── docker-compose.yml
+├── flink/
+│   ├── Dockerfile              # Flink + Kafka/JDBC/Avro connectors
+│   └── confluent-deps-pom.xml  # Schema Registry client dependencies
+├── nifi/
+│   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
+├── postgres/
+│   └── init.sql                # Database schema
+└── markets/
+    ├── markets.csv             # Exchange/market subscription list
+    └── market-sync.sh          # Subscription management script
+```
