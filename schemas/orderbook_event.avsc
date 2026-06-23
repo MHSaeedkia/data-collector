@@ -1,0 +1,44 @@
+{
+  "type": "record",
+  "name": "OrderBookEvent",
+  "namespace": "io.tibobit.orderbook",
+  "fields": [
+    {
+      "name": "exchange",
+      "type": "string"
+    },
+    {
+      "name": "pair",
+      "type": "string"
+    },
+    {
+      "name": "side",
+      "type": {
+        "type": "enum",
+        "name": "Side",
+        "symbols": ["asks", "bids"]
+      }
+    },
+    {
+      "name": "eventTime",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      }
+    },
+    {
+      "name": "levels",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "PriceLevel",
+          "fields": [
+            {"name": "price", "type": "string"},
+            {"name": "qty", "type": "string"}
+          ]
+        }
+      }
+    }
+  ]
+}
