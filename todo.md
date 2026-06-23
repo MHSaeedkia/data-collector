@@ -9,8 +9,8 @@
 ## Phase 1 — Flink JSON pipeline (source: `flink/orderbook-job/`)
 
 ### Project setup
-- [ ] Create Maven project under `flink/orderbook-job/` with `pom.xml`
-- [ ] Add dependencies: `flink-streaming-java`, `flink-connector-kafka`, `jackson-databind`
+- [x] Create Maven project under `flink/orderbook-job/` with `pom.xml`
+- [x] Add dependencies: `flink-streaming-java`, `flink-connector-kafka`, `jackson-databind`
 
 ### Data model
 - [ ] `PriceLevel` POJO — `price: String`, `quantity: String`
