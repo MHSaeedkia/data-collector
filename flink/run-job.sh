@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JAR="$SCRIPT_DIR/orderbook-job/target/orderbook-job-1.0-SNAPSHOT.jar"
-FLINK_API="http://localhost:8081"
+FLINK_API="http://localhost:7070"
 
 # 1. Build
 echo "==> Building..."

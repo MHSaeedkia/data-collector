@@ -25,8 +25,8 @@
 - [x] Pairs list read from postgres at job startup to build sources dynamically
 
 ### Job
-- [ ] `OrderBookJob` main class — for each pair, creates one asks stream and one bids stream
-- [ ] Kafka config — bootstrap servers, consumer group
+- [x] `OrderBookJob` main class — for each pair, creates one asks stream and one bids stream
+- [x] Kafka config — bootstrap servers, consumer group
 
 ### Build & deploy
 - [ ] Build fat JAR (`mvn package`)
