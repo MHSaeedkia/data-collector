@@ -17,7 +17,7 @@
 - [x] `OrderBookEvent` POJO — `exchange`, `pair`, `side`, `event_time`, `levels`
 
 ### Deserialization
-- [ ] `OrderBookEventDeserializer` — implements `DeserializationSchema<OrderBookEvent>` using Jackson
+- [x] `OrderBookEventDeserializer` — implements `DeserializationSchema<OrderBookEvent>` using Jackson
 
 ### Kafka sources
 - [ ] Per-pair asks source — one `KafkaSource` per pair with pattern `{pair}-asks-.*` (e.g. `BTC-USDT-asks-.*`)
