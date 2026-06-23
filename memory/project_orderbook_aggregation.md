@@ -69,3 +69,5 @@ rebuild the union, sort by price, and emit a `ConsolidatedOrderBook`.
   comparator = price (asc asks / desc bids) then quantity desc, both `BigDecimal`
 - `OrderBookJob.addStream` wires `source → keyBy(pair) → OrderBookMerger(side) → print(name)`
 - Flink 2.x note: operator uses `open(OpenContext)` (the 1.x `open(Configuration)` was removed in Flink 2.0)
+- Functional test: `scripts/produce-test-data.sh` sends curated snapshots (BTC-USDT, TON-USDT;
+  both sides; nobitex/wallex/bitpin) with intentional same-price collisions to verify union+tie-break
