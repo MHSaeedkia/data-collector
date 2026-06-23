@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS markets (
     id BIGSERIAL PRIMARY KEY,
     base VARCHAR(20) NOT NULL,
     quote VARCHAR(20) NOT NULL,
+    price_precision INTEGER,
+    quantity_precision INTEGER,
     CONSTRAINT unique_market UNIQUE (base, quote)
 );
 
@@ -29,8 +31,6 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     exchange VARCHAR(100) NOT NULL,
     market VARCHAR(100) NOT NULL,
     market_id BIGINT NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
-    price_precision INTEGER,
-    quantity_precision INTEGER,
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
     CONSTRAINT unique_exchange_market UNIQUE (exchange, market)
 );
