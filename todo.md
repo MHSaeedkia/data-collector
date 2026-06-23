@@ -4,11 +4,33 @@
 - [x] Kafka topic strategy: `{pair}-{side}-{exchange}` topic, null key, single partition per topic
 - [x] Avro schema: `schemas/orderbook_event.avsc` registered in schema registry
 - [x] JSON schema: `schemas/orderbook_event.json` registered in schema registry
-
-## Phase 1 (In Progress)
-- [ ] Flink: JSON deserializer (plain JSON, no schema registry)
-- [ ] Flink: order book consumer using regex topic subscription (`{pair}-{side}-.*`)
-
-## Phase 2 (Deferred)
-- [ ] Flink: migrate from JSON to Avro deserializer wired to schema registry
 - [x] Topic provisioning: pre-create topics from postgres markets table (`scripts/warmup.sh`)
+
+## Phase 1 — Flink JSON pipeline (source: `flink/orderbook-job/`)
+
+### Project setup
+- [ ] Create Maven project under `flink/orderbook-job/` with `pom.xml`
+- [ ] Add dependencies: `flink-streaming-java`, `flink-connector-kafka`, `jackson-databind`
+
+### Data model
+- [ ] `PriceLevel` POJO — `price: String`, `quantity: String`
+- [ ] `OrderBookEvent` POJO — `exchange`, `pair`, `side`, `event_time`, `levels`
+
+### Deserialization
+- [ ] `OrderBookEventDeserializer` — implements `DeserializationSchema<OrderBookEvent>` using Jackson
+
+### Kafka sources
+- [ ] Per-pair asks source — one `KafkaSource` per pair with pattern `{pair}-asks-.*` (e.g. `BTC-USDT-asks-.*`)
+- [ ] Per-pair bids source — one `KafkaSource` per pair with pattern `{pair}-bids-.*` (e.g. `BTC-USDT-bids-.*`)
+- [ ] Pairs list read from postgres at job startup to build sources dynamically
+
+### Job
+- [ ] `OrderBookJob` main class — for each pair, creates one asks stream and one bids stream
+- [ ] Kafka config — bootstrap servers, consumer group
+
+### Build & deploy
+- [ ] Build fat JAR (`mvn package`)
+- [ ] Submit job to Flink cluster via REST API or `flink run`
+
+## Phase 2 — Avro + Schema Registry (deferred)
+- [ ] Migrate `OrderBookEventDeserializer` from JSON to Avro + Confluent Schema Registry
