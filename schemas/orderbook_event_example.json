@@ -1,6 +1,6 @@
 {
   "exchange": "nobitex",
-  "pair": "BTC_USDT",
+  "pair": "BTC-USDT",
   "side": "asks",
   "event_time": 1750680000000,
   "levels": [
