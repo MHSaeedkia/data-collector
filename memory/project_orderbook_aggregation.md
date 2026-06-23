@@ -100,3 +100,5 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
 - Flink 2.x note: operator uses `open(OpenContext)` (the 1.x `open(Configuration)` was removed in Flink 2.0)
 - Functional test: `scripts/produce-test-data.sh` sends curated snapshots (BTC-USDT, TON-USDT;
   both sides; nobitex/wallex/bitpin) with intentional same-price collisions to verify union+tie-break
+- `scripts/warmup.sh` provisions BOTH input topics (`{pair}-{side}-{exchange}`, per subscribed
+  exchange) AND output topics (`{pair}-{side}`, one per distinct subscribed pair) — single partition each
