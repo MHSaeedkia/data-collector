@@ -13,8 +13,8 @@
 - [x] Add dependencies: `flink-streaming-java`, `flink-connector-kafka`, `jackson-databind`
 
 ### Data model
-- [ ] `PriceLevel` POJO — `price: String`, `quantity: String`
-- [ ] `OrderBookEvent` POJO — `exchange`, `pair`, `side`, `event_time`, `levels`
+- [x] `PriceLevel` POJO — `price: String`, `quantity: String`
+- [x] `OrderBookEvent` POJO — `exchange`, `pair`, `side`, `event_time`, `levels`
 
 ### Deserialization
 - [ ] `OrderBookEventDeserializer` — implements `DeserializationSchema<OrderBookEvent>` using Jackson
