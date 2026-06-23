@@ -69,18 +69,31 @@ fi
 
 echo "Creating Kafka topics..."
 
+create_topic() {
+    local topic="$1"
+    echo "  -> $topic"
+    docker exec "$KAFKA_CONTAINER" kafka-topics \
+        --bootstrap-server "$KAFKA_BOOTSTRAP" \
+        --create \
+        --if-not-exists \
+        --topic "$topic" \
+        --partitions 1 \
+        --replication-factor 1
+}
+
+# Input topics — one per pair+side+exchange (NiFi produces, Flink source consumes).
 while IFS='|' read -r base quote exchange; do
     for side in asks bids; do
-        topic="${base}-${quote}-${side}-${exchange}"
-        echo "  -> $topic"
-        docker exec "$KAFKA_CONTAINER" kafka-topics \
-            --bootstrap-server "$KAFKA_BOOTSTRAP" \
-            --create \
-            --if-not-exists \
-            --topic "$topic" \
-            --partitions 1 \
-            --replication-factor 1
+        create_topic "${base}-${quote}-${side}-${exchange}"
     done
 done <<< "$pairs"
+
+# Output topics — one per pair+side (Flink aggregation writes the consolidated book here).
+distinct_pairs=$(echo "$pairs" | cut -d'|' -f1,2 | sort -u)
+while IFS='|' read -r base quote; do
+    for side in asks bids; do
+        create_topic "${base}-${quote}-${side}"
+    done
+done <<< "$distinct_pairs"
 
 echo "Done."
