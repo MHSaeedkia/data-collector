@@ -1,30 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sends curated fake order book snapshots to Kafka to exercise OrderBookMerger.
+# Streams randomized order book snapshots to Kafka so the UI shows LIVE updates.
+# Each tick: pick a random (pair, side, exchange), generate a fresh randomized snapshot
+# (prices drift around a mid; random quantities and level counts), emit it, and pause on
+# some steps to create visible bursts and gaps. Runs for DURATION_SECONDS (default 10 min).
+#
 # Pairs: BTC-USDT, TON-USDT — both sides — exchanges: nobitex, wallex, bitpin.
-# Same-price collisions across exchanges are intentional: they verify the merge does
-# UNION (not sum) and applies the equal-price tie-break (larger quantity first).
 #
 # Prereqs:
 #   - Kafka up:  docker compose up -d
 #   - For the FLINK JOB to consume these, BTC-USDT and TON-USDT must be status='subscribe'
 #     in postgres for nobitex/wallex/bitpin, AND the job must be RUNNING before producing
 #     (the source uses latest() offsets — earlier messages are skipped).
+#
+# Config (env vars):
+#   DURATION_SECONDS  total run time in seconds (default 600)
+#   KAFKA_CONTAINER   kafka container name (default 'kafka')
+#   KAFKA_BOOTSTRAP   broker address (default 'kafka:29092')
 
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-kafka:29092}"
-EVENT_TIME="${EVENT_TIME:-$(date +%s)000}"   # epoch milliseconds
+DURATION_SECONDS="${DURATION_SECONDS:-600}"
 
 EXCHANGES=(nobitex wallex bitpin)
 PAIRS=(BTC-USDT TON-USDT)
 SIDES=(asks bids)
 
-command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
+command -v jq  >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
+command -v awk >/dev/null 2>&1 || { echo "awk is required but not installed."; exit 1; }
 docker exec "$KAFKA_CONTAINER" true 2>/dev/null \
     || { echo "Kafka container '$KAFKA_CONTAINER' is not running. Start it: docker compose up -d"; exit 1; }
 
-# --- ensure topics exist (idempotent) ---
+# --- ensure input topics exist (idempotent) ---
 echo "Ensuring topics exist..."
 for pair in "${PAIRS[@]}"; do
     for side in "${SIDES[@]}"; do
@@ -38,41 +46,70 @@ for pair in "${PAIRS[@]}"; do
     done
 done
 
-# --- produce one snapshot per (pair, side, exchange) ---
+# Per-pair generation params: base step price_decimals qty_min qty_max qty_decimals
+pair_params() {
+    case "$1" in
+        BTC-USDT) echo "100000 20 2 0.01 2.5 4" ;;
+        TON-USDT) echo "5.50 0.01 4 20 900 2" ;;
+        *)        echo "100 1 2 1 100 2" ;;
+    esac
+}
+
+# Generate a randomized levels JSON array for a (pair, side).
+gen_levels() {
+    local pair="$1" side="$2"
+    read -r base step pdec qmin qmax qdec <<< "$(pair_params "$pair")"
+    local n=$(( (RANDOM % 5) + 3 ))   # 3..7 levels
+    awk -v base="$base" -v step="$step" -v pdec="$pdec" -v qmin="$qmin" -v qmax="$qmax" \
+        -v qdec="$qdec" -v side="$side" -v n="$n" -v seed="$RANDOM" 'BEGIN {
+        srand(seed);
+        mid = base + (rand() * 10 - 5) * step;   # drift the mid a few steps each snapshot
+        printf("[");
+        for (i = 0; i < n; i++) {
+            off = (i + 1) * step * (1 + rand());
+            price = (side == "asks") ? mid + off : mid - off;
+            qty = qmin + rand() * (qmax - qmin);
+            if (i > 0) printf(",");
+            printf("{\"price\":\"%.*f\",\"quantity\":\"%.*f\"}", pdec, price, qdec, qty);
+        }
+        printf("]");
+    }'
+}
+
+# Emit one snapshot to {pair}-{side}-{exchange}.
 emit() {
     local pair="$1" side="$2" exchange="$3" levels="$4"
     local topic="${pair}-${side}-${exchange}"
     local msg
     msg=$(jq -cn \
         --arg exchange "$exchange" --arg pair "$pair" --arg side "$side" \
-        --argjson event_time "$EVENT_TIME" --argjson levels "$levels" \
+        --argjson event_time "$(date +%s)000" --argjson levels "$levels" \
         '{exchange:$exchange,pair:$pair,side:$side,event_time:$event_time,levels:$levels}')
     echo "$msg" | docker exec -i "$KAFKA_CONTAINER" kafka-console-producer \
         --bootstrap-server "$KAFKA_BOOTSTRAP" --topic "$topic" 2>/dev/null
-    echo "  -> $topic"
 }
 
-echo "Producing snapshots (event_time=$EVENT_TIME)..."
+# --- main loop ---
+count=0
+trap 'echo; echo "Stopped. Sent $count snapshots."; exit 0' INT
+end=$(( $(date +%s) + DURATION_SECONDS ))
+echo "Streaming randomized snapshots for ${DURATION_SECONDS}s (Ctrl-C to stop)..."
 
-# BTC-USDT asks — collisions at 100000 (wallex>nobitex) and 100100 (nobitex>bitpin)
-emit BTC-USDT asks nobitex '[{"price":"100000","quantity":"0.5"},{"price":"100100","quantity":"1.2"},{"price":"100250","quantity":"0.8"}]'
-emit BTC-USDT asks wallex  '[{"price":"100000","quantity":"0.9"},{"price":"100150","quantity":"0.4"},{"price":"100300","quantity":"2.0"}]'
-emit BTC-USDT asks bitpin  '[{"price":"100050","quantity":"0.3"},{"price":"100100","quantity":"0.7"},{"price":"100400","quantity":"1.5"}]'
+while [ "$(date +%s)" -lt "$end" ]; do
+    pair="${PAIRS[$((RANDOM % ${#PAIRS[@]}))]}"
+    side="${SIDES[$((RANDOM % ${#SIDES[@]}))]}"
+    exchange="${EXCHANGES[$((RANDOM % ${#EXCHANGES[@]}))]}"
 
-# BTC-USDT bids — collisions at 99950, 99900, 99850
-emit BTC-USDT bids nobitex '[{"price":"99950","quantity":"0.6"},{"price":"99900","quantity":"1.0"},{"price":"99800","quantity":"0.5"}]'
-emit BTC-USDT bids wallex  '[{"price":"99950","quantity":"0.4"},{"price":"99850","quantity":"1.3"},{"price":"99750","quantity":"0.9"}]'
-emit BTC-USDT bids bitpin  '[{"price":"99900","quantity":"0.7"},{"price":"99850","quantity":"0.2"},{"price":"99700","quantity":"2.1"}]'
+    emit "$pair" "$side" "$exchange" "$(gen_levels "$pair" "$side")" \
+        || printf '\n  emit failed, continuing\n'
+    count=$((count + 1))
+    printf '\r  sent %d  (last: %-9s %-4s %-8s)   ' "$count" "$pair" "$side" "$exchange"
 
-# TON-USDT asks — collisions at 5.50 (wallex>nobitex) and 5.52 (nobitex>bitpin)
-emit TON-USDT asks nobitex '[{"price":"5.50","quantity":"100"},{"price":"5.52","quantity":"250"},{"price":"5.55","quantity":"80"}]'
-emit TON-USDT asks wallex  '[{"price":"5.50","quantity":"150"},{"price":"5.53","quantity":"200"},{"price":"5.56","quantity":"300"}]'
-emit TON-USDT asks bitpin  '[{"price":"5.51","quantity":"90"},{"price":"5.52","quantity":"120"},{"price":"5.58","quantity":"400"}]'
+    # Pause on ~1 of every 3 steps to create visible bursts and gaps.
+    if [ $((RANDOM % 3)) -eq 0 ]; then
+        sleep "$(awk -v s="$RANDOM" 'BEGIN{srand(s); printf("%.1f", 1 + rand() * 2)}')"
+    fi
+done
 
-# TON-USDT bids — collisions at 5.49 (wallex>nobitex) and 5.48 (wallex>bitpin)
-emit TON-USDT bids nobitex '[{"price":"5.49","quantity":"120"},{"price":"5.47","quantity":"300"},{"price":"5.45","quantity":"90"}]'
-emit TON-USDT bids wallex  '[{"price":"5.49","quantity":"200"},{"price":"5.48","quantity":"150"},{"price":"5.44","quantity":"500"}]'
-emit TON-USDT bids bitpin  '[{"price":"5.48","quantity":"80"},{"price":"5.46","quantity":"250"},{"price":"5.43","quantity":"600"}]'
-
-echo "Done. 12 snapshots sent (2 pairs x 2 sides x 3 exchanges)."
-echo "Watch merged output:  docker logs taskmanager | grep -E 'BTC-USDT|TON-USDT'"
+echo
+echo "Done. Sent $count snapshots over ${DURATION_SECONDS}s."

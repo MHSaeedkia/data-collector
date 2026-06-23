@@ -98,7 +98,8 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
   (the trailing `-` after side is required), so the job won't re-consume its own output
 - `ConsolidatedOrderBook.eventTime` serializes as `event_time` (matches `OrderBookEvent` snake_case convention)
 - Flink 2.x note: operator uses `open(OpenContext)` (the 1.x `open(Configuration)` was removed in Flink 2.0)
-- Functional test: `scripts/produce-test-data.sh` sends curated snapshots (BTC-USDT, TON-USDT;
-  both sides; nobitex/wallex/bitpin) with intentional same-price collisions to verify union+tie-break
+- Functional test: `scripts/produce-test-data.sh` STREAMS randomized snapshots (random
+  pair/side/exchange each tick, prices drifting around a mid via awk, pauses on some steps)
+  for `DURATION_SECONDS` (default 600) to show live UI updates — not a fixed batch
 - `scripts/warmup.sh` provisions BOTH input topics (`{pair}-{side}-{exchange}`, per subscribed
   exchange) AND output topics (`{pair}-{side}`, one per distinct subscribed pair) — single partition each
