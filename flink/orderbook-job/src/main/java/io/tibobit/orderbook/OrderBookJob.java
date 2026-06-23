@@ -1,5 +1,7 @@
 package io.tibobit.orderbook;
 
+import io.tibobit.orderbook.aggregation.OrderBookMerger;
+import io.tibobit.orderbook.model.ConsolidatedOrderBook;
 import io.tibobit.orderbook.model.OrderBookEvent;
 import io.tibobit.orderbook.source.OrderBookSourceFactory;
 import io.tibobit.orderbook.source.PairsLoader;
@@ -50,9 +52,14 @@ public class OrderBookJob {
         String name = pair + "-" + side;
         DataStream<OrderBookEvent> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), name + "-source");
 
+        DataStream<ConsolidatedOrderBook> consolidated = stream
+                .keyBy(OrderBookEvent::getPair)
+                .process(new OrderBookMerger(side))
+                .name(name + "-merger");
+
         // Phase 1 verification sink — proves end-to-end ingestion. Replace with real
         // sink later.
-        stream.print(name);
+        consolidated.print(name);
     }
 
     private static String getEnv(String key, String fallback) {

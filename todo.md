@@ -28,6 +28,22 @@
 - [x] `OrderBookJob` main class — for each pair, creates one asks stream and one bids stream
 - [x] Kafka config — bootstrap servers, consumer group
 
+### Order book aggregation (per pair + side)
+Goal: for each `{pair}-{side}` stream, merge all exchanges into one price-sorted stream
+WITHOUT summing quantities — each level keeps its own exchange; equal-price levels from
+different exchanges are separate, adjacent entries. Output: `BTC-USDT-asks`, `BTC-USDT-bids`, …
+Note: the Kafka source already merges exchanges at transport level (regex
+`{pair}-{side}-.*`); this section is the stateful step that *generates* the book.
+- [x] Output model: `ConsolidatedOrderBook { pair, side, levels, eventTime }` with level
+      `{ exchange, price, quantity }` (exchange lives per level)
+- [x] `KeyedProcessFunction` keyed by `pair`; `MapState<exchange, OrderBookEvent>`
+      holds the latest snapshot per exchange (event carries levels + event_time)
+- [x] On each event: replace that exchange's snapshot, rebuild the union, sort by price
+      (`BigDecimal`), emit consolidated book
+- [x] Sort by side: asks ascending, bids descending; tie-break equal price by larger quantity first (`BigDecimal`)
+- [x] Wire operator into `OrderBookJob.addStream` between source and sink
+- [x] `eventTime` on output = max of contributing exchange snapshots
+
 ### Build & deploy
 - [ ] Build fat JAR (`mvn package`)
 - [ ] Submit job to Flink cluster via REST API or `flink run`
