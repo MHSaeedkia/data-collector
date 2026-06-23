@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Order Book</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a212b; --line: #2a3340;
+      --ask: #ef5350; --bid: #26a69a; --muted: #8a97a6; --text: #e6edf3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px;
+    }
+    header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+    }
+    header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+    select {
+      background: var(--bg); color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 10px; font-family: inherit; font-size: 13px;
+    }
+    .status { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ask); margin-right: 6px; }
+    .dot.on { background: var(--bid); }
+    main { max-width: 720px; margin: 0 auto; padding: 20px; }
+    .book { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 5px 16px; text-align: right; }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    th.exch, td.exch { text-align: left; color: var(--muted); }
+    tbody tr { border-top: 1px solid var(--line); }
+    .asks td.price { color: var(--ask); }
+    .bids td.price { color: var(--bid); }
+    .spread {
+      display: flex; justify-content: space-between; padding: 10px 16px;
+      background: var(--bg); color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    }
+    .empty { padding: 30px; text-align: center; color: var(--muted); }
+    .meta { margin-top: 10px; color: var(--muted); font-size: 11px; text-align: right; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Live Order Book</h1>
+    <select id="pair"></select>
+    <span class="status"><span class="dot" id="dot"></span><span id="conn">connecting…</span></span>
+  </header>
+  <main>
+    <div class="book" id="book"><div class="empty">Waiting for data…</div></div>
+    <div class="meta" id="meta"></div>
+  </main>
+
+  <script>
+    const books = {};          // `${pair}__${side}` -> book object
+    let selectedPair = null;
+
+    const $pair = document.getElementById('pair');
+    const $book = document.getElementById('book');
+    const $meta = document.getElementById('meta');
+    const $dot = document.getElementById('dot');
+    const $conn = document.getElementById('conn');
+
+    function store(book) {
+      if (!book || !book.pair || !book.side) return;
+      books[`${book.pair}__${book.side}`] = book;
+      if (!selectedPair) selectedPair = book.pair;
+    }
+
+    function pairs() {
+      return [...new Set(Object.values(books).map(b => b.pair))].sort();
+    }
+
+    function refreshDropdown() {
+      const list = pairs();
+      if (list.length === $pair.options.length && list.every((p, i) => $pair.options[i] && $pair.options[i].value === p)) return;
+      $pair.innerHTML = '';
+      for (const p of list) {
+        const opt = document.createElement('option');
+        opt.value = p; opt.textContent = p;
+        $pair.appendChild(opt);
+      }
+      if (selectedPair) $pair.value = selectedPair;
+    }
+
+    function rows(levels, cls) {
+      return levels.map(l =>
+        `<tr><td class="price">${l.price}</td><td>${l.quantity}</td><td class="exch">${l.exchange}</td></tr>`
+      ).join('');
+    }
+
+    function render() {
+      if (!selectedPair) return;
+      const asks = books[`${selectedPair}__asks`];
+      const bids = books[`${selectedPair}__bids`];
+      if (!asks && !bids) { $book.innerHTML = '<div class="empty">No data for this pair yet…</div>'; return; }
+
+      // asks come ascending (lowest first); show highest at top so best ask sits by the spread.
+      const askLevels = asks ? [...asks.levels].reverse() : [];
+      const bidLevels = bids ? bids.levels : []; // already descending (highest first)
+
+      const bestAsk = asks && asks.levels.length ? parseFloat(asks.levels[0].price) : null;
+      const bestBid = bids && bids.levels.length ? parseFloat(bids.levels[0].price) : null;
+      const spread = (bestAsk != null && bestBid != null) ? (bestAsk - bestBid) : null;
+
+      const head = '<tr><th>Price</th><th>Qty</th><th class="exch">Exchange</th></tr>';
+      $book.innerHTML = `
+        <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels)}</tbody></table>
+        <div class="spread">
+          <span>spread</span>
+          <span>${spread != null ? spread.toLocaleString(undefined, {maximumFractionDigits: 8}) : '—'}</span>
+        </div>
+        <table class="bids"><tbody>${rows(bidLevels)}</tbody></table>
+      `;
+
+      const t = Math.max(asks ? asks.event_time : 0, bids ? bids.event_time : 0);
+      $meta.textContent = `${askLevels.length} asks · ${bidLevels.length} bids · event_time ${t ? new Date(t).toLocaleTimeString() : '—'}`;
+    }
+
+    $pair.addEventListener('change', () => { selectedPair = $pair.value; render(); });
+
+    function connect() {
+      const ws = new WebSocket(`ws://${location.host}`);
+      ws.onopen = () => { $dot.classList.add('on'); $conn.textContent = 'live'; };
+      ws.onclose = () => { $dot.classList.remove('on'); $conn.textContent = 'disconnected — retrying'; setTimeout(connect, 2000); };
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'snapshot') msg.books.forEach(store);
+        else if (msg.type === 'update') store(msg.book);
+        refreshDropdown();
+        render();
+      };
+    }
+    connect();
+  </script>
+</body>
+</html>

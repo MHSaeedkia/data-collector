@@ -50,5 +50,10 @@ Note: the Kafka source already merges exchanges at transport level (regex
 - [ ] Build fat JAR (`mvn package`)
 - [ ] Submit job to Flink cluster via REST API or `flink run`
 
+### Live order book web UI (`web/`)
+- [x] Node.js (Express + kafkajs + ws) standalone app; consumes consolidated `{pair}-{side}` topics
+- [x] WebSocket push to browser; latest book per topic kept in memory
+- [x] Single-page UI: pair dropdown (multiple pairs), live asks/bids book with spread
+
 ## Phase 2 — Avro + Schema Registry (deferred)
 - [ ] Migrate `OrderBookEventDeserializer` from JSON to Avro + Confluent Schema Registry
