@@ -20,9 +20,9 @@
 - [x] `OrderBookEventDeserializer` — implements `DeserializationSchema<OrderBookEvent>` using Jackson
 
 ### Kafka sources
-- [ ] Per-pair asks source — one `KafkaSource` per pair with pattern `{pair}-asks-.*` (e.g. `BTC-USDT-asks-.*`)
-- [ ] Per-pair bids source — one `KafkaSource` per pair with pattern `{pair}-bids-.*` (e.g. `BTC-USDT-bids-.*`)
-- [ ] Pairs list read from postgres at job startup to build sources dynamically
+- [x] Per-pair asks source — one `KafkaSource` per pair with pattern `{pair}-asks-.*` (e.g. `BTC-USDT-asks-.*`)
+- [x] Per-pair bids source — one `KafkaSource` per pair with pattern `{pair}-bids-.*` (e.g. `BTC-USDT-bids-.*`)
+- [x] Pairs list read from postgres at job startup to build sources dynamically
 
 ### Job
 - [ ] `OrderBookJob` main class — for each pair, creates one asks stream and one bids stream
