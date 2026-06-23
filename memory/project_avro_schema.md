@@ -18,8 +18,8 @@ Registered in schema registry; NiFi and Flink both reference it by name.
 | `exchange`  | string                  | Normalized, e.g. `okex`, `nobitex`                          |
 | `pair`      | string                  | Normalized with `_` separator, e.g. `BTC_USDT`              |
 | `side`      | enum `asks\|bids`       | Mirrors topic suffix; included for self-describing messages |
-| `eventTime` | long (timestamp-millis) | Exchange-reported UTC timestamp in ms                       |
-| `levels`    | array of PriceLevel     | Price + qty both as string to preserve decimal precision    |
+| `event_time` | long (timestamp-millis) | Exchange-reported UTC timestamp in ms                       |
+| `levels`    | array of PriceLevel     | Price + quantity both as string to preserve decimal precision |
 
 ## NiFi responsibility before publishing
 
@@ -32,7 +32,7 @@ NiFi is handled by a separate team and is not implemented in this repo. Document
 
 ## Why price/qty are strings
 
-Exchange APIs return prices as strings to avoid floating-point precision loss. Keeping them as strings in Avro preserves this exactly. Flink converts to `BigDecimal` at processing time.
+Exchange APIs return price and quantity as strings to avoid floating-point precision loss. Keeping them as strings in Avro preserves this exactly. Flink converts to `BigDecimal` at processing time.
 
 **Why:** Schema registry contract between NiFi and Flink for the order book pipeline.  
 **How to apply:** Any new exchange integration must produce events conforming to this schema after NiFi normalization.

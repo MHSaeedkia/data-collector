@@ -1,0 +1,13 @@
+{
+  "exchange": "nobitex",
+  "pair": "BTC_USDT",
+  "side": "asks",
+  "event_time": 1750680000000,
+  "levels": [
+    {"price": "97240.50", "quantity": "0.42"},
+    {"price": "97255.00", "quantity": "1.10"},
+    {"price": "97270.75", "quantity": "0.08"},
+    {"price": "97300.00", "quantity": "2.35"},
+    {"price": "97345.20", "quantity": "0.75"}
+  ]
+}

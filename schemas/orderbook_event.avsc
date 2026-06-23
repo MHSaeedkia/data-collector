@@ -20,7 +20,7 @@
       }
     },
     {
-      "name": "eventTime",
+      "name": "event_time",
       "type": {
         "type": "long",
         "logicalType": "timestamp-millis"
@@ -35,7 +35,7 @@
           "name": "PriceLevel",
           "fields": [
             {"name": "price", "type": "string"},
-            {"name": "qty", "type": "string"}
+            {"name": "quantity", "type": "string"}
           ]
         }
       }
