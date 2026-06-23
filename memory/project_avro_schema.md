@@ -27,7 +27,7 @@ NiFi is handled by a separate team and is not implemented in this repo. Document
 
 - Normalize pair name to `{BASE}_{QUOTE}` format (e.g. `BTCUSDT` → `BTC_USDT`)
 - Split raw exchange message (which contains both sides) into two separate events
-- Route each event to the correct topic: `{market}_{side}` (e.g. `BTC_USDT_asks`)
+- Route each event to the correct topic: `{pair}-{side}-{exchange}` (e.g. `BTC-USDT-asks-nobitex`)
 - Set Kafka message key to `{exchange}`
 
 ## Why price/qty are strings

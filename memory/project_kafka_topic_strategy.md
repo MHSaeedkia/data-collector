@@ -7,7 +7,7 @@ metadata:
 
 ## Decision: Topic per pair+side+exchange
 
-**Topic** → `{pair}_{side}_{exchange}` (e.g. `BTC_USDT_asks_nobitex`, `BTC_USDT_bids_bitpin`)  
+**Topic** → `{pair}-{side}-{exchange}` (e.g. `BTC-USDT-asks-nobitex`, `BTC-USDT-bids-bitpin`)  
 **Key** → null (irrelevant; one exchange per topic guarantees ordering)  
 **Body** → price, qty, timestamp, exchange, pair, side
 
@@ -15,7 +15,7 @@ metadata:
 
 - One exchange publishes to one topic — ordering is guaranteed with a single partition, no key needed
 - Partition count can be 1 per topic; no skew, no idle partitions, no repartitioning when exchanges are added or removed
-- Flink uses regex subscription to aggregate across exchanges: `BTC_USDT_asks_.*` picks up all exchanges for that pair+side automatically — new exchanges are picked up with no Flink config change
+- Flink uses regex subscription to aggregate across exchanges: `BTC-USDT-asks-.*` picks up all exchanges for that pair+side automatically — new exchanges are picked up with no Flink config change
 - Topic count at scale: 10 exchanges × 200 pairs × 2 sides = 4000 topics — fine for modern Kafka (KRaft)
 
 ## What was rejected and why
@@ -24,7 +24,7 @@ metadata:
 |---|---|
 | `asks` / `bids` as topics, pair as key | Flink streams not separated by pair |
 | `{pair}` as topic, side as key | Flink still needs `filter()` to split sides; only 2 effective partitions |
-| `{pair}_{side}` as topic, exchange as key | Partition count doesn't align with exchange count per pair; varies per topic and changes over time |
+| `{pair}-{side}` as topic, exchange as key | Partition count doesn't align with exchange count per pair; varies per topic and changes over time |
 
 ## Out of scope (deferred)
 
