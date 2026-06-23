@@ -61,13 +61,42 @@ the full event is stored so `event_time` is available for the max) between the K
 sources and the sink in `OrderBookJob`. On each event, replace that exchange's snapshot,
 rebuild the union, sort by price, and emit a `ConsolidatedOrderBook`.
 
+## Decision: DataStream (Java), not Flink SQL
+
+**Q:** Why is `OrderBookMerger` implemented in pure Java (DataStream API) instead of Flink SQL?
+
+**A:** The merge produces, per `(pair, side)`, a single row holding a **nested array of
+`{exchange, price, quantity}` levels sorted by a custom comparator**, recomputed on every
+update. That is three things Flink SQL handles poorly on a streaming changelog:
+
+1. **Nested array output** — you'd `UNNEST` each exchange's `levels`, then re-collect into one
+   sorted array per group; Flink SQL has no clean "sorted `ARRAY_AGG`" for continuous streams.
+2. **Custom sort** — price asc/desc by side + tie-break by quantity desc, as `BigDecimal`;
+   expressible row-wise but not as "sort the array inside the row".
+3. **Latest-per-exchange state** — SQL *can* do this (`ROW_NUMBER() … PARTITION BY exchange`
+   + dedup), but it's the easy part.
+
+The `KeyedProcessFunction` does all three in ~30 lines with explicit state and a `Comparator`.
+SQL would be more code, less readable, and hit engine limits — the opposite of what SQL buys you.
+
+Rule of thumb for the whole pipeline: **imperative / stateful / array-shaped → DataStream;
+declarative / windowed / analytical → SQL.** Flink SQL would earn its place later for analytics
+(OHLC/candles, VWAP, windowed depth/liquidity, top-N) as *separate* jobs, not for this merge.
+
 ## Implemented (Phase 1)
 
 - `model/ConsolidatedLevel.java` — `{ exchange, price, quantity }`
 - `model/ConsolidatedOrderBook.java` — `{ pair, side, levels, eventTime }` (eventTime = max of contributing snapshots)
 - `aggregation/OrderBookMerger.java` — `KeyedProcessFunction`; `MapState<exchange, OrderBookEvent>`;
   comparator = price (asc asks / desc bids) then quantity desc, both `BigDecimal`
-- `OrderBookJob.addStream` wires `source → keyBy(pair) → OrderBookMerger(side) → print(name)`
+- `OrderBookJob.addStream` wires `source → keyBy(pair) → OrderBookMerger(side)` then fans out to
+  TWO sinks: a Kafka sink to topic `{pair}-{side}` (e.g. `BTC-USDT-asks`) AND `print(name)` to stdout
+- `serializer/ConsolidatedOrderBookSerializer.java` — Jackson `SerializationSchema`, transient ObjectMapper
+- `sink/OrderBookSinkFactory.java` — `KafkaSink<ConsolidatedOrderBook>`; builder default `DeliveryGuarantee.NONE`
+  (we don't reference `DeliveryGuarantee` directly — `flink-connector-base` isn't on the compile classpath)
+- No feedback loop: output topic `{pair}-{side}` does NOT match source pattern `{pair}-{side}-.*`
+  (the trailing `-` after side is required), so the job won't re-consume its own output
+- `ConsolidatedOrderBook.eventTime` serializes as `event_time` (matches `OrderBookEvent` snake_case convention)
 - Flink 2.x note: operator uses `open(OpenContext)` (the 1.x `open(Configuration)` was removed in Flink 2.0)
 - Functional test: `scripts/produce-test-data.sh` sends curated snapshots (BTC-USDT, TON-USDT;
   both sides; nobitex/wallex/bitpin) with intentional same-price collisions to verify union+tie-break

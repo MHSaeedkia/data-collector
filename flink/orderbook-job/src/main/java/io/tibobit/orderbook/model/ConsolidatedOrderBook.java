@@ -1,5 +1,6 @@
 package io.tibobit.orderbook.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 public class ConsolidatedOrderBook {
@@ -9,6 +10,7 @@ public class ConsolidatedOrderBook {
     private List<ConsolidatedLevel> levels;
 
     // Max event_time across the contributing exchange snapshots.
+    @JsonProperty("event_time")
     private long eventTime;
 
     public ConsolidatedOrderBook() {}

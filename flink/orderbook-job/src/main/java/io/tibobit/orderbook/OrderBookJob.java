@@ -3,6 +3,7 @@ package io.tibobit.orderbook;
 import io.tibobit.orderbook.aggregation.OrderBookMerger;
 import io.tibobit.orderbook.model.ConsolidatedOrderBook;
 import io.tibobit.orderbook.model.OrderBookEvent;
+import io.tibobit.orderbook.sink.OrderBookSinkFactory;
 import io.tibobit.orderbook.source.OrderBookSourceFactory;
 import io.tibobit.orderbook.source.PairsLoader;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -57,8 +58,10 @@ public class OrderBookJob {
                 .process(new OrderBookMerger(side))
                 .name(name + "-merger");
 
-        // Phase 1 verification sink — proves end-to-end ingestion. Replace with real
-        // sink later.
+        // Publish the merged book to its own topic ({pair}-{side}, e.g. BTC-USDT-asks).
+        consolidated.sinkTo(OrderBookSinkFactory.create(bootstrapServers, name)).name(name + "-sink");
+
+        // Also print to stdout for verification.
         consolidated.print(name);
     }
 

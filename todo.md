@@ -43,6 +43,8 @@ Note: the Kafka source already merges exchanges at transport level (regex
 - [x] Sort by side: asks ascending, bids descending; tie-break equal price by larger quantity first (`BigDecimal`)
 - [x] Wire operator into `OrderBookJob.addStream` between source and sink
 - [x] `eventTime` on output = max of contributing exchange snapshots
+- [x] Publish merged book to its own Kafka topic `{pair}-{side}` (e.g. `BTC-USDT-asks`) via
+      `KafkaSink` + JSON serializer; keep `print()` to stdout as well
 
 ### Build & deploy
 - [ ] Build fat JAR (`mvn package`)
