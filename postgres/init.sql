@@ -26,11 +26,18 @@ CREATE TABLE IF NOT EXISTS markets (
 );
 
 -- create table
+CREATE TABLE IF NOT EXISTS exchanges (
+    id BIGSERIAL PRIMARY KEY,
+    "name" VARCHAR(20) NOT NULL,
+    label VARCHAR(20) NOT NULL
+);
+
+-- create table
 CREATE TABLE IF NOT EXISTS exchange_markets (
     id BIGSERIAL PRIMARY KEY,
-    exchange VARCHAR(100) NOT NULL,
+    exchange_id BIGINT NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE ON UPDATE CASCADE,
     market VARCHAR(100) NOT NULL,
     market_id BIGINT NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
-    CONSTRAINT unique_exchange_market UNIQUE (exchange, market)
+    CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market)
 );
