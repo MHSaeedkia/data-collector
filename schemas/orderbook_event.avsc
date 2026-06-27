@@ -12,7 +12,11 @@
 			"type": "string"
 		},
 		{
-			"name": "pair",
+			"name": "base",
+			"type": "string"
+		},
+		{
+			"name": "quote",
 			"type": "string"
 		},
 		{

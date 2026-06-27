@@ -1,7 +1,8 @@
 {
 	"exchange_id": 1,
 	"exchange_name": "bitpin",
-	"pair": "BTC/USDT",
+	"base": "BTC",
+	"quote": "USDT",
 	"side": "asks",
 	"event_time": 1750680000000,
 	"levels": [
