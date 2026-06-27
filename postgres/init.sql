@@ -41,3 +41,19 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
     CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market)
 );
+
+INSERT INTO exchanges (id, name, label) values (1, 'nobitex', 'نوبیتکس'),(2, 'bitpin', 'بیت پین');
+SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
+
+INSERT INTO markets (id, base, quote, price_precision, quantity_precision) values
+(1, 'BTC', 'USDT', 9, 9),
+(2, 'ETH', 'USDT', 10, 10);
+SELECT setval(pg_get_serial_sequence('markets', 'id'), (SELECT MAX(id) FROM markets));
+
+INSERT INTO exchange_markets (exchange_id, market, market_id, "status")
+values
+(1, 'BTCUSDT', 1, 'subscribe'),
+(1, 'ETHUSDT', 2, 'subscribe'),
+(2, 'BTC_USDT', 1, 'subscribe'),
+(2, 'ETH_USDT', 2, 'subscribe');
+
