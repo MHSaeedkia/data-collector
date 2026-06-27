@@ -22,18 +22,25 @@ async function getExchanges() {
 		return result.rows;
 	} catch (err) {
 		console.error("Query error:", err);
-	} finally {
-		await pool.end(); // closes the pool when done (skip this if your app stays running)
+		return []; // avoid crashing the .forEach on failure
 	}
 }
 
 (async () => {
-	const exchanges = await getExchanges();
-
 	const exchangesMap = new Map();
-	exchanges.forEach((ex) => {
-		exchangesMap.set(ex.name, ex);
-	});
+
+	async function refreshExchanges() {
+		console.log("refreshing exchanges");
+
+		const exchanges = await getExchanges();
+		exchangesMap.clear(); // drop stale entries if an exchange was removed
+		exchanges.forEach((ex) => {
+			exchangesMap.set(ex.name, ex);
+		});
+	}
+
+	await refreshExchanges(); // initial load before anything else uses the map
+	setInterval(refreshExchanges, 10_000);
 
 	const PORT = process.env.PORT || 3000;
 	const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:9092";
