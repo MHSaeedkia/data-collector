@@ -193,7 +193,7 @@
 				return levels
 					.map(
 						(l) =>
-							`<tr><td class="price">${l.price}</td><td>${l.quantity}</td><td class="exch">${l.exchange}</td></tr>`,
+							`<tr><td class="price">${l.price}</td><td>${l.quantity}</td><td class="exch">${l.exchange.label}</td></tr>`,
 					)
 					.join("");
 			}

@@ -4,76 +4,117 @@ const express = require("express");
 const { WebSocketServer } = require("ws");
 const { Kafka, logLevel } = require("kafkajs");
 
-const PORT = process.env.PORT || 3000;
-const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:9092";
+const { Pool } = require("pg");
 
-const app = express();
-app.use(express.static(path.join(__dirname, "public")));
+const pool = new Pool({
+	host: "localhost",
+	port: 5432,
+	user: "postgres",
+	password: "postgres",
+	database: "markets",
+});
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-
-// Latest consolidated book per topic. topic = `${base}-{quote}-${side}` (e.g. BTC-USDT-asks).
-const latestByTopic = new Map();
-
-function broadcast(payload) {
-	const msg = JSON.stringify(payload);
-	for (const client of wss.clients) {
-		if (client.readyState === client.OPEN) client.send(msg);
+async function getExchanges() {
+	try {
+		const result = await pool.query(
+			"SELECT id, name, label FROM exchanges",
+		);
+		return result.rows;
+	} catch (err) {
+		console.error("Query error:", err);
+	} finally {
+		await pool.end(); // closes the pool when done (skip this if your app stays running)
 	}
 }
 
-// New browser → send everything we have so it can render immediately.
-wss.on("connection", (ws) => {
-	ws.send(
-		JSON.stringify({
-			type: "snapshot",
-			books: Array.from(latestByTopic.values()),
-		}),
-	);
-});
+(async () => {
+	const exchanges = await getExchanges();
 
-const kafka = new Kafka({
-	clientId: "orderbook-web",
-	brokers: [KAFKA_BROKER],
-	logLevel: logLevel.ERROR,
-});
-
-// Fresh group each start so we always replay current state from the beginning.
-const consumer = kafka.consumer({ groupId: `orderbook-web-${Date.now()}` });
-
-// Serve the UI immediately so the page loads even before (or without) Kafka.
-server.listen(PORT, () => {
-	console.log(`Order book UI:    http://localhost:${PORT}`);
-	console.log(`Kafka broker:     ${KAFKA_BROKER}`);
-});
-
-async function consume() {
-	await consumer.connect();
-	// Output topics only: end in -asks/-bids. Input topics end in -<exchange>, so they don't match.
-	await consumer.subscribe({
-		topics: [/^.+-(asks|bids)$/],
-		fromBeginning: true,
+	const exchangesMap = new Map();
+	exchanges.forEach((ex) => {
+		exchangesMap.set(ex.name, ex);
 	});
 
-	await consumer.run({
-		eachMessage: async ({ topic, message }) => {
-			if (!message.value) return;
-			try {
-				const book = JSON.parse(message.value.toString());
-				latestByTopic.set(topic, book);
-				broadcast({ type: "update", book });
-			} catch (err) {
-				console.error(
-					`Skipping bad message on ${topic}: ${err.message}`,
-				);
-			}
-		},
-	});
-}
+	const PORT = process.env.PORT || 3000;
+	const KAFKA_BROKER = process.env.KAFKA_BROKER || "localhost:9092";
 
-consume().catch((err) => {
-	console.error(
-		`Kafka consumer error (UI stays up; ensure broker at ${KAFKA_BROKER} is reachable): ${err.message}`,
-	);
-});
+	const app = express();
+	app.use(express.static(path.join(__dirname, "public")));
+
+	const server = http.createServer(app);
+	const wss = new WebSocketServer({ server });
+
+	// Latest consolidated book per topic. topic = `${base}-{quote}-${side}` (e.g. BTC-USDT-asks).
+	const latestByTopic = new Map();
+
+	function broadcast(payload) {
+		const msg = JSON.stringify(payload);
+		for (const client of wss.clients) {
+			if (client.readyState === client.OPEN) client.send(msg);
+		}
+	}
+
+	// New browser → send everything we have so it can render immediately.
+	wss.on("connection", (ws) => {
+		ws.send(
+			JSON.stringify({
+				type: "snapshot",
+				books: Array.from(latestByTopic.values()),
+			}),
+		);
+	});
+
+	const kafka = new Kafka({
+		clientId: "orderbook-web",
+		brokers: [KAFKA_BROKER],
+		logLevel: logLevel.ERROR,
+	});
+
+	// Fresh group each start so we always replay current state from the beginning.
+	const consumer = kafka.consumer({ groupId: `orderbook-web-${Date.now()}` });
+
+	// Serve the UI immediately so the page loads even before (or without) Kafka.
+	server.listen(PORT, () => {
+		console.log(`Order book UI:    http://localhost:${PORT}`);
+		console.log(`Kafka broker:     ${KAFKA_BROKER}`);
+	});
+
+	async function consume() {
+		await consumer.connect();
+		// Output topics only: end in -asks/-bids. Input topics end in -<exchange>, so they don't match.
+		await consumer.subscribe({
+			topics: [/^.+-(asks|bids)$/],
+			fromBeginning: true,
+		});
+
+		await consumer.run({
+			eachMessage: async ({ topic, message }) => {
+				if (!message.value) return;
+				try {
+					const book = JSON.parse(message.value.toString());
+					book.levels = book.levels.map((item) => {
+						item.exchange = exchangesMap.get(item.exchange) ?? {
+							id: 0,
+							name: "unknown",
+							label: "نامشخص",
+						};
+						return item;
+					});
+
+					latestByTopic.set(topic, book);
+					broadcast({ type: "update", book });
+				} catch (err) {
+					console.error(
+						`Skipping bad message on ${topic}: ${err.message}`,
+					);
+				}
+			},
+		});
+	}
+
+	consume().catch((err) => {
+		console.error(
+			`Kafka consumer error (UI stays up; ensure broker at ${KAFKA_BROKER} is reachable): ${err.message}`,
+		);
+	});
+})();
