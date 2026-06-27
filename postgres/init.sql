@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS markets (
 -- create table
 CREATE TABLE IF NOT EXISTS exchanges (
     id BIGSERIAL PRIMARY KEY,
-    "name" VARCHAR(20) NOT NULL,
+    "name" VARCHAR(20) NOT NULL UNIQUE,
     label VARCHAR(20) NOT NULL
 );
 

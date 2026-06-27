@@ -57,9 +57,10 @@ pairs=$(docker exec "$POSTGRES_CONTAINER" psql \
     -U "$POSTGRES_USER" \
     -d "$POSTGRES_DB" \
     -t -A -F'|' \
-    -c "SELECT m.base, m.quote, em.exchange
+    -c "SELECT m.base, m.quote, em.exchange_id, e.name as exchange_name
         FROM exchange_markets em
         JOIN markets m ON em.market_id = m.id
+        JOIN exchanges e ON e.id = em.exchange_id
         WHERE em.status = 'subscribe'")
 
 if [ -z "$pairs" ]; then
@@ -82,9 +83,9 @@ create_topic() {
 }
 
 # Input topics — one per pair+side+exchange (NiFi produces, Flink source consumes).
-while IFS='|' read -r base quote exchange; do
+while IFS='|' read -r base quote exchange_id exchange_name; do
     for side in asks bids; do
-        create_topic "${base}-${quote}-${side}-${exchange}"
+        create_topic "${base}-${quote}-${side}-${exchange_name}"
     done
 done <<< "$pairs"
 
