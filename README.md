@@ -99,3 +99,15 @@ PostgreSQL is initialized with a `markets` database containing two tables:
     ├── markets.csv             # Exchange/market subscription list
     └── market-sync.sh          # Subscription management script
 ```
+
+# Run Flink
+
+```
+./scripts/warmup.sh
+
+cd flink
+./run-job.sh
+
+cd ../web
+npm i && npm start
+```
