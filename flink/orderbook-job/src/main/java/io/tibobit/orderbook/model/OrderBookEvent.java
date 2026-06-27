@@ -13,6 +13,7 @@ public class OrderBookEvent {
     private String base;
     private String quote;
     private String side;
+    private OrderBookEventType type;
 
     @JsonProperty("event_time")
     private long eventTime;
@@ -68,6 +69,14 @@ public class OrderBookEvent {
 
     public void setEventTime(long eventTime) {
         this.eventTime = eventTime;
+    }
+
+    public OrderBookEventType getType() {
+        return type;
+    }
+
+    public void setType(OrderBookEventType type) {
+        this.type = type;
     }
 
     public List<PriceLevel> getLevels() {

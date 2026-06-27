@@ -28,6 +28,14 @@
 			}
 		},
 		{
+			"name": "type",
+			"type": {
+				"type": "enum",
+				"name": "Type",
+				"symbols": ["snapshot", "update"]
+			}
+		},
+		{
 			"name": "event_time",
 			"type": {
 				"type": "long",

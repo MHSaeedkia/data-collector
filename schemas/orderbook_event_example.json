@@ -4,6 +4,7 @@
 	"base": "BTC",
 	"quote": "USDT",
 	"side": "asks",
+	"type": "snapshot",
 	"event_time": 1750680000000,
 	"levels": [
 		{ "price": "97240.50", "quantity": "0.42" },

@@ -19,6 +19,7 @@ Registered in schema registry; NiFi and Flink both reference it by name.
 | `exchange_id`   | int                     | database ID e.g. 1                                            |
 | `pair`          | string                  | Normalized with `/` separator, e.g. `BTC/USDT`                |
 | `side`          | enum `asks\|bids`       | Mirrors topic suffix; included for self-describing messages   |
+| `type`          | enum `snapshot\|update` | Define event type                                             |
 | `event_time`    | long (timestamp-millis) | Exchange-reported UTC timestamp in ms                         |
 | `levels`        | array of PriceLevel     | Price + quantity both as string to preserve decimal precision |
 
