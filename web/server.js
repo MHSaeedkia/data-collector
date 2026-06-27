@@ -13,7 +13,7 @@ app.use(express.static(path.join(__dirname, "public")));
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Latest consolidated book per topic. topic = `${pair}-${side}` (e.g. BTC-USDT-asks).
+// Latest consolidated book per topic. topic = `${base}-{quote}-${side}` (e.g. BTC-USDT-asks).
 const latestByTopic = new Map();
 
 function broadcast(payload) {
@@ -61,7 +61,6 @@ async function consume() {
 			if (!message.value) return;
 			try {
 				const book = JSON.parse(message.value.toString());
-				book.pair = (book.pair + "").replace("-", "/");
 				latestByTopic.set(topic, book);
 				broadcast({ type: "update", book });
 			} catch (err) {
