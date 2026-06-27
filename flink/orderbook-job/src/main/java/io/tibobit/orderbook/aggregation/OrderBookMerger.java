@@ -17,11 +17,16 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Merges the latest order book snapshot of every exchange for one pair+side into a single
- * price-sorted book. Quantities are NOT summed — each level keeps its own exchange, so
- * equal-price levels from different exchanges remain separate, adjacent entries.
+ * Merges the latest order book snapshot of every exchange for one
+ * base+quote+side
+ * into a single
+ * price-sorted book. Quantities are NOT summed — each level keeps its own
+ * exchange, so
+ * equal-price levels from different exchanges remain separate, adjacent
+ * entries.
  *
- * Sort: price ascending for asks, descending for bids; tie-break by larger quantity first.
+ * Sort: price ascending for asks, descending for bids; tie-break by larger
+ * quantity first.
  */
 public class OrderBookMerger
         extends KeyedProcessFunction<String, OrderBookEvent, ConsolidatedOrderBook> {
@@ -46,15 +51,13 @@ public class OrderBookMerger
                 TypeInformation.of(OrderBookEvent.class));
         snapshotsByExchange = getRuntimeContext().getMapState(descriptor);
 
-        Comparator<ConsolidatedLevel> byPrice =
-                Comparator.comparing(level -> new BigDecimal(level.getPrice()));
+        Comparator<ConsolidatedLevel> byPrice = Comparator.comparing(level -> new BigDecimal(level.getPrice()));
         if (!priceAscending) {
             byPrice = byPrice.reversed();
         }
         // Secondary: larger quantity first, regardless of side.
-        Comparator<ConsolidatedLevel> byQuantityDesc =
-                Comparator.<ConsolidatedLevel, BigDecimal>comparing(
-                        level -> new BigDecimal(level.getQuantity())).reversed();
+        Comparator<ConsolidatedLevel> byQuantityDesc = Comparator.<ConsolidatedLevel, BigDecimal>comparing(
+                level -> new BigDecimal(level.getQuantity())).reversed();
         comparator = byPrice.thenComparing(byQuantityDesc);
     }
 
@@ -65,7 +68,7 @@ public class OrderBookMerger
             Collector<ConsolidatedOrderBook> out) throws Exception {
 
         // Replace this exchange's latest snapshot.
-        snapshotsByExchange.put(event.getExchange(), event);
+        snapshotsByExchange.put(event.getExchangeName(), event);
 
         // Flatten every exchange's levels into one tagged list.
         List<ConsolidatedLevel> merged = new ArrayList<>();
@@ -77,11 +80,11 @@ public class OrderBookMerger
             }
             for (PriceLevel level : snapshot.getLevels()) {
                 merged.add(new ConsolidatedLevel(
-                        snapshot.getExchange(), level.getPrice(), level.getQuantity()));
+                        snapshot.getExchangeName(), level.getPrice(), level.getQuantity()));
             }
         }
 
         merged.sort(comparator);
-        out.collect(new ConsolidatedOrderBook(event.getPair(), side, merged, maxEventTime));
+        out.collect(new ConsolidatedOrderBook(event.getBase(), event.getQuote(), side, merged, maxEventTime));
     }
 }

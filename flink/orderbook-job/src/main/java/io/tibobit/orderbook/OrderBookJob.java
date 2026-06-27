@@ -6,6 +6,8 @@ import io.tibobit.orderbook.model.OrderBookEvent;
 import io.tibobit.orderbook.sink.OrderBookSinkFactory;
 import io.tibobit.orderbook.source.OrderBookSourceFactory;
 import io.tibobit.orderbook.source.PairsLoader;
+import io.tibobit.orderbook.source.PairsLoader.Pair;
+
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -25,7 +27,7 @@ public class OrderBookJob {
         String dbUser = getEnv("POSTGRES_USER", "postgres");
         String dbPassword = getEnv("POSTGRES_PASSWORD", "postgres");
 
-        List<String> pairs = new PairsLoader(jdbcUrl, dbUser, dbPassword).load();
+        List<Pair> pairs = new PairsLoader(jdbcUrl, dbUser, dbPassword).load();
         if (pairs.isEmpty()) {
             throw new IllegalStateException(
                     "No subscribed pairs found in postgres; nothing to consume.");
@@ -33,9 +35,9 @@ public class OrderBookJob {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        for (String pair : pairs) {
-            addStream(env, bootstrapServers, groupId, pair, "asks");
-            addStream(env, bootstrapServers, groupId, pair, "bids");
+        for (Pair pair : pairs) {
+            addStream(env, bootstrapServers, groupId, pair.base(), pair.quote(), "asks");
+            addStream(env, bootstrapServers, groupId, pair.base(), pair.quote(), "bids");
         }
 
         env.execute("orderbook-job");
@@ -45,20 +47,23 @@ public class OrderBookJob {
             StreamExecutionEnvironment env,
             String bootstrapServers,
             String groupId,
-            String pair,
+            String base,
+            String quote,
             String side) {
 
-        KafkaSource<OrderBookEvent> source = OrderBookSourceFactory.create(bootstrapServers, groupId, pair, side);
+        KafkaSource<OrderBookEvent> source = OrderBookSourceFactory.create(bootstrapServers, groupId, base, quote,
+                side);
 
-        String name = pair + "-" + side;
+        String name = base + "-" + quote + "-" + side;
         DataStream<OrderBookEvent> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), name + "-source");
 
         DataStream<ConsolidatedOrderBook> consolidated = stream
-                .keyBy(OrderBookEvent::getPair)
+                .keyBy(OrderBookEvent::getBase).keyBy(OrderBookEvent::getQuote)
                 .process(new OrderBookMerger(side))
                 .name(name + "-merger");
 
-        // Publish the merged book to its own topic ({pair}-{side}, e.g. BTC-USDT-asks).
+        // Publish the merged book to its own topic ({base}-{quote}-{side}, e.g.
+        // BTC-USDT-asks).
         consolidated.sinkTo(OrderBookSinkFactory.create(bootstrapServers, name)).name(name + "-sink");
 
         // Also print to stdout for verification.

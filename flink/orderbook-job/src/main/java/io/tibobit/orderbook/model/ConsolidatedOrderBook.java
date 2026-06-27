@@ -5,7 +5,8 @@ import java.util.List;
 
 public class ConsolidatedOrderBook {
 
-    private String pair;
+    private String base;
+    private String quote;
     private String side;
     private List<ConsolidatedLevel> levels;
 
@@ -13,29 +14,60 @@ public class ConsolidatedOrderBook {
     @JsonProperty("event_time")
     private long eventTime;
 
-    public ConsolidatedOrderBook() {}
+    public ConsolidatedOrderBook() {
+    }
 
-    public ConsolidatedOrderBook(String pair, String side, List<ConsolidatedLevel> levels, long eventTime) {
-        this.pair = pair;
+    public ConsolidatedOrderBook(String base, String quote, String side, List<ConsolidatedLevel> levels,
+            long eventTime) {
+        this.base = base;
+        this.quote = quote;
         this.side = side;
         this.levels = levels;
         this.eventTime = eventTime;
     }
 
-    public String getPair() { return pair; }
-    public void setPair(String pair) { this.pair = pair; }
+    public String getBase() {
+        return base;
+    }
 
-    public String getSide() { return side; }
-    public void setSide(String side) { this.side = side; }
+    public void setBase(String base) {
+        this.base = base;
+    }
 
-    public List<ConsolidatedLevel> getLevels() { return levels; }
-    public void setLevels(List<ConsolidatedLevel> levels) { this.levels = levels; }
+    public String getQuote() {
+        return quote;
+    }
 
-    public long getEventTime() { return eventTime; }
-    public void setEventTime(long eventTime) { this.eventTime = eventTime; }
+    public void setQuote(String quote) {
+        this.quote = quote;
+    }
+
+    public String getSide() {
+        return side;
+    }
+
+    public void setSide(String side) {
+        this.side = side;
+    }
+
+    public List<ConsolidatedLevel> getLevels() {
+        return levels;
+    }
+
+    public void setLevels(List<ConsolidatedLevel> levels) {
+        this.levels = levels;
+    }
+
+    public long getEventTime() {
+        return eventTime;
+    }
+
+    public void setEventTime(long eventTime) {
+        this.eventTime = eventTime;
+    }
 
     @Override
     public String toString() {
-        return pair + " " + side + " (" + (levels == null ? 0 : levels.size()) + " levels) " + levels;
+        return base + "/" + quote + " " + side + " (" + (levels == null ? 0 : levels.size()) + " levels) " + levels;
     }
 }

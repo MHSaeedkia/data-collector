@@ -5,8 +5,13 @@ import java.util.List;
 
 public class OrderBookEvent {
 
-    private String exchange;
-    private String pair;
+    @JsonProperty("exchange_id")
+    private int exchangeId;
+
+    @JsonProperty("exchange_name")
+    private String exchangeName;
+    private String base;
+    private String quote;
     private String side;
 
     @JsonProperty("event_time")
@@ -14,20 +19,62 @@ public class OrderBookEvent {
 
     private List<PriceLevel> levels;
 
-    public OrderBookEvent() {}
+    public OrderBookEvent() {
+    }
 
-    public String getExchange() { return exchange; }
-    public void setExchange(String exchange) { this.exchange = exchange; }
+    public int getExchangeId() {
+        return exchangeId;
+    }
 
-    public String getPair() { return pair; }
-    public void setPair(String pair) { this.pair = pair; }
+    public void setExchangeId(int exchangeId) {
+        this.exchangeId = exchangeId;
+    }
 
-    public String getSide() { return side; }
-    public void setSide(String side) { this.side = side; }
+    public String getExchangeName() {
+        return exchangeName;
+    }
 
-    public long getEventTime() { return eventTime; }
-    public void setEventTime(long eventTime) { this.eventTime = eventTime; }
+    public void setExchange(String exchangeName) {
+        this.exchangeName = exchangeName;
+    }
 
-    public List<PriceLevel> getLevels() { return levels; }
-    public void setLevels(List<PriceLevel> levels) { this.levels = levels; }
+    public String getBase() {
+        return base;
+    }
+
+    public void setBase(String base) {
+        this.base = base;
+    }
+
+    public String getQuote() {
+        return quote;
+    }
+
+    public void setQuote(String quote) {
+        this.quote = quote;
+    }
+
+    public String getSide() {
+        return side;
+    }
+
+    public void setSide(String side) {
+        this.side = side;
+    }
+
+    public long getEventTime() {
+        return eventTime;
+    }
+
+    public void setEventTime(long eventTime) {
+        this.eventTime = eventTime;
+    }
+
+    public List<PriceLevel> getLevels() {
+        return levels;
+    }
+
+    public void setLevels(List<PriceLevel> levels) {
+        this.levels = levels;
+    }
 }

@@ -19,8 +19,11 @@ public class ConsolidatedOrderBookSerializer implements SerializationSchema<Cons
             return objectMapper.writeValueAsBytes(element);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(
-                    "Failed to serialize ConsolidatedOrderBook " + element.getPair()
-                            + "-" + element.getSide(), e);
+                    "Failed to serialize ConsolidatedOrderBook " +
+                            element.getBase() + "-" +
+                            element.getQuote() + "-" +
+                            element.getSide(),
+                    e);
         }
     }
 }
