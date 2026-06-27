@@ -13,19 +13,20 @@ Registered in schema registry; NiFi and Flink both reference it by name.
 
 ## Field summary
 
-| Field       | Avro type               | Notes                                                       |
-| ----------- | ----------------------- | ----------------------------------------------------------- |
-| `exchange`  | string                  | Normalized, e.g. `okex`, `nobitex`                          |
-| `pair`      | string                  | Normalized with `-` separator, e.g. `BTC-USDT`              |
-| `side`      | enum `asks\|bids`       | Mirrors topic suffix; included for self-describing messages |
-| `event_time` | long (timestamp-millis) | Exchange-reported UTC timestamp in ms                       |
-| `levels`    | array of PriceLevel     | Price + quantity both as string to preserve decimal precision |
+| Field           | Avro type               | Notes                                                         |
+| --------------- | ----------------------- | ------------------------------------------------------------- |
+| `exchange_name` | string                  | Normalized, e.g. `okex`, `nobitex`                            |
+| `exchange_id`   | int                     | database ID e.g. 1                                            |
+| `pair`          | string                  | Normalized with `/` separator, e.g. `BTC/USDT`                |
+| `side`          | enum `asks\|bids`       | Mirrors topic suffix; included for self-describing messages   |
+| `event_time`    | long (timestamp-millis) | Exchange-reported UTC timestamp in ms                         |
+| `levels`        | array of PriceLevel     | Price + quantity both as string to preserve decimal precision |
 
 ## NiFi responsibility before publishing
 
 NiFi is handled by a separate team and is not implemented in this repo. Documented here for readers to understand the contract this schema depends on.
 
-- Normalize pair name to `{BASE}-{QUOTE}` format (e.g. `BTCUSDT` → `BTC-USDT`)
+- Normalize pair name to `{BASE}/{QUOTE}` format (e.g. `BTCUSDT` → `BTC/USDT`)
 - Split raw exchange message (which contains both sides) into two separate events
 - Route each event to the correct topic: `{pair}-{side}-{exchange}` (e.g. `BTC-USDT-asks-nobitex`)
 - Set Kafka message key to `{exchange}`
