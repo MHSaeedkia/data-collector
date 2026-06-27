@@ -13,7 +13,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: [ "CMD", "curl", "-f", "http://localhost:8081/overview" ]
+            test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
             interval: 10s
             retries: 5
 
@@ -41,8 +41,8 @@ services:
         environment:
             KAFKA_NODE_ID: 1
             KAFKA_PROCESS_ROLES: broker,controller
-            KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+            KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:9092
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
             KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
             KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
             KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
@@ -57,7 +57,14 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:29092", "--list" ]
+            test:
+                [
+                    "CMD",
+                    "kafka-topics",
+                    "--bootstrap-server",
+                    "kafka:29092",
+                    "--list",
+                ]
             interval: 15s
             timeout: 10s
             retries: 5
@@ -79,7 +86,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: [ "CMD", "curl", "-f", "http://localhost:8082/subjects" ]
+            test: ["CMD", "curl", "-f", "http://localhost:8082/subjects"]
             interval: 10s
             timeout: 5s
             retries: 5
@@ -124,7 +131,11 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: [ "CMD-SHELL", "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'" ]
+            test:
+                [
+                    "CMD-SHELL",
+                    "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
+                ]
             interval: 30s
             timeout: 10s
             retries: 5
@@ -146,7 +157,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
             interval: 10s
             retries: 5
 
