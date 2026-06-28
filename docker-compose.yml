@@ -153,6 +153,24 @@ services:
             interval: 10s
             retries: 5
 
+    web:
+        build: ./web
+        container_name: orderbook-web
+        hostname: orderbook-web
+        depends_on:
+            kafka:
+                condition: service_healthy
+            postgres:
+                condition: service_healthy
+        ports:
+            - "3000:3000" # host: http://localhost:3000
+        environment:
+            PORT: 3000
+            KAFKA_BROKER: kafka:29092
+            DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
+        networks:
+            - data-collector-net
+
 volumes:
     data-collector-kafka-data:
     data-collector-postgres-data:

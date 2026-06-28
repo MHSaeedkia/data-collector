@@ -249,7 +249,7 @@
 			});
 
 			function connect() {
-				const ws = new WebSocket(`ws://${location.host}`);
+				const ws = new WebSocket(`ws://${location.host}/ws`);
 				ws.onopen = () => {
 					$dot.classList.add("on");
 					$conn.textContent = "live";

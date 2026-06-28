@@ -25,14 +25,13 @@ metadata:
 
 ## Migration note (changed 2026-06-28)
 
-Topic naming was changed from human-readable to ID-based. **`scripts/warmup.sh`, `schemas/orderbook_event.avsc`, and the Flink job are migrated (Flink compiles); the web app is NOT yet.**
+Topic naming was changed from human-readable to ID-based. **Migration is COMPLETE end to end:** `scripts/warmup.sh`, `schemas/orderbook_event.avsc`, the Flink job, and the web app are all on the ID-based scheme.
 
 Old scheme: input `{base}-{quote}-{side}-{exchange_name}` (e.g. `BTC-USDT-asks-nobitex`), output `{base}-{quote}-{side}` (e.g. `BTC-USDT-asks`).
 
 Flink job migration (done): Flink works **only with `pair_id` and `exchange_id`** — `base`, `quote`, `exchange_name` were removed from all Flink models. `OrderBookEvent` keeps `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `levels` and is annotated `@JsonIgnoreProperties(ignoreUnknown=true)` so it tolerates the descriptive fields the wire JSON still carries (the avsc schema is unchanged). `PairsLoader` selects only `m.id` into `Pair(id)`. `OrderBookSourceFactory` subscribes by regex `{side}-p{pairId}-ex.*`. `OrderBookJob` keys by `pairId` and names operators + sink topic `{side}-p{pair_id}`. `OrderBookMerger` is `KeyedProcessFunction<Integer,…>` with `MapState<Integer,…>` keyed by `exchange_id`. `ConsolidatedOrderBook` = `{ pair_id, side, levels, event_time }`; `ConsolidatedLevel` = `{ exchange_id, price, quantity }`.
 
-Still on the old scheme (must be updated or the pipeline won't connect):
-- `web/server.js` — matches output topics with `^.+-(asks|bids)$`; output topics now START with side, so this no longer matches. Needs e.g. `^(asks|bids)-p\d+$` (output) vs `^(asks|bids)-p\d+-ex\d+$` (input).
+Web app migration (done): rewritten in Go (replacing Node `server.js`), subscribes by regex `^(asks|bids)-p\d+$` (output topics), and resolves `pair_id`/`exchange_id` → display labels from postgres since the output carries no base/quote/exchange_name. See [[orderbook-web]].
 
 ## What was rejected and why
 
