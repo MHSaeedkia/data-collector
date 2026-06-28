@@ -118,7 +118,7 @@ services:
             kafka:
                 condition: service_healthy
         ports:
-            - "9876:8080" # NiFi UI (unsecured HTTP): http://localhost:8081/nifi
+            - "8443:8443"
             - "8081:8081"
         volumes:
             - data-collector-nifi-conf:/opt/nifi/nifi-current/conf
@@ -130,7 +130,7 @@ services:
             test:
                 [
                     "CMD-SHELL",
-                    "curl -fsL http://localhost:8080/nifi/ -o /dev/null",
+                    "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
                 ]
             interval: 30s
             timeout: 10s
