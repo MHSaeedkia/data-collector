@@ -8,6 +8,3 @@ RUN mkdir -p /opt/nifi/nifi-current/drivers \
    && curl -sL -o /opt/nifi/nifi-current/drivers/postgresql-42.7.11.jar \
    https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.11/postgresql-42.7.11.jar
 
-# Run NiFi over plain HTTP (unsecured) instead of the image default HTTPS.
-COPY --chmod=755 start-http.sh /opt/nifi/scripts/start-http.sh
-ENTRYPOINT ["/opt/nifi/scripts/start-http.sh"]
