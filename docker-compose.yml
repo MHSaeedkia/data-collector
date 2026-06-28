@@ -118,6 +118,8 @@ services:
             kafka:
                 condition: service_healthy
         environment:
+            SINGLE_USER_CREDENTIALS_USERNAME: admin
+            SINGLE_USER_CREDENTIALS_PASSWORD: admin123456789
             NIFI_WEB_PROXY_HOST: "192.168.150.104:8443,localhost:8443"
         ports:
             - "8443:8443"
