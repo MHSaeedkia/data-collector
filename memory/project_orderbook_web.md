@@ -32,6 +32,9 @@ exposed broker `localhost:9092`.
 
 - Subscribes via regex `^.+-(asks|bids)$` → matches only the consolidated OUTPUT topics;
   input topics `{pair}-{side}-{exchange}` end in an exchange name so they don't match.
+  ⚠️ STALE as of 2026-06-28: topics migrated to ID-based names (output now `{side}-p{pair_id}`,
+  which STARTS with side, so this regex no longer matches). web/server.js is the last
+  un-migrated component — needs `^(asks|bids)-p\d+$`. See [[kafka-topic-strategy]].
 - Fresh consumer group each start (`orderbook-web-${Date.now()}`) + `fromBeginning: true`,
   so the current book renders on load. Replays history each restart — fine for dev only.
 - New pairs added after server start are only picked up on restart (kafkajs matches the

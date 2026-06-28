@@ -1,17 +1,20 @@
 package io.tibobit.orderbook.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
+// The wire event (see schemas/orderbook_event.avsc) also carries exchange_name, base and
+// quote; Flink works only with the IDs, so those extra fields are ignored on deserialization.
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class OrderBookEvent {
 
     @JsonProperty("exchange_id")
     private int exchangeId;
 
-    @JsonProperty("exchange_name")
-    private String exchangeName;
-    private String base;
-    private String quote;
+    @JsonProperty("pair_id")
+    private int pairId;
+
     private String side;
     private OrderBookEventType type;
 
@@ -31,28 +34,12 @@ public class OrderBookEvent {
         this.exchangeId = exchangeId;
     }
 
-    public String getExchangeName() {
-        return exchangeName;
+    public int getPairId() {
+        return pairId;
     }
 
-    public void setExchange(String exchangeName) {
-        this.exchangeName = exchangeName;
-    }
-
-    public String getBase() {
-        return base;
-    }
-
-    public void setBase(String base) {
-        this.base = base;
-    }
-
-    public String getQuote() {
-        return quote;
-    }
-
-    public void setQuote(String quote) {
-        this.quote = quote;
+    public void setPairId(int pairId) {
+        this.pairId = pairId;
     }
 
     public String getSide() {
@@ -63,20 +50,20 @@ public class OrderBookEvent {
         this.side = side;
     }
 
-    public long getEventTime() {
-        return eventTime;
-    }
-
-    public void setEventTime(long eventTime) {
-        this.eventTime = eventTime;
-    }
-
     public OrderBookEventType getType() {
         return type;
     }
 
     public void setType(OrderBookEventType type) {
         this.type = type;
+    }
+
+    public long getEventTime() {
+        return eventTime;
+    }
+
+    public void setEventTime(long eventTime) {
+        this.eventTime = eventTime;
     }
 
     public List<PriceLevel> getLevels() {

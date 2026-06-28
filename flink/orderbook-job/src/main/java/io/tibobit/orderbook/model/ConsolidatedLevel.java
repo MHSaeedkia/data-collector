@@ -1,21 +1,24 @@
 package io.tibobit.orderbook.model;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class ConsolidatedLevel {
 
-    private String exchange;
+    @JsonProperty("exchange_id")
+    private int exchangeId;
     private String price;
     private String quantity;
 
     public ConsolidatedLevel() {}
 
-    public ConsolidatedLevel(String exchange, String price, String quantity) {
-        this.exchange = exchange;
+    public ConsolidatedLevel(int exchangeId, String price, String quantity) {
+        this.exchangeId = exchangeId;
         this.price = price;
         this.quantity = quantity;
     }
 
-    public String getExchange() { return exchange; }
-    public void setExchange(String exchange) { this.exchange = exchange; }
+    public int getExchangeId() { return exchangeId; }
+    public void setExchangeId(int exchangeId) { this.exchangeId = exchangeId; }
 
     public String getPrice() { return price; }
     public void setPrice(String price) { this.price = price; }
@@ -25,6 +28,6 @@ public class ConsolidatedLevel {
 
     @Override
     public String toString() {
-        return "[" + exchange + " " + price + " x " + quantity + "]";
+        return "[" + exchangeId + " " + price + " x " + quantity + "]";
     }
 }

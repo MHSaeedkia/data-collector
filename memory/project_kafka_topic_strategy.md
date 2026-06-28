@@ -5,18 +5,34 @@ metadata:
   type: project
 ---
 
-## Decision: Topic per pair+side+exchange
+## Decision: Topic per side+pair+exchange (ID-based names)
 
-**Topic** → `{pair}-{side}-{exchange}` (e.g. `BTC-USDT-asks-nobitex`, `BTC-USDT-bids-bitpin`)  
-**Key** → null (irrelevant; one exchange per topic guarantees ordering)  
-**Body** → price, qty, timestamp, exchange, pair, side
+**Input topic** → `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`, `bids-p2-ex1`)
+**Output topic** → `{side}-p{pair_id}` (e.g. `asks-p2`) — Flink writes the consolidated book here
+**Key** → null (one exchange per input topic guarantees ordering)
+**Body** → see [[avro-schema-orderbook]] (base, quote, pair_id, exchange_id, exchange_name, side, type, event_time, levels)
+
+`pair_id` = `markets.id`, `exchange_id` = `exchanges.id`. Topic names use the **DB integer IDs**, not the human-readable base/quote/exchange_name. Side comes first.
 
 ## Rationale
 
-- One exchange publishes to one topic — ordering is guaranteed with a single partition, no key needed
-- Partition count can be 1 per topic; no skew, no idle partitions, no repartitioning when exchanges are added or removed
-- Flink uses regex subscription to aggregate across exchanges: `BTC-USDT-asks-.*` picks up all exchanges for that pair+side automatically — new exchanges are picked up with no Flink config change
+- One exchange publishes to one input topic — ordering is guaranteed with a single partition, no key needed
+- Partition count is 1 per topic; no skew, no idle partitions, no repartitioning when exchanges are added or removed
+- Flink aggregates across exchanges via regex on input topics: `{side}-p{pair_id}-ex.*` (e.g. `asks-p2-ex.*`) picks up all exchanges for that side+pair automatically — new exchanges need no Flink config change
+- Output topic `{side}-p{pair_id}` is a prefix of the input names, but the required `-ex` segment keeps it out of the input regex, so the job won't re-consume its own output (no feedback loop)
+- IDs keep topic names compact and decoupled from display strings (avoids casing/charset issues). `exchanges.name` is unique and immutable (README RULE) so names would also be stable, but IDs are shorter
 - Topic count at scale: 10 exchanges × 200 pairs × 2 sides = 4000 topics — fine for modern Kafka (KRaft)
+
+## Migration note (changed 2026-06-28)
+
+Topic naming was changed from human-readable to ID-based. **`scripts/warmup.sh`, `schemas/orderbook_event.avsc`, and the Flink job are migrated (Flink compiles); the web app is NOT yet.**
+
+Old scheme: input `{base}-{quote}-{side}-{exchange_name}` (e.g. `BTC-USDT-asks-nobitex`), output `{base}-{quote}-{side}` (e.g. `BTC-USDT-asks`).
+
+Flink job migration (done): Flink works **only with `pair_id` and `exchange_id`** — `base`, `quote`, `exchange_name` were removed from all Flink models. `OrderBookEvent` keeps `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `levels` and is annotated `@JsonIgnoreProperties(ignoreUnknown=true)` so it tolerates the descriptive fields the wire JSON still carries (the avsc schema is unchanged). `PairsLoader` selects only `m.id` into `Pair(id)`. `OrderBookSourceFactory` subscribes by regex `{side}-p{pairId}-ex.*`. `OrderBookJob` keys by `pairId` and names operators + sink topic `{side}-p{pair_id}`. `OrderBookMerger` is `KeyedProcessFunction<Integer,…>` with `MapState<Integer,…>` keyed by `exchange_id`. `ConsolidatedOrderBook` = `{ pair_id, side, levels, event_time }`; `ConsolidatedLevel` = `{ exchange_id, price, quantity }`.
+
+Still on the old scheme (must be updated or the pipeline won't connect):
+- `web/server.js` — matches output topics with `^.+-(asks|bids)$`; output topics now START with side, so this no longer matches. Needs e.g. `^(asks|bids)-p\d+$` (output) vs `^(asks|bids)-p\d+-ex\d+$` (input).
 
 ## What was rejected and why
 
@@ -32,7 +48,7 @@ Processing all pairs for one exchange (e.g. everything from `nobitex`) is not a 
 
 ## Operational note
 
-Topics are pre-provisioned from the postgres markets table — not auto-created. Topic provisioning is deferred until the markets table structure is finalized.
+Topics are pre-provisioned by `scripts/warmup.sh` from the postgres `markets` + `exchange_markets` + `exchanges` tables (rows where `exchange_markets.status = 'subscribe'`) — not auto-created. warmup.sh first registers the Avro schema, then creates input + output topics (single partition, replication-factor 1).
 
-**Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.  
+**Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.
 **How to apply:** Use this structure for all Kafka topic definitions, NiFi routing logic, and Flink source configurations in this project.

@@ -10,25 +10,25 @@ metadata:
 For each `{pair}-{side}` we must **generate a consolidated order book** that merges
 the order book data of all exchanges for that pair+side into a single stream.
 
-Desired output streams (one per pair+side, exchanges merged in):
+Desired output streams (one per pair+side, exchanges merged in) — topic `{side}-p{pair_id}`:
 
 ```
-BTC-USDT-asks
-BTC-USDT-bids
-TON-USDT-asks
-TON-USDT-bids
+asks-p2    # BTC-USDT asks
+bids-p2    # BTC-USDT bids
+asks-p7    # another pair
+bids-p7
 ...
 ```
 
 ## Two layers of "merge"
 
 1. **Transport merge (done)** — the Kafka source already pulls all exchange topics
-   for a pair+side into one DataStream via regex `{pair}-{side}-.*`. See
+   for a pair+side into one DataStream via regex `{side}-p{pair_id}-ex.*`. See
    [[kafka-topic-strategy]].
 2. **Stateful generation (this requirement)** — on top of that merged stream, build
-   and emit a consolidated order book. Plan: `keyBy(pair+side)` → keep latest snapshot
+   and emit a consolidated order book. Plan: `keyBy(pairId)` → keep latest snapshot
    per exchange in keyed state → merge into one book on each event → emit
-   `{pair}-{side}` stream.
+   `{side}-p{pair_id}` stream.
 
 ## Resolved: merge semantics (UNION, do NOT combine quantities)
 
@@ -48,15 +48,16 @@ Rules:
 - Asks sorted ascending by price; bids descending (highest first).
 - Tie-break at equal price (different exchanges): larger quantity first.
 - Price and quantity compared as `BigDecimal` (decimal strings; avoid float error).
-- Output model: new `ConsolidatedOrderBook { pair, side, levels }` where each level is
-  `{ exchange, price, quantity }`. `OrderBookEvent`/`PriceLevel` can't be reused as-is
-  because exchange must live on each level, not the envelope.
+- Output model: new `ConsolidatedOrderBook { pair_id, side, levels }` where each level is
+  `{ exchange_id, price, quantity }` (`exchange_id` is the int DB id, not the name).
+  `OrderBookEvent`/`PriceLevel` can't be reused as-is because the exchange must live on each level,
+  not the envelope.
 
 **Why:** This is the core business value of the pipeline — a single normalized,
 cross-exchange order book view per trading pair and side, rather than fragmented
 per-exchange snapshots.
-**How to apply:** Implement as a keyed stateful operator (`KeyedProcessFunction` keyed by
-`pair`, `MapState<exchange, OrderBookEvent>` holding the latest snapshot per exchange —
+**How to apply:** Implement as a keyed stateful operator (`KeyedProcessFunction<Integer,…>` keyed by
+`pairId`, `MapState<Integer, OrderBookEvent>` keyed by `exchange_id` holding the latest snapshot per exchange —
 the full event is stored so `event_time` is available for the max) between the Kafka
 sources and the sink in `OrderBookJob`. On each event, replace that exchange's snapshot,
 rebuild the union, sort by price, and emit a `ConsolidatedOrderBook`.
@@ -85,21 +86,23 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
 
 ## Implemented (Phase 1)
 
-- `model/ConsolidatedLevel.java` — `{ exchange, price, quantity }`
-- `model/ConsolidatedOrderBook.java` — `{ pair, side, levels, eventTime }` (eventTime = max of contributing snapshots)
-- `aggregation/OrderBookMerger.java` — `KeyedProcessFunction`; `MapState<exchange, OrderBookEvent>`;
+- `model/ConsolidatedLevel.java` — `{ exchange_id, price, quantity }` (`exchange_id` int, serialized as `exchange_id`)
+- `model/ConsolidatedOrderBook.java` — `{ pair_id, side, levels, eventTime }` (eventTime = max of contributing snapshots)
+- `aggregation/OrderBookMerger.java` — `KeyedProcessFunction<Integer,…>` (keyed by pairId); `MapState<Integer, OrderBookEvent>` (keyed by exchange_id);
   comparator = price (asc asks / desc bids) then quantity desc, both `BigDecimal`
-- `OrderBookJob.addStream` wires `source → keyBy(pair) → OrderBookMerger(side)` then fans out to
-  TWO sinks: a Kafka sink to topic `{pair}-{side}` (e.g. `BTC-USDT-asks`) AND `print(name)` to stdout
+- `OrderBookJob.addStream` wires `source → keyBy(pairId) → OrderBookMerger(side)` then fans out to
+  TWO sinks: a Kafka sink to topic `{side}-p{pair_id}` (e.g. `asks-p2`) AND `print(name)` to stdout
+  (operator/print/topic names all use `{side}-p{pair_id}`)
 - `serializer/ConsolidatedOrderBookSerializer.java` — Jackson `SerializationSchema`, transient ObjectMapper
 - `sink/OrderBookSinkFactory.java` — `KafkaSink<ConsolidatedOrderBook>`; builder default `DeliveryGuarantee.NONE`
   (we don't reference `DeliveryGuarantee` directly — `flink-connector-base` isn't on the compile classpath)
-- No feedback loop: output topic `{pair}-{side}` does NOT match source pattern `{pair}-{side}-.*`
-  (the trailing `-` after side is required), so the job won't re-consume its own output
+- No feedback loop: output topic `{side}-p{pair_id}` does NOT match source pattern `{side}-p{pair_id}-ex.*`
+  (the `-ex` segment is required), so the job won't re-consume its own output
 - `ConsolidatedOrderBook.eventTime` serializes as `event_time` (matches `OrderBookEvent` snake_case convention)
 - Flink 2.x note: operator uses `open(OpenContext)` (the 1.x `open(Configuration)` was removed in Flink 2.0)
 - Functional test: `scripts/produce-test-data.sh` STREAMS randomized snapshots (random
   pair/side/exchange each tick, prices drifting around a mid via awk, pauses on some steps)
   for `DURATION_SECONDS` (default 600) to show live UI updates — not a fixed batch
-- `scripts/warmup.sh` provisions BOTH input topics (`{pair}-{side}-{exchange}`, per subscribed
-  exchange) AND output topics (`{pair}-{side}`, one per distinct subscribed pair) — single partition each
+- `scripts/warmup.sh` provisions BOTH input topics (`{side}-p{pair_id}-ex{exchange_id}`, per subscribed
+  exchange) AND output topics (`{side}-p{pair_id}`, one per distinct subscribed pair) — single partition each.
+  (both warmup.sh and the Flink job use the ID-based scheme as of 2026-06-28 — see [[kafka-topic-strategy]])

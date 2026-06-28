@@ -20,9 +20,7 @@ public class ConsolidatedOrderBookSerializer implements SerializationSchema<Cons
         } catch (JsonProcessingException e) {
             throw new RuntimeException(
                     "Failed to serialize ConsolidatedOrderBook " +
-                            element.getBase() + "-" +
-                            element.getQuote() + "-" +
-                            element.getSide(),
+                            element.getSide() + "-p" + element.getPairId(),
                     e);
         }
     }

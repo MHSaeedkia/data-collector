@@ -5,8 +5,8 @@ import java.util.List;
 
 public class ConsolidatedOrderBook {
 
-    private String base;
-    private String quote;
+    @JsonProperty("pair_id")
+    private int pairId;
     private String side;
     private List<ConsolidatedLevel> levels;
 
@@ -17,29 +17,19 @@ public class ConsolidatedOrderBook {
     public ConsolidatedOrderBook() {
     }
 
-    public ConsolidatedOrderBook(String base, String quote, String side, List<ConsolidatedLevel> levels,
-            long eventTime) {
-        this.base = base;
-        this.quote = quote;
+    public ConsolidatedOrderBook(int pairId, String side, List<ConsolidatedLevel> levels, long eventTime) {
+        this.pairId = pairId;
         this.side = side;
         this.levels = levels;
         this.eventTime = eventTime;
     }
 
-    public String getBase() {
-        return base;
+    public int getPairId() {
+        return pairId;
     }
 
-    public void setBase(String base) {
-        this.base = base;
-    }
-
-    public String getQuote() {
-        return quote;
-    }
-
-    public void setQuote(String quote) {
-        this.quote = quote;
+    public void setPairId(int pairId) {
+        this.pairId = pairId;
     }
 
     public String getSide() {
@@ -68,6 +58,6 @@ public class ConsolidatedOrderBook {
 
     @Override
     public String toString() {
-        return base + "/" + quote + " " + side + " (" + (levels == null ? 0 : levels.size()) + " levels) " + levels;
+        return "p" + pairId + " " + side + " (" + (levels == null ? 0 : levels.size()) + " levels) " + levels;
     }
 }

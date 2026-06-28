@@ -36,8 +36,8 @@ public class OrderBookJob {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         for (Pair pair : pairs) {
-            addStream(env, bootstrapServers, groupId, pair.base(), pair.quote(), "asks");
-            addStream(env, bootstrapServers, groupId, pair.base(), pair.quote(), "bids");
+            addStream(env, bootstrapServers, groupId, pair, "asks");
+            addStream(env, bootstrapServers, groupId, pair, "bids");
         }
 
         env.execute("orderbook-job");
@@ -47,23 +47,22 @@ public class OrderBookJob {
             StreamExecutionEnvironment env,
             String bootstrapServers,
             String groupId,
-            String base,
-            String quote,
+            Pair pair,
             String side) {
 
-        KafkaSource<OrderBookEvent> source = OrderBookSourceFactory.create(bootstrapServers, groupId, base, quote,
-                side);
+        KafkaSource<OrderBookEvent> source = OrderBookSourceFactory.create(bootstrapServers, groupId, pair.id(), side);
 
-        String name = base + "-" + quote + "-" + side;
+        // Operator and topic names both use IDs ({side}-p{pair_id}).
+        String name = side + "-p" + pair.id();
         DataStream<OrderBookEvent> stream = env.fromSource(source, WatermarkStrategy.noWatermarks(), name + "-source");
 
         DataStream<ConsolidatedOrderBook> consolidated = stream
-                .keyBy(OrderBookEvent::getBase).keyBy(OrderBookEvent::getQuote)
+                .keyBy(OrderBookEvent::getPairId)
                 .process(new OrderBookMerger(side))
                 .name(name + "-merger");
 
-        // Publish the merged book to its own topic ({base}-{quote}-{side}, e.g.
-        // BTC-USDT-asks).
+        // Publish the merged book to its own topic ({side}-p{pair_id}, e.g.
+        // asks-p2).
         consolidated.sinkTo(OrderBookSinkFactory.create(bootstrapServers, name)).name(name + "-sink");
 
         // Also print to stdout for verification.

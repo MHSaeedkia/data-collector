@@ -20,6 +20,10 @@
 			"type": "string"
 		},
 		{
+			"name": "pair_id",
+			"type": "int"
+		},
+		{
 			"name": "side",
 			"type": {
 				"type": "enum",

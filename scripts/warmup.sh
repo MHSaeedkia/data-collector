@@ -55,7 +55,7 @@ pairs=$(docker exec "$POSTGRES_CONTAINER" psql \
     -U "$POSTGRES_USER" \
     -d "$POSTGRES_DB" \
     -t -A -F'|' \
-    -c "SELECT m.base, m.quote, em.exchange_id, e.name as exchange_name
+    -c "SELECT m.id, m.base, m.quote, em.exchange_id, e.name as exchange_name
         FROM exchange_markets em
         JOIN markets m ON em.market_id = m.id
         JOIN exchanges e ON e.id = em.exchange_id
@@ -80,18 +80,18 @@ create_topic() {
         --replication-factor 1
 }
 
-# Input topics — one per pair+side+exchange (NiFi produces, Flink source consumes).
-while IFS='|' read -r base quote exchange_id exchange_name; do
+# Input topics — one per side+pair+exchange (NiFi produces, Flink source consumes).
+while IFS='|' read -r pair_id base quote exchange_id exchange_name; do
     for side in asks bids; do
-        create_topic "${base}-${quote}-${side}-${exchange_name}"
+        create_topic "${side}-p${pair_id}-ex${exchange_id}"
     done
 done <<< "$pairs"
 
-# Output topics — one per pair+side (Flink aggregation writes the consolidated book here).
-distinct_pairs=$(echo "$pairs" | cut -d'|' -f1,2 | sort -u)
-while IFS='|' read -r base quote; do
+# Output topics — one per side+pair (Flink aggregation writes the consolidated book here).
+distinct_pairs=$(echo "$pairs" | cut -d'|' -f1,2,3 | sort -u)
+while IFS='|' read -r pair_id base quote; do
     for side in asks bids; do
-        create_topic "${base}-${quote}-${side}"
+        create_topic "${side}-p${pair_id}"
     done
 done <<< "$distinct_pairs"
 

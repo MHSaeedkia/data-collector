@@ -3,6 +3,7 @@
 	"exchange_name": "bitpin",
 	"base": "BTC",
 	"quote": "USDT",
+	"pair_id": 2,
 	"side": "asks",
 	"type": "snapshot",
 	"event_time": 1750680000000,

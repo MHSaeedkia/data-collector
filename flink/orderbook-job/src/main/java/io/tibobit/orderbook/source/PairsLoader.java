@@ -10,7 +10,7 @@ import java.util.List;
 
 public class PairsLoader {
 
-    private static final String QUERY = "SELECT DISTINCT m.base , m.quote " +
+    private static final String QUERY = "SELECT DISTINCT m.id " +
             "FROM exchange_markets em " +
             "JOIN markets m ON em.market_id = m.id " +
             "WHERE em.status = 'subscribe'";
@@ -19,10 +19,10 @@ public class PairsLoader {
     private final String user;
     private final String password;
 
-    public record Pair(String base, String quote) {
+    public record Pair(int id) {
         @Override
         public String toString() {
-            return base + ", " + quote;
+            return "p" + id;
         }
     }
 
@@ -38,7 +38,7 @@ public class PairsLoader {
                 Statement stmt = conn.createStatement();
                 ResultSet rs = stmt.executeQuery(QUERY)) {
             while (rs.next()) {
-                pairs.add(new Pair(rs.getString("base"), rs.getString("quote")));
+                pairs.add(new Pair(rs.getInt("id")));
             }
         }
         return pairs;

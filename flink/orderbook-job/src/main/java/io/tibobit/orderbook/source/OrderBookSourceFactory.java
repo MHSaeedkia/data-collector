@@ -12,12 +12,11 @@ public class OrderBookSourceFactory {
     public static KafkaSource<OrderBookEvent> create(
             String bootstrapServers,
             String groupId,
-            String base,
-            String quote,
+            int pairId,
             String side) {
 
-        // e.g. BTC-USDT asks → "BTC\-USDT-asks-.*"
-        Pattern topicPattern = Pattern.compile(Pattern.quote(base) + "-" + Pattern.quote(quote) + "-" + side + "-.*");
+        // e.g. pair 2 asks → "asks-p2-ex.*" (matches every exchange's input topic)
+        Pattern topicPattern = Pattern.compile(side + "-p" + pairId + "-ex.*");
 
         return KafkaSource.<OrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
