@@ -23,7 +23,8 @@ services:
         hostname: taskmanager
         command: taskmanager
         depends_on:
-            - jobmanager
+            jobmanager:
+                condition: service_healthy
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
@@ -74,7 +75,8 @@ services:
         container_name: schema-registry
         hostname: schema-registry
         depends_on:
-            - kafka
+            kafka:
+                condition: service_healthy
         ports:
             - "8082:8082" # host: localhost:8082, inside docker: schema-registry:8082
         environment:
@@ -95,8 +97,10 @@ services:
         container_name: kafka-ui
         hostname: kafka-ui
         depends_on:
-            - kafka
-            - schema-registry
+            kafka:
+                condition: service_healthy
+            schema-registry:
+                condition: service_healthy
         ports:
             - "8080:8080" # host: localhost:8080
         environment:
@@ -111,7 +115,8 @@ services:
         container_name: nifi
         hostname: nifi
         depends_on:
-            - kafka
+            kafka:
+                condition: service_healthy
         ports:
             - "8443:8443"
             - "8081:8081"
@@ -129,7 +134,7 @@ services:
             test:
                 [
                     "CMD-SHELL",
-                    "curl -k -s -o /dev/null -w '%{http_code}' https://$$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
+                    "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
                 ]
             interval: 30s
             timeout: 10s
