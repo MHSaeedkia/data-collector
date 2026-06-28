@@ -9,15 +9,18 @@
 		},
 		{
 			"name": "exchange_name",
-			"type": "string"
+			"type": ["null", "string"],
+			"default": null
 		},
 		{
 			"name": "base",
-			"type": "string"
+			"type": ["null", "string"],
+			"default": null
 		},
 		{
 			"name": "quote",
-			"type": "string"
+			"type": ["null", "string"],
+			"default": null
 		},
 		{
 			"name": "pair_id",

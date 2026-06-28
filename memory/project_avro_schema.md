@@ -16,17 +16,19 @@ Example payload: `schemas/orderbook_event_example.json`.
 
 | Field           | Avro type                 | Notes                                                         |
 | --------------- | ------------------------- | ------------------------------------------------------------- |
-| `exchange_id`   | int                       | DB `exchanges.id`, e.g. 1 — the exchange identity            |
-| `exchange_name` | string                    | **Display only, no logic** — e.g. `bitpin`, `nobitex`        |
-| `base`          | string                    | **Display only, no logic** — base asset, e.g. `BTC`          |
-| `quote`         | string                    | **Display only, no logic** — quote asset, e.g. `USDT`        |
-| `pair_id`       | int                       | DB `markets.id`, e.g. 2 — the pair identity, used in topics  |
-| `side`          | enum `asks`\|`bids`       | Mirrors topic prefix; included for self-describing messages   |
-| `type`          | enum `snapshot`\|`update` | Event type                                                    |
-| `event_time`    | long (timestamp-millis)   | Exchange-reported UTC timestamp in ms                         |
-| `levels`        | array of PriceLevel       | Price + quantity both as string to preserve decimal precision |
+| `exchange_id`   | int (required)            | DB `exchanges.id`, e.g. 1 — the exchange identity            |
+| `exchange_name` | `["null","string"]`=null  | **Display only, no logic** — e.g. `bitpin`, `nobitex`        |
+| `base`          | `["null","string"]`=null  | **Display only, no logic** — base asset, e.g. `BTC`          |
+| `quote`         | `["null","string"]`=null  | **Display only, no logic** — quote asset, e.g. `USDT`        |
+| `pair_id`       | int (required)            | DB `markets.id`, e.g. 2 — the pair identity, used in topics  |
+| `side`          | enum `asks`\|`bids` (req)  | Mirrors topic prefix; included for self-describing messages   |
+| `type`          | enum `snapshot`\|`update` (req) | Event type                                              |
+| `event_time`    | long timestamp-millis (req) | Exchange-reported UTC timestamp in ms                       |
+| `levels`        | array of PriceLevel (req)  | Price + quantity both as string to preserve decimal precision |
 
 `pair_id` was added 2026-06-28; the pipeline already moved from a single `pair` string to separate `base`/`quote` fields earlier.
+
+Required vs optional (set 2026-06-28): `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `levels` are **required** (non-nullable, no default). The three display-only fields `exchange_name`/`base`/`quote` are **optional** — `["null","string"]` with `default: null` — since no logic depends on them.
 
 ## `base`, `quote`, `exchange_name` are display-only — NO logic depends on them
 
