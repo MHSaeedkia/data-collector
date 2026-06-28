@@ -11,9 +11,13 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -mod=vendor -o /orderbook-web .
 
 # --- runtime stage ---
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM alpine:3.22
 WORKDIR /app
 COPY --from=build /orderbook-web /app/orderbook-web
+
+# Keep the non-root posture we had with distroless.
+RUN adduser -D -u 10001 app
+USER app
 
 ENV PORT=3000
 EXPOSE 3000

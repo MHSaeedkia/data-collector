@@ -61,8 +61,9 @@ Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نام
 
 ## Docker
 
-- `web/Dockerfile` — multi-stage: `golang:1.26-alpine` build → `gcr.io/distroless/static-debian12:nonroot`
-  runtime. Static `CGO_ENABLED=0` binary; embedded UI means nothing else is copied into the image.
+- `web/Dockerfile` — multi-stage: `golang:1.26-alpine` build → `alpine:3.22` runtime (runs as a
+  non-root `app` user). Static `CGO_ENABLED=0` binary; embedded UI means nothing else is copied
+  into the image (~32 MB).
 - Added as the `web` service in `docker-compose.yml`: `build: ./web`, port `3000:3000`,
   `depends_on` kafka+postgres (service_healthy), env `KAFKA_BROKER=kafka:29092` and
   `DATABASE_URL=postgres://postgres:postgres@postgres:5432/markets`, on `data-collector-net`.
