@@ -118,13 +118,8 @@ services:
             kafka:
                 condition: service_healthy
         ports:
-            - "7443:8443"
-            - "8081:8081"
-        environment:
-            SINGLE_USER_CREDENTIALS_USERNAME: admin
-            SINGLE_USER_CREDENTIALS_PASSWORD: admin123456789
+            - "8081:8080" # NiFi UI (unsecured HTTP): http://localhost:8081/nifi
         volumes:
-            - data-collector-nifi-data:/opt/nifi/nifi-current/conf
             - data-collector-nifi-conf:/opt/nifi/nifi-current/conf
             - data-collector-nifi-state:/opt/nifi/nifi-current/state
             - data-collector-nifi-logs:/opt/nifi/nifi-current/logs
@@ -132,10 +127,7 @@ services:
             - data-collector-net
         healthcheck:
             test:
-                [
-                    "CMD-SHELL",
-                    "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
-                ]
+                ["CMD-SHELL", "curl -fsL http://localhost:8080/nifi/ -o /dev/null"]
             interval: 30s
             timeout: 10s
             retries: 5
@@ -164,7 +156,6 @@ services:
 volumes:
     data-collector-kafka-data:
     data-collector-postgres-data:
-    data-collector-nifi-data:
     data-collector-nifi-conf:
     data-collector-nifi-state:
     data-collector-nifi-logs:
