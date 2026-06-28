@@ -134,7 +134,7 @@ services:
             test:
                 [
                     "CMD-SHELL",
-                    "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
+                    "curl -k -s -o /dev/null -w '%{http_code}' https://$$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
                 ]
             interval: 30s
             timeout: 10s
