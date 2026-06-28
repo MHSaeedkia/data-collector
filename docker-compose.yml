@@ -118,7 +118,7 @@ services:
             kafka:
                 condition: service_healthy
         ports:
-            - "8443:8443"
+            - "7443:8443"
             - "8081:8081"
         environment:
             SINGLE_USER_CREDENTIALS_USERNAME: admin
