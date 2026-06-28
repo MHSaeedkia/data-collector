@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -22,12 +21,20 @@ type Exchange struct {
 	Name string
 }
 
+type Pair struct {
+	ID    int
+	Base  string
+	Quote string
+}
+
 var (
 	exchanges = []Exchange{
 		{ID: 1, Name: "nobitex"},
 		{ID: 2, Name: "bitpin"},
 	}
-	pairs = []string{"BTC-USDT"}
+	pairs = []Pair{
+		{ID: 2, Base: "BTC", Quote: "USDT"},
+	}
 	sides = []string{"asks", "bids"}
 )
 
@@ -38,12 +45,15 @@ type Level struct {
 }
 
 // OrderBookEvent mirrors the JSON payload built with `jq` in the original script.
+// Identity is pair_id/exchange_id; base/quote/exchange_name are display-only.
 type OrderBookEvent struct {
 	ExchangeID   int     `json:"exchange_id"`
 	ExchangeName string  `json:"exchange_name"`
 	Base         string  `json:"base"`
 	Quote        string  `json:"quote"`
+	PairID       int     `json:"pair_id"`
 	Side         string  `json:"side"`
+	Type         string  `json:"type"`
 	EventTime    int64   `json:"event_time"`
 	Levels       []Level `json:"levels"`
 }
@@ -61,8 +71,8 @@ func pairParams(pair string) (base, step float64, priceDecimals int, qtyMin, qty
 
 // genLevels generates a randomized levels slice for a (pair, side), mirroring the
 // bash gen_levels() awk block.
-func genLevels(pair, side string) []Level {
-	base, step, priceDecimals, qtyMin, qtyMax, qtyDecimals := pairParams(pair)
+func genLevels(pair Pair, side string) []Level {
+	base, step, priceDecimals, qtyMin, qtyMax, qtyDecimals := pairParams(pair.Base + "-" + pair.Quote)
 
 	n := 3 + rand.Intn(5) // 3..7 levels
 	mid := base + (rand.Float64()*10-5)*step
@@ -86,9 +96,9 @@ func genLevels(pair, side string) []Level {
 	return levels
 }
 
-// topicName mirrors the bash convention: "{pair}-{side}-{exchange}".
-func topicName(pair, side, exchange string) string {
-	return fmt.Sprintf("%s-%s-%s", pair, side, exchange)
+// topicName builds the ID-based input topic name: "{side}-p{pair_id}-ex{exchange_id}".
+func topicName(side string, pairID, exchangeID int) string {
+	return fmt.Sprintf("%s-p%d-ex%d", side, pairID, exchangeID)
 }
 
 // ensureTopics creates every {pair}-{side}-{exchange} topic (1 partition, replication
@@ -117,7 +127,7 @@ func ensureTopics(bootstrap string) error {
 		for _, side := range sides {
 			for _, exchange := range exchanges {
 				configs = append(configs, kafka.TopicConfig{
-					Topic:             topicName(pair, side, exchange.Name),
+					Topic:             topicName(side, pair.ID, exchange.ID),
 					NumPartitions:     1,
 					ReplicationFactor: 1,
 				})
@@ -131,14 +141,16 @@ func ensureTopics(bootstrap string) error {
 	return nil
 }
 
-// emit publishes one snapshot to {pair}-{side}-{exchange}, mirroring the bash emit().
-func emit(ctx context.Context, writer *kafka.Writer, pair string, side string, exchangeID int, exchangeName string, levels []Level) error {
+// emit publishes one snapshot to {side}-p{pair_id}-ex{exchange_id}, mirroring the bash emit().
+func emit(ctx context.Context, writer *kafka.Writer, pair Pair, side string, exchange Exchange, levels []Level) error {
 	event := OrderBookEvent{
-		ExchangeID:   exchangeID,
-		ExchangeName: exchangeName,
-		Base:         strings.Split(pair, "-")[0],
-		Quote:        strings.Split(pair, "-")[1],
+		ExchangeID:   exchange.ID,
+		ExchangeName: exchange.Name,
+		Base:         pair.Base,
+		Quote:        pair.Quote,
+		PairID:       pair.ID,
 		Side:         side,
+		Type:         "snapshot",
 		EventTime:    time.Now().UnixMilli(),
 		Levels:       levels,
 	}
@@ -147,9 +159,9 @@ func emit(ctx context.Context, writer *kafka.Writer, pair string, side string, e
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
-
+	topicName := topicName(side, pair.ID, exchange.ID)
 	return writer.WriteMessages(ctx, kafka.Message{
-		Topic: topicName(pair, side, exchangeName),
+		Topic: topicName,
 		Value: body,
 	})
 }
@@ -204,12 +216,12 @@ loop:
 		exchange := exchanges[rand.Intn(len(exchanges))]
 
 		levels := genLevels(pair, side)
-		if err := emit(ctx, writer, pair, side, exchange.ID, exchange.Name, levels); err != nil {
+		if err := emit(ctx, writer, pair, side, exchange, levels); err != nil {
 			fmt.Printf("\n  emit failed, continuing: %v\n", err)
 		}
 
 		count++
-		fmt.Printf("\r  sent %-6d (last: %-9s %-4s %-8s)   ", count, pair, side, exchange.Name)
+		fmt.Printf("\r  sent %-6d (last: %-9s %-4s %-8s)   ", count, pair.Base+"-"+pair.Quote, side, exchange.Name)
 
 		// Pause on ~1 of every 3 steps to create visible bursts and gaps.
 		if rand.Intn(3) == 0 {
