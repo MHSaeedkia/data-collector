@@ -43,6 +43,10 @@ public class OrderBookMerger
         this.priceAscending = "asks".equals(side);
     }
 
+    // State and comparator are built in open() (not the constructor) because they belong to
+    // the runtime: MapState is provided per keyed instance, and Comparator isn't Serializable
+    // so it can't be a field shipped with the operator. open(OpenContext) is the Flink 2.x
+    // signature; the 1.x open(Configuration) was removed in 2.0.
     @Override
     public void open(OpenContext openContext) {
         MapStateDescriptor<Integer, OrderBookEvent> descriptor = new MapStateDescriptor<>(
@@ -70,10 +74,14 @@ public class OrderBookMerger
         // Replace this exchange's latest snapshot.
         snapshotsByExchange.put(event.getExchangeId(), event);
 
-        // Flatten every exchange's levels into one tagged list.
+        // Rebuild the whole consolidated book from scratch on every event: flatten every
+        // exchange's stored snapshot into one list, tagging each level with its exchange_id.
+        // (Cheap enough — book depth is small — and avoids incremental-merge state bugs.)
         List<ConsolidatedLevel> merged = new ArrayList<>();
         long maxEventTime = Long.MIN_VALUE;
         for (OrderBookEvent snapshot : snapshotsByExchange.values()) {
+            // Output event_time = newest contributing snapshot, so freshness reflects the
+            // most recent exchange update, not whichever one happened to trigger this rebuild.
             maxEventTime = Math.max(maxEventTime, snapshot.getEventTime());
             if (snapshot.getLevels() == null) {
                 continue;
@@ -84,6 +92,8 @@ public class OrderBookMerger
             }
         }
 
+        // Sort the union (price asc/desc by side, then quantity desc); levels are NOT summed,
+        // so equal-price levels from different exchanges stay as separate adjacent entries.
         merged.sort(comparator);
         out.collect(new ConsolidatedOrderBook(event.getPairId(), side, merged, maxEventTime));
     }

@@ -8,6 +8,11 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Loads the set of pairs the job should consume, once at startup, from postgres.
+ * A pair counts as subscribed if any exchange_markets row for it has status
+ * 'subscribe'; DISTINCT collapses the per-exchange rows down to one entry per pair.
+ */
 public class PairsLoader {
 
     private static final String QUERY = "SELECT DISTINCT m.id " +

@@ -7,6 +7,10 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 
 import java.io.IOException;
 
+/**
+ * Decodes the JSON value bytes of an input Kafka record into an {@link OrderBookEvent}.
+ * Used by the source (see OrderBookSourceFactory).
+ */
 public class OrderBookEventDeserializer implements DeserializationSchema<OrderBookEvent> {
 
     // ObjectMapper is not Serializable — initialize lazily after deserialization

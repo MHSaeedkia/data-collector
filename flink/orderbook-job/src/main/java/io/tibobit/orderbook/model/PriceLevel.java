@@ -1,5 +1,10 @@
 package io.tibobit.orderbook.model;
 
+/**
+ * One (price, quantity) rung within an exchange's {@link OrderBookEvent}.
+ * Both are kept as decimal strings (parsed to BigDecimal only when comparing)
+ * to preserve exact precision and avoid binary float rounding error.
+ */
 public class PriceLevel {
 
     private String price;

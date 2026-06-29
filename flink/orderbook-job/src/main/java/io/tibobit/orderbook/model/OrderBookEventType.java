@@ -3,6 +3,11 @@ package io.tibobit.orderbook.model;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
+/**
+ * Kind of input event on the wire ("update" / "snapshot"). Carried on
+ * {@link OrderBookEvent} for completeness; the merger currently treats every event
+ * the same way (latest-wins replace), so it does not branch on this.
+ */
 public enum OrderBookEventType {
     UPDATE("update"),
     SNAPSHOT("snapshot");

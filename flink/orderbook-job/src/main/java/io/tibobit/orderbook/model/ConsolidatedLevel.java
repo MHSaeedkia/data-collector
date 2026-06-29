@@ -2,6 +2,12 @@ package io.tibobit.orderbook.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+/**
+ * One level of a {@link ConsolidatedOrderBook}. Unlike {@link PriceLevel}, it carries
+ * its own {@code exchange_id}: because the merge unions levels rather than summing them,
+ * each level must remember which exchange it came from. Price/quantity stay as decimal
+ * strings for the same precision reason as PriceLevel.
+ */
 public class ConsolidatedLevel {
 
     @JsonProperty("exchange_id")

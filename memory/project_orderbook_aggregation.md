@@ -103,6 +103,12 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
 - Functional test: `scripts/produce-test-data.sh` STREAMS randomized snapshots (random
   pair/side/exchange each tick, prices drifting around a mid via awk, pauses on some steps)
   for `DURATION_SECONDS` (default 600) to show live UI updates — not a fixed batch
+- Flink source is now fully commented (2026-06-29): every class has a Javadoc role
+  line; the end-to-end pipeline overview lives in `OrderBookJob`'s class doc. Key
+  rationales captured inline — no watermarks (event-driven, not windowed), rebuild
+  book from scratch each event, state+comparator built in `open()` not the
+  constructor (MapState is per-key, Comparator isn't Serializable), latest offsets
+  (live book not replay), and the `-ex` regex segment is what blocks the feedback loop.
 - `scripts/warmup.sh` provisions BOTH input topics (`{side}-p{pair_id}-ex{exchange_id}`, per subscribed
   exchange) AND output topics (`{side}-p{pair_id}`, one per distinct subscribed pair) — single partition each.
   (both warmup.sh and the Flink job use the ID-based scheme as of 2026-06-28 — see [[kafka-topic-strategy]])

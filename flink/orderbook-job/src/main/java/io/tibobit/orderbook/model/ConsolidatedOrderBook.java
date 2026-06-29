@@ -3,6 +3,11 @@ package io.tibobit.orderbook.model;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
+/**
+ * Output event: the consolidated book for one pair+side, all exchanges merged into a
+ * single price-sorted {@code levels} list. Emitted to the {side}-p{pair_id} topic and
+ * consumed by the web UI.
+ */
 public class ConsolidatedOrderBook {
 
     @JsonProperty("pair_id")
