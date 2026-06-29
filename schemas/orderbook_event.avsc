@@ -50,6 +50,10 @@
 			}
 		},
 		{
+			"name": "sequence_id",
+			"type": "long"
+		},
+		{
 			"name": "levels",
 			"type": {
 				"type": "array",
