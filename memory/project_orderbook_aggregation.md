@@ -80,6 +80,12 @@ update. That is three things Flink SQL handles poorly on a streaming changelog:
 The `KeyedProcessFunction` does all three in ~30 lines with explicit state and a `Comparator`.
 SQL would be more code, less readable, and hit engine limits — the opposite of what SQL buys you.
 
+Precision on "can't": it's "can't *cleanly/efficiently* on a streaming changelog," not a hard
+impossibility. A custom UDAF (`AggregateFunction` returning a sorted array) could force it — but
+that re-implements the same Java logic wrapped in SQL, so the DataStream operator is strictly simpler.
+The blocker is specifically the **sorted-array-inside-one-row** shape: streaming `ARRAY_AGG` takes no
+per-group `ORDER BY`, and SQL `ORDER BY` sorts rows, not elements within an aggregated array.
+
 Rule of thumb for the whole pipeline: **imperative / stateful / array-shaped → DataStream;
 declarative / windowed / analytical → SQL.** Flink SQL would earn its place later for analytics
 (OHLC/candles, VWAP, windowed depth/liquidity, top-N) as *separate* jobs, not for this merge.
@@ -112,3 +118,44 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
 - `scripts/warmup.sh` provisions BOTH input topics (`{side}-p{pair_id}-ex{exchange_id}`, per subscribed
   exchange) AND output topics (`{side}-p{pair_id}`, one per distinct subscribed pair) — single partition each.
   (both warmup.sh and the Flink job use the ID-based scheme as of 2026-06-28 — see [[kafka-topic-strategy]])
+
+## Planned: snapshot + update event support (Phase 3 — designed 2026-06-29, NOT yet implemented)
+
+Currently the merger is **snapshot-only**: `processElement` does latest-wins `put(exchangeId, event)`
+and ignores the `type` field (see [[avro-schema-orderbook]]). Phase 3 makes it honour `type`.
+
+**Decided semantics (NiFi guarantees these):**
+- `snapshot` → replace that exchange's book wholesale (current behaviour).
+- `update`   → apply on top of existing book, per level: `quantity > 0` → insert-or-overwrite that
+  price level; `quantity == 0` → delete it. Compare zero via `BigDecimal.compareTo(ZERO)`, never string `"0"`.
+
+This is *within* one exchange's stream; the cross-exchange union/sort/no-summing logic is unchanged.
+
+**Merger state change:** `MapState<Integer, OrderBookEvent>` → `MapState<Integer, ExchangeBook>` where
+`ExchangeBook` is a Flink POJO `{ Map<String price, String qty> levels, long eventTime, long lastSeq }`.
+`processElement`: drop stale/dup (`seq <= lastSeq`); branch on `type` (replace map vs mutate map);
+update eventTime/lastSeq; then rebuild-union-sort-emit exactly as today (maxEventTime over stored books).
+
+**Sequence id (mandatory):** add `sequence_id` (`long`, required) to `schemas/orderbook_event.avsc` +
+`OrderBookEvent.sequenceId`; NiFi must populate it. Used now only for stale/duplicate drop.
+
+### DEFERRED — cold start (revisit later)
+**Verified 2026-06-29: NO Flink checkpointing/state backend is configured** — `docker-compose.yml`
+only sets `jobmanager.rpc.address` + `taskmanager.numberOfTaskSlots`. So keyed state is in-memory and
+lost on every restart. Fine for snapshot-only (next snapshot rebuilds), but with deltas a restart leaves
+the book empty until the next snapshot. **Current assumption to unblock Phase 3:** the first event per
+exchange from Kafka is a `snapshot`, so a base book always exists before any `update`; no gating yet.
+Fix options for later: (A) Flink checkpoints+savepoints with a durable state backend [recommended,
+idiomatic, no merger code]; (B) log-compact output topic `{side}-p{pair_id}` (key = topic name) + reseed
+on startup — also gives downstream consumers (web UI) the current book instantly; (C) both. Also deferred:
+the "ignore updates until first snapshot per exchange" gate (for a truly empty / brand-new deploy).
+
+### DEFERRED — sequence-id gap handling (revisit later)
+When `seq > lastSeq + 1` (a gap). **Current assumption:** no messages dropped, so no gap handling yet.
+Options: (A) drop that exchange's book + wait for next snapshot to resync (safe/standard; needs
+contiguous +1 ids); (B) tolerate/apply anyway (book can silently drift); (C) seq is only monotonic, not
+contiguous → can only detect stale/dups. **TO CONFIRM with NiFi/exchange team:** is `sequence_id`
+contiguous (+1 per message) or merely increasing, and who generates it (exchange vs NiFi)?
+
+Status: plan agreed; schema edit (`sequence_id`) pending because it's a shared contract with the NiFi
+team. Tracked in `todo.md` Phase 3.

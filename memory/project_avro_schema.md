@@ -22,13 +22,16 @@ Example payload: `schemas/orderbook_event_example.json`.
 | `quote`         | `["null","string"]`=null  | **Display only, no logic** — quote asset, e.g. `USDT`        |
 | `pair_id`       | int (required)            | DB `markets.id`, e.g. 2 — the pair identity, used in topics  |
 | `side`          | enum `asks`\|`bids` (req)  | Mirrors topic prefix; included for self-describing messages   |
-| `type`          | enum `snapshot`\|`update` (req) | Event type                                              |
+| `type`          | enum `snapshot`\|`update` (req) | Event type. Flink currently ignores it (snapshot-only); Phase 3 will honour it — see [[orderbook-aggregation]] |
 | `event_time`    | long timestamp-millis (req) | Exchange-reported UTC timestamp in ms                       |
+| `sequence_id`   | long (required)            | Monotonic per `(pair_id, exchange_id)` stream; ordering/dedup token. Added 2026-06-29 for Phase 3 — see [[orderbook-aggregation]] |
 | `levels`        | array of PriceLevel (req)  | Price + quantity both as string to preserve decimal precision |
 
 `pair_id` was added 2026-06-28; the pipeline already moved from a single `pair` string to separate `base`/`quote` fields earlier.
 
-Required vs optional (set 2026-06-28): `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `levels` are **required** (non-nullable, no default). The three display-only fields `exchange_name`/`base`/`quote` are **optional** — `["null","string"]` with `default: null` — since no logic depends on them.
+Required vs optional (set 2026-06-28; `sequence_id` added 2026-06-29): `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `sequence_id`, `levels` are **required** (non-nullable, no default). The three display-only fields `exchange_name`/`base`/`quote` are **optional** — `["null","string"]` with `default: null` — since no logic depends on them.
+
+`sequence_id` is the per-stream ordering token for snapshot+update support. Flink uses it now only to drop stale/duplicate events (`seq <= lastSeq`); gap handling is deferred. Whether it is contiguous (+1) or merely increasing, and who generates it (exchange vs NiFi), is still TO CONFIRM with the NiFi team — see [[orderbook-aggregation]].
 
 ## `base`, `quote`, `exchange_name` are display-only — NO logic depends on them
 
@@ -51,6 +54,7 @@ NiFi is handled by a separate team and is not implemented in this repo. Document
 - Split raw exchange message (which contains both sides) into two separate events
 - Route each event to the correct input topic: `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`) — see [[kafka-topic-strategy]]
 - Kafka message key is null (one exchange per topic already guarantees ordering)
+- Populate `sequence_id` as a monotonically increasing value per `(pair_id, exchange_id)` stream so Flink can drop stale/duplicate events
 
 ## Why price/qty are strings
 
