@@ -2,7 +2,9 @@ package io.tibobit.orderbook.aggregation;
 
 import io.tibobit.orderbook.model.ConsolidatedLevel;
 import io.tibobit.orderbook.model.ConsolidatedOrderBook;
+import io.tibobit.orderbook.model.ExchangeBook;
 import io.tibobit.orderbook.model.OrderBookEvent;
+import io.tibobit.orderbook.model.OrderBookEventType;
 import io.tibobit.orderbook.model.PriceLevel;
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
@@ -15,15 +17,15 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Merges the latest order book snapshot of every exchange for one
- * pair+side
- * into a single
- * price-sorted book. Quantities are NOT summed — each level keeps its own
- * exchange, so
- * equal-price levels from different exchanges remain separate, adjacent
- * entries.
+ * Maintains a running order book per exchange for one pair+side and merges them into a
+ * single price-sorted book. A {@code snapshot} event replaces that exchange's book; an
+ * {@code update} event mutates it level-by-level (see {@link ExchangeBook}). Stale or
+ * duplicate events are dropped via {@code sequence_id}. Quantities are NOT summed — each
+ * level keeps its own exchange, so equal-price levels from different exchanges remain
+ * separate, adjacent entries.
  *
  * Sort: price ascending for asks, descending for bids; tie-break by larger
  * quantity first.
@@ -34,8 +36,9 @@ public class OrderBookMerger
     private final String side;
     private final boolean priceAscending; // asks ascending, bids descending
 
-    // Latest snapshot per exchange (carries both levels and event_time), keyed by exchange_id.
-    private transient MapState<Integer, OrderBookEvent> snapshotsByExchange;
+    // Maintained running book per exchange (levels + event_time + last sequence_id),
+    // keyed by exchange_id.
+    private transient MapState<Integer, ExchangeBook> booksByExchange;
     private transient Comparator<ConsolidatedLevel> comparator;
 
     public OrderBookMerger(String side) {
@@ -49,11 +52,11 @@ public class OrderBookMerger
     // signature; the 1.x open(Configuration) was removed in 2.0.
     @Override
     public void open(OpenContext openContext) {
-        MapStateDescriptor<Integer, OrderBookEvent> descriptor = new MapStateDescriptor<>(
-                "snapshotsByExchange",
+        MapStateDescriptor<Integer, ExchangeBook> descriptor = new MapStateDescriptor<>(
+                "booksByExchange",
                 TypeInformation.of(Integer.class),
-                TypeInformation.of(OrderBookEvent.class));
-        snapshotsByExchange = getRuntimeContext().getMapState(descriptor);
+                TypeInformation.of(ExchangeBook.class));
+        booksByExchange = getRuntimeContext().getMapState(descriptor);
 
         Comparator<ConsolidatedLevel> byPrice = Comparator.comparing(level -> new BigDecimal(level.getPrice()));
         if (!priceAscending) {
@@ -71,24 +74,58 @@ public class OrderBookMerger
             Context ctx,
             Collector<ConsolidatedOrderBook> out) throws Exception {
 
-        // Replace this exchange's latest snapshot.
-        snapshotsByExchange.put(event.getExchangeId(), event);
+        int exchangeId = event.getExchangeId();
+        ExchangeBook book = booksByExchange.get(exchangeId);
+
+        // Drop stale/duplicate events. Only meaningful once a book already exists for this
+        // exchange; the first event for an exchange is always accepted. (Gap handling —
+        // seq > lastSeq + 1 — is deferred; see todo.md.)
+        if (book != null && event.getSequenceId() <= book.getLastSeq()) {
+            return;
+        }
+
+        if (event.getType() == OrderBookEventType.SNAPSHOT) {
+            // Snapshot: replace this exchange's book wholesale.
+            book = new ExchangeBook();
+            if (event.getLevels() != null) {
+                for (PriceLevel level : event.getLevels()) {
+                    book.getLevels().put(new BigDecimal(level.getPrice()), level.getQuantity());
+                }
+            }
+        } else {
+            // Update: apply deltas on top of the existing book (empty if none yet — the
+            // cold-start assumption is that the first event per exchange is a snapshot).
+            if (book == null) {
+                book = new ExchangeBook();
+            }
+            if (event.getLevels() != null) {
+                for (PriceLevel level : event.getLevels()) {
+                    BigDecimal price = new BigDecimal(level.getPrice());
+                    if (BigDecimal.ZERO.compareTo(new BigDecimal(level.getQuantity())) == 0) {
+                        book.getLevels().remove(price); // quantity 0 → delete level
+                    } else {
+                        book.getLevels().put(price, level.getQuantity()); // upsert
+                    }
+                }
+            }
+        }
+        book.setEventTime(event.getEventTime());
+        book.setLastSeq(event.getSequenceId());
+        booksByExchange.put(exchangeId, book);
 
         // Rebuild the whole consolidated book from scratch on every event: flatten every
-        // exchange's stored snapshot into one list, tagging each level with its exchange_id.
+        // exchange's maintained book into one list, tagging each level with its exchange_id.
         // (Cheap enough — book depth is small — and avoids incremental-merge state bugs.)
         List<ConsolidatedLevel> merged = new ArrayList<>();
         long maxEventTime = Long.MIN_VALUE;
-        for (OrderBookEvent snapshot : snapshotsByExchange.values()) {
-            // Output event_time = newest contributing snapshot, so freshness reflects the
+        for (Map.Entry<Integer, ExchangeBook> entry : booksByExchange.entries()) {
+            ExchangeBook exchangeBook = entry.getValue();
+            // Output event_time = newest contributing book, so freshness reflects the
             // most recent exchange update, not whichever one happened to trigger this rebuild.
-            maxEventTime = Math.max(maxEventTime, snapshot.getEventTime());
-            if (snapshot.getLevels() == null) {
-                continue;
-            }
-            for (PriceLevel level : snapshot.getLevels()) {
+            maxEventTime = Math.max(maxEventTime, exchangeBook.getEventTime());
+            for (Map.Entry<BigDecimal, String> level : exchangeBook.getLevels().entrySet()) {
                 merged.add(new ConsolidatedLevel(
-                        snapshot.getExchangeId(), level.getPrice(), level.getQuantity()));
+                        entry.getKey(), level.getKey().toPlainString(), level.getValue()));
             }
         }
 

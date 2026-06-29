@@ -57,9 +57,9 @@ Rules:
 cross-exchange order book view per trading pair and side, rather than fragmented
 per-exchange snapshots.
 **How to apply:** Implement as a keyed stateful operator (`KeyedProcessFunction<Integer,…>` keyed by
-`pairId`, `MapState<Integer, OrderBookEvent>` keyed by `exchange_id` holding the latest snapshot per exchange —
-the full event is stored so `event_time` is available for the max) between the Kafka
-sources and the sink in `OrderBookJob`. On each event, replace that exchange's snapshot,
+`pairId`, `MapState<Integer, ExchangeBook>` keyed by `exchange_id` holding a maintained running book
+per exchange — see the Phase 3 section for the state shape and snapshot/update handling) between the
+Kafka sources and the sink in `OrderBookJob`. On each event, apply it to that exchange's book,
 rebuild the union, sort by price, and emit a `ConsolidatedOrderBook`.
 
 ## Decision: DataStream (Java), not Flink SQL
@@ -94,7 +94,7 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
 
 - `model/ConsolidatedLevel.java` — `{ exchange_id, price, quantity }` (`exchange_id` int, serialized as `exchange_id`)
 - `model/ConsolidatedOrderBook.java` — `{ pair_id, side, levels, eventTime }` (eventTime = max of contributing snapshots)
-- `aggregation/OrderBookMerger.java` — `KeyedProcessFunction<Integer,…>` (keyed by pairId); `MapState<Integer, OrderBookEvent>` (keyed by exchange_id);
+- `aggregation/OrderBookMerger.java` — `KeyedProcessFunction<Integer,…>` (keyed by pairId); `MapState<Integer, OrderBookEvent>` (keyed by exchange_id) — **note: in Phase 3 this state value changed to `ExchangeBook`, see the Phase 3 section below**;
   comparator = price (asc asks / desc bids) then quantity desc, both `BigDecimal`
 - `OrderBookJob.addStream` wires `source → keyBy(pairId) → OrderBookMerger(side)` then fans out to
   TWO sinks: a Kafka sink to topic `{side}-p{pair_id}` (e.g. `asks-p2`) AND `print(name)` to stdout
@@ -119,25 +119,37 @@ declarative / windowed / analytical → SQL.** Flink SQL would earn its place la
   exchange) AND output topics (`{side}-p{pair_id}`, one per distinct subscribed pair) — single partition each.
   (both warmup.sh and the Flink job use the ID-based scheme as of 2026-06-28 — see [[kafka-topic-strategy]])
 
-## Planned: snapshot + update event support (Phase 3 — designed 2026-06-29, NOT yet implemented)
+## Implemented: snapshot + update event support (Phase 3 — 2026-06-29)
 
-Currently the merger is **snapshot-only**: `processElement` does latest-wins `put(exchangeId, event)`
-and ignores the `type` field (see [[avro-schema-orderbook]]). Phase 3 makes it honour `type`.
+The merger now honours the `type` field instead of treating every event as a full snapshot
+(see [[avro-schema-orderbook]]).
 
 **Decided semantics (NiFi guarantees these):**
-- `snapshot` → replace that exchange's book wholesale (current behaviour).
+- `snapshot` → replace that exchange's book wholesale.
 - `update`   → apply on top of existing book, per level: `quantity > 0` → insert-or-overwrite that
   price level; `quantity == 0` → delete it. Compare zero via `BigDecimal.compareTo(ZERO)`, never string `"0"`.
 
 This is *within* one exchange's stream; the cross-exchange union/sort/no-summing logic is unchanged.
 
-**Merger state change:** `MapState<Integer, OrderBookEvent>` → `MapState<Integer, ExchangeBook>` where
-`ExchangeBook` is a Flink POJO `{ Map<String price, String qty> levels, long eventTime, long lastSeq }`.
-`processElement`: drop stale/dup (`seq <= lastSeq`); branch on `type` (replace map vs mutate map);
-update eventTime/lastSeq; then rebuild-union-sort-emit exactly as today (maxEventTime over stored books).
+**Merger state (implemented):** `MapState<Integer, OrderBookEvent>` → `MapState<Integer, ExchangeBook>`
+where new `model/ExchangeBook.java` is a Flink POJO `{ NavigableMap<BigDecimal price, String qty> levels,
+long eventTime, long lastSeq }`. `processElement`: look up the exchange's book; drop stale/dup
+(`book != null && seq <= lastSeq` — first event per exchange always accepted); branch on `type`
+(`SNAPSHOT` → fresh book, put all levels; else → mutate book, `BigDecimal.ZERO.compareTo(qty)==0`
+removes the price key, else upsert; empty book created if none yet); set eventTime/lastSeq; put back.
+Then rebuild-union-sort-emit exactly as before, but iterating `booksByExchange.entries()` and the
+per-book map (exchange_id comes from the outer map key; output price = `key.toPlainString()`;
+maxEventTime over stored books).
 
-**Sequence id (mandatory):** add `sequence_id` (`long`, required) to `schemas/orderbook_event.avsc` +
-`OrderBookEvent.sequenceId`; NiFi must populate it. Used now only for stale/duplicate drop.
+`ExchangeBook.levels` is keyed by **`BigDecimal` price, and MUST be a `TreeMap`** (2026-06-29): TreeMap
+keys by `BigDecimal.compareTo`, so `"97240.50"` and `"97240.5"` collapse to one level. NiFi gives **no
+guarantee** that snapshot and update use the same string formatting for a price, so we can't key by the
+raw string. A `HashMap<BigDecimal,…>` would be wrong — `BigDecimal.equals`/`hashCode` are scale-sensitive.
+Output price is normalized via `toPlainString()` (so display drops trailing zeros, e.g. `97240.50`→`97240.5`,
+`600.00`→`600`). Compiles clean (`mvn -q compile`).
+
+**Sequence id (mandatory, done):** `sequence_id` (`long`, required) added to `schemas/orderbook_event.avsc`,
+example JSON, and `OrderBookEvent.sequenceId`; NiFi must populate it. Used now only for stale/duplicate drop.
 
 ### DEFERRED — cold start (revisit later)
 **Verified 2026-06-29: NO Flink checkpointing/state backend is configured** — `docker-compose.yml`

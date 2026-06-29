@@ -72,10 +72,10 @@ snapshot. Per-exchange state changes from "last event" to a *maintained* book th
 ### Tasks
 - [x] Add `sequence_id` (long, required) to `schemas/orderbook_event.avsc` + example JSON (+ NiFi must populate it) — done 2026-06-29
 - [x] Add `sequenceId` field to `OrderBookEvent` model — done 2026-06-29
-- [ ] Change `OrderBookMerger` state from `MapState<Integer, OrderBookEvent>` to a maintained
-      per-exchange book: `{ Map<price,qty> levels, long eventTime, long lastSeq }`
-- [ ] `processElement`: branch on `type` (replace vs mutate); drop stale/duplicate `seq <= lastSeq`
-- [ ] Rebuild-union-sort-emit stays unchanged
+- [x] Change `OrderBookMerger` state from `MapState<Integer, OrderBookEvent>` to a maintained
+      per-exchange book: `{ Map<price,qty> levels, long eventTime, long lastSeq }` (new `ExchangeBook` POJO) — done 2026-06-29
+- [x] `processElement`: branch on `type` (replace vs mutate); drop stale/duplicate `seq <= lastSeq` — done 2026-06-29
+- [x] Rebuild-union-sort-emit stays unchanged (now iterates the maintained map) — done 2026-06-29
 
 ### DEFERRED — cold start (revisit later)
 Problem: no Flink checkpointing/state backend is configured (docker-compose only sets

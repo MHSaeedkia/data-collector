@@ -5,9 +5,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 /**
- * Input event: one exchange's order book snapshot for a single pair+side, as read
- * from the {side}-p{pair_id}-ex{exchange_id} Kafka topics. The merger stores the
- * latest of these per exchange (see OrderBookMerger).
+ * Input event for a single pair+side from one exchange, as read from the
+ * {side}-p{pair_id}-ex{exchange_id} Kafka topics. Carries either a full {@code snapshot}
+ * or an incremental {@code update} (see {@code type}); the merger maintains a running book
+ * per exchange from these (see OrderBookMerger).
  *
  * The wire event (see schemas/orderbook_event.avsc) also carries exchange_name, base and
  * quote; Flink works only with the IDs, so those extra fields are ignored on deserialization.

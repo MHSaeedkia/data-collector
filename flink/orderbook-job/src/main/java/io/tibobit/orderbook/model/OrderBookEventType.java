@@ -4,9 +4,9 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * Kind of input event on the wire ("update" / "snapshot"). Carried on
- * {@link OrderBookEvent} for completeness; the merger currently treats every event
- * the same way (latest-wins replace), so it does not branch on this.
+ * Kind of input event on the wire ("update" / "snapshot"). The merger branches on this:
+ * a {@code snapshot} replaces the exchange's book wholesale, an {@code update} mutates it
+ * level-by-level (see OrderBookMerger).
  */
 public enum OrderBookEventType {
     UPDATE("update"),

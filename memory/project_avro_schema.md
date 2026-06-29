@@ -22,7 +22,7 @@ Example payload: `schemas/orderbook_event_example.json`.
 | `quote`         | `["null","string"]`=null  | **Display only, no logic** — quote asset, e.g. `USDT`        |
 | `pair_id`       | int (required)            | DB `markets.id`, e.g. 2 — the pair identity, used in topics  |
 | `side`          | enum `asks`\|`bids` (req)  | Mirrors topic prefix; included for self-describing messages   |
-| `type`          | enum `snapshot`\|`update` (req) | Event type. Flink currently ignores it (snapshot-only); Phase 3 will honour it — see [[orderbook-aggregation]] |
+| `type`          | enum `snapshot`\|`update` (req) | Event type. Flink honours it (Phase 3, 2026-06-29): `snapshot` replaces the exchange book, `update` mutates it — see [[orderbook-aggregation]] |
 | `event_time`    | long timestamp-millis (req) | Exchange-reported UTC timestamp in ms                       |
 | `sequence_id`   | long (required)            | Monotonic per `(pair_id, exchange_id)` stream; ordering/dedup token. Added 2026-06-29 for Phase 3 — see [[orderbook-aggregation]] |
 | `levels`        | array of PriceLevel (req)  | Price + quantity both as string to preserve decimal precision |
