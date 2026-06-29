@@ -177,9 +177,9 @@ SELECT setval(pg_get_serial_sequence('markets', 'id'), (SELECT MAX(id) FROM mark
 
 -- seed exchange_markets
 INSERT INTO exchange_markets (exchange_id, market, market_id, "status") VALUES
-(1, 'BTCUSDT', 1, 'unsubscribe'), -- nobitex BTC/USDT
+(1, 'BTCUSDT', 1, 'subscribe'), -- nobitex BTC/USDT
 (1, 'BTCIRT', 2, 'unsubscribe'), -- nobitex BTC/IRT
-(2, 'BTC_USDT', 1, 'unsubscribe'), -- bitpin  BTC/USDT
+(2, 'BTC_USDT', 1, 'subscribe'), -- bitpin  BTC/USDT
 (2, 'BTC_IRT', 2, 'unsubscribe'), -- bitpin  BTC/IRT
 (3, 'BTCUSDT', 1, 'unsubscribe'), -- wallex  BTC/USDT
 (3, 'BTCTMN', 55, 'unsubscribe'), -- wallex  BTC/TMN

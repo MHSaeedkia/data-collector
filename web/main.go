@@ -83,7 +83,7 @@ type registry struct {
 
 func (r *registry) refresh(ctx context.Context, pool *pgxpool.Pool) {
 	markets := map[int]Market{}
-	if rows, err := pool.Query(ctx, "SELECT id, base, quote FROM markets"); err != nil {
+	if rows, err := pool.Query(ctx, "SELECT m.id, b.name, q.name FROM markets m JOIN currencies b ON m.base_id = b.id JOIN currencies q ON m.quote_id = q.id"); err != nil {
 		log.Printf("markets query error: %v", err)
 	} else {
 		for rows.Next() {

@@ -24,8 +24,11 @@ live order book in the browser. NOT dockerized — runs on the host against the 
 
 The Flink output carries only `pair_id` and per-level `exchange_id` — no `base`, `quote`, or
 `exchange_name` (see [[event-identity-by-ids]]). So the server resolves them for display:
-loads `markets` (id → base/quote) and `exchanges` (id → name/label) from postgres, refreshed
-every 10s, and **enriches** each raw book before pushing. The enriched book sent to the
+loads markets and `exchanges` (id → name/label) from postgres, refreshed every 10s, and
+**enriches** each raw book before pushing. Since the 2026-06-29 normalization ([[db-schema]]),
+the markets lookup joins `currencies` for the symbols:
+`SELECT m.id, b.name, q.name FROM markets m JOIN currencies b ON m.base_id=b.id JOIN currencies q ON m.quote_id=q.id`
+(was `SELECT id, base, quote FROM markets`). The enriched book sent to the
 browser is `{ pair_id, base, quote, side, event_time, levels:[{price, quantity, exchange:{id,name,label}}] }`.
 Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نامشخص` for exchange).
 

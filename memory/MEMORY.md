@@ -1,5 +1,6 @@
 # Memory Index
 
+- [DB Schema](project_db_schema.md) — postgres `markets` db: normalized `currencies` lookup + `markets.base_id`/`quote_id` FKs (was base/quote VARCHAR); 3 exchanges (wallex added), 81 markets, all exchange_markets seeded `unsubscribe`
 - [Kafka Topic Strategy](project_kafka_topic_strategy.md) — ID-based topics: input `{side}-p{pair_id}-ex{exchange_id}`, output `{side}-p{pair_id}`, key=null; pre-provisioned; migration COMPLETE (warmup+schema+Flink+web)
 - [Avro Schema: OrderBookEvent](project_avro_schema.md) — Schema for normalized per-side order book events (`schemas/orderbook_event.avsc`); identity is `pair_id`/`exchange_id`, while `base`/`quote`/`exchange_name` are display-only (no logic)
 - [Order Book Aggregation](project_orderbook_aggregation.md) — Generate consolidated order book per pair+side by merging all exchanges; stateful step on top of the transport-level regex merge

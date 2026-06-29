@@ -35,8 +35,8 @@ Required vs optional (set 2026-06-28): `exchange_id`, `pair_id`, `side`, `type`,
 These three fields are **purely human-readable labels with no behavioural value**. Nothing in the
 pipeline routes, keys, joins, filters, or branches on them — identity is always `pair_id` and
 `exchange_id`. Treat them as carry-along display strings; **never add logic that reads them**. If a
-future need to map id → name arises, look it up from the postgres `markets`/`exchanges` tables, don't
-build logic on the event field.
+future need to map id → name arises, look it up from postgres (`markets.base_id`/`quote_id` joined to
+`currencies`, and `exchanges`; see [[db-schema]]), don't build logic on the event field.
 
 Consequence in code: the Flink job ignores them — `OrderBookEvent` deserializes only `exchange_id`,
 `pair_id`, `side`, `type`, `event_time`, `levels` and is `@JsonIgnoreProperties(ignoreUnknown=true)`.
