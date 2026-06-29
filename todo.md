@@ -71,7 +71,7 @@ snapshot. Per-exchange state changes from "last event" to a *maintained* book th
 
 ### Tasks
 - [x] Add `sequence_id` (long, required) to `schemas/orderbook_event.avsc` + example JSON (+ NiFi must populate it) — done 2026-06-29
-- [ ] Add `sequenceId` field to `OrderBookEvent` model
+- [x] Add `sequenceId` field to `OrderBookEvent` model — done 2026-06-29
 - [ ] Change `OrderBookMerger` state from `MapState<Integer, OrderBookEvent>` to a maintained
       per-exchange book: `{ Map<price,qty> levels, long eventTime, long lastSeq }`
 - [ ] `processElement`: branch on `type` (replace vs mutate); drop stale/duplicate `seq <= lastSeq`
