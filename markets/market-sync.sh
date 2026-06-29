@@ -23,12 +23,14 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+GRAY='\033[0;90m'
 NC='\033[0m'
 
 ok()   { echo -e "${GREEN}[OK]${NC}     $1"; }
 fail() { echo -e "${RED}[FAIL]${NC}   $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}   $1"; }
 log()  { echo -e "${BLUE}[INFO]${NC}   $1"; }
+skip() { echo -e "${GRAY}[SKIP]${NC}   $1"; }
 
 # ─────────────────────────────────────────────
 # Validate
@@ -41,6 +43,7 @@ fi
 # Counters
 SUCCESS=0
 FAILED=0
+SKIPPED=0
 TOTAL=0
 
 if [ "$REVERSE" = true ]; then
@@ -56,6 +59,13 @@ while IFS=',' read -r exchange market action; do
   # Skip header and empty lines
   [[ "$exchange" == "exchange" ]] && continue
   [[ -z "$exchange" || -z "$market" || -z "$action" ]] && continue
+
+  # Skip disabled markets entirely — no request sent
+  if [ "$action" = "disable" ]; then
+    skip "[disable] $exchange / $market"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
 
   # Reverse action if flag is set
   if [ "$REVERSE" = true ]; then
@@ -104,6 +114,7 @@ done < "$MARKETS_FILE"
 # ─────────────────────────────────────────────
 # Summary
 echo "────────────────────────────────────────────"
+echo -e "  Skipped: ${GRAY}$SKIPPED${NC}  (disable)"
 echo -e "  Total:   $TOTAL"
 echo -e "  ${GREEN}Success: $SUCCESS${NC}"
 if [ $FAILED -gt 0 ]; then
