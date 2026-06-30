@@ -34,7 +34,8 @@ INSERT INTO currencies (id, "name") VALUES
 (30, 'TMN'),
 (31, 'IRR'),
 (32, '1000PEPE'),
-(33, '100PEPE');
+(33, '100PEPE'),
+(34, 'TON');
 SELECT setval(pg_get_serial_sequence('currencies', 'id'), (SELECT MAX(id) FROM currencies));
 
 -- seed exchanges
@@ -42,7 +43,8 @@ INSERT INTO exchanges (id, name, label) VALUES
 (1, 'nobitex', 'نوبیتکس'),
 (2, 'bitpin', 'بیت پین'),
 (3, 'wallex', 'والکس'),
-(4, 'ramzinex', 'رمزینکس');
+(4, 'ramzinex', 'رمزینکس'),
+(5, 'opmfinex', 'او ام پی فینکس');
 SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
 
 -- seed markets
@@ -156,7 +158,9 @@ INSERT INTO markets (id, base_id, quote_id, price_precision, quantity_precision)
 (107, 26, 31, 2, 8), -- SHIB/IRR
 (108, 27, 31, 2, 8), -- BTT/IRR
 (109, 33, 28, 2, 8), -- 100PEPE/USDT
-(110, 33, 31, 2, 8); -- 100PEPE/IRR
+(110, 33, 31, 2, 8), -- 100PEPE/IRR
+(111, 34, 28, 2, 8), -- TON/USDT
+(112, 34, 29, 2, 8); -- TON/IRT
 SELECT setval(pg_get_serial_sequence('markets', 'id'), (SELECT MAX(id) FROM markets));
 
 -- seed exchange_markets
@@ -372,4 +376,52 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status") VALUES
 (4, '61', 107, 'unsubscribe'), -- ramzinex SHIB/IRR
 (4, '39', 108, 'unsubscribe'), -- ramzinex BTT/IRR
 (4, '552', 109, 'unsubscribe'), -- ramzinex 100PEPE/USDT
-(4, '366', 110, 'unsubscribe'); -- ramzinex 100PEPE/IRR
+(4, '366', 110, 'unsubscribe'), -- ramzinex 100PEPE/IRR
+(5, '14', 1, 'unsubscribe'), -- ompfinex BTC/USDT
+(5, '1', 2, 'unsubscribe'), -- ompfinex BTC/IRT
+(5, '15', 3, 'unsubscribe'), -- ompfinex ETH/USDT
+(5, '2', 4, 'unsubscribe'), -- ompfinex ETH/IRT
+(5, '17', 5, 'unsubscribe'), -- ompfinex XRP/USDT
+(5, '4', 6, 'unsubscribe'), -- ompfinex XRP/IRT
+(5, '21', 7, 'unsubscribe'), -- ompfinex TRX/USDT
+(5, '8', 8, 'unsubscribe'), -- ompfinex TRX/IRT
+(5, '28', 9, 'unsubscribe'), -- ompfinex SOL/USDT
+(5, '27', 10, 'unsubscribe'), -- ompfinex SOL/IRT
+(5, '63', 11, 'unsubscribe'), -- ompfinex DOT/USDT
+(5, '62', 12, 'unsubscribe'), -- ompfinex DOT/IRT
+(5, '357', 13, 'unsubscribe'), -- ompfinex HYPE/USDT
+(5, '358', 14, 'unsubscribe'), -- ompfinex HYPE/IRT
+(5, '18', 15, 'unsubscribe'), -- ompfinex DOGE/USDT
+(5, '5', 16, 'unsubscribe'), -- ompfinex DOGE/IRT
+(5, '168', 17, 'unsubscribe'), -- ompfinex PEPE/USDT
+(5, '167', 18, 'unsubscribe'), -- ompfinex PEPE/IRT
+(5, '295', 19, 'unsubscribe'), -- ompfinex SUI/USDT
+(5, '296', 20, 'unsubscribe'), -- ompfinex SUI/IRT
+(5, '23', 23, 'unsubscribe'), -- ompfinex XLM/USDT
+(5, '11', 24, 'unsubscribe'), -- ompfinex XLM/IRT
+(5, '77', 25, 'unsubscribe'), -- ompfinex LINK/USDT
+(5, '76', 26, 'unsubscribe'), -- ompfinex LINK/IRT
+(5, '156', 27, 'unsubscribe'), -- ompfinex AVAX/USDT
+(5, '155', 28, 'unsubscribe'), -- ompfinex AVAX/IRT
+(5, '134', 29, 'unsubscribe'), -- ompfinex PAXG/USDT
+(5, '133', 30, 'unsubscribe'), -- ompfinex PAXG/IRT
+(5, '136', 33, 'unsubscribe'), -- ompfinex NEAR/USDT
+(5, '135', 34, 'unsubscribe'), -- ompfinex NEAR/IRT
+(5, '112', 35, 'unsubscribe'), -- ompfinex UNI/USDT
+(5, '111', 36, 'unsubscribe'), -- ompfinex UNI/IRT
+(5, '71', 37, 'unsubscribe'), -- ompfinex AAVE/USDT
+(5, '70', 38, 'unsubscribe'), -- ompfinex AAVE/IRT
+(5, '22', 41, 'unsubscribe'), -- ompfinex ADA/USDT
+(5, '10', 42, 'unsubscribe'), -- ompfinex ADA/IRT
+(5, '19', 45, 'unsubscribe'), -- ompfinex BNB/USDT
+(5, '6', 46, 'unsubscribe'), -- ompfinex BNB/IRT
+(5, '266', 47, 'unsubscribe'), -- ompfinex WLD/USDT
+(5, '267', 48, 'unsubscribe'), -- ompfinex WLD/IRT
+(5, '403', 49, 'unsubscribe'), -- ompfinex MNT/USDT
+(5, '404', 50, 'unsubscribe'), -- ompfinex MNT/IRT
+(5, '31', 51, 'unsubscribe'), -- ompfinex SHIB/USDT
+(5, '30', 52, 'unsubscribe'), -- ompfinex SHIB/IRT
+(5, '196', 53, 'unsubscribe'), -- ompfinex BTT/USDT
+(5, '195', 54, 'unsubscribe'), -- ompfinex BTT/IRT
+(5, '142', 111, 'unsubscribe'), -- ompfinex TON/USDT
+(5, '141', 112, 'unsubscribe'); -- ompfinex TON/IRT
