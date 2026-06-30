@@ -24,9 +24,10 @@ import java.util.Map;
  * single price-sorted book. A {@code snapshot} event replaces that exchange's book; an
  * {@code update} event mutates it level-by-level (see {@link ExchangeBook}). Updates are
  * validated for continuity with {@code sequence_id}/{@code sequence_jump}: a stale or
- * duplicate event is dropped, an in-order event ({@code seq == lastSeq + sequence_jump}) is
- * applied, and a gap ({@code seq > lastSeq + sequence_jump}, i.e. missed messages) discards
- * that exchange's book until the next {@code snapshot} resyncs it. Quantities are NOT
+ * duplicate event ({@code seq <= lastSeq}) is dropped, an in-order event
+ * ({@code seq == lastSeq + sequence_jump}) is applied, and any other sequence above
+ * {@code lastSeq} — a gap from missed messages or an unexpected intermediate value —
+ * discards that exchange's book until the next {@code snapshot} resyncs it. Quantities are NOT
  * summed — each level keeps its own exchange, so equal-price levels from different exchanges
  * remain separate, adjacent entries.
  *
@@ -104,9 +105,11 @@ public class OrderBookMerger
             if (seq <= book.getLastSeq()) {
                 return; // stale / duplicate
             }
-            if (seq > book.getLastSeq() + event.getSequenceJump()) {
-                // Real gap (missed messages): the book can no longer be trusted. Discard it
-                // and wait for the next snapshot to resync; updates are ignored until then.
+            if (seq != book.getLastSeq() + event.getSequenceJump()) {
+                // Out of order: the sequence is not exactly the expected next one — a forward
+                // gap (missed messages) or an unexpected intermediate value. Either way the
+                // book can no longer be trusted. Discard it and wait for the next snapshot to
+                // resync; updates are ignored until then.
                 book.getLevels().clear();
                 book.setAwaitingSnapshot(true);
                 booksByExchange.put(exchangeId, book);
