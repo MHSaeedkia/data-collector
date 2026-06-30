@@ -127,5 +127,29 @@ See `memory/project_tdd_workflow.md` for the approach and stack.
       `lastSeq < seq <= lastSeq + jump`; the contract is **strict** `seq == lastSeq + jump`.
       Now any non-exact `seq > lastSeq` discards the book + awaits snapshot — done 2026-06-30
 - Verified: Flink harness runs on the local JDK (Maven JDK 25); no JDK-21 toolchain needed.
-- [ ] Extend the same harness approach to remaining classes (deserializer, serializer,
-      source/sink factories, PairsLoader) for project-wide coverage
+- [x] `OrderBookEventDeserializerTest` — 8 tests, **100% line + 100% branch**: snake_case
+      field mapping, type-enum bind, nested levels, ignore-unknown, reject unknown type,
+      absent-levels stays null, never-end-of-stream, produced type, lazy-mapper reuse — done 2026-06-30
+- [x] `ConsolidatedOrderBookSerializerTest` — 4 tests, **100% branch** (all reachable lines):
+      snake_case output keys, level order, empty book, lazy-mapper reuse. The `catch
+      (JsonProcessingException)` block is unreachable defensive code (a valid
+      `ConsolidatedOrderBook` never fails Jackson) — intentionally not tested — done 2026-06-30
+- [x] `OrderBookEventTypeTest` — 3 tests, **100%**: wire token, case-insensitive `fromValue`,
+      reject-unknown — done 2026-06-30
+- [x] `PairsLoaderTest` — 2 tests: `Pair` record `p{id}` rendering + id accessor (the format
+      contract behind topic/operator names). `load()` itself is integration — done 2026-06-30
+- Total: **34 unit tests green** across merger + deserializer + serializer + enum + Pair record.
+
+### Needs integration tests (external system — no meaningful unit seam)
+These have no pure-logic seam to assert: they wire/drive an external system, so a unit test
+would only assert "the builder returned non-null", which is worthless. They need a real broker /
+DB / cluster (Testcontainers Kafka + Postgres, or an embedded equivalent):
+- [ ] `PairsLoader.load()` — opens a JDBC connection and runs the `DISTINCT` subscribe query
+      against the `markets`/`exchange_markets` schema. Needs a Postgres with that schema seeded.
+- [ ] `OrderBookSourceFactory.create()` — the real behaviour is the regex topic subscription
+      (`{side}-p{pair_id}-ex.*`) folding every exchange topic into one stream, and `latest`
+      offsets. Only observable against a live Kafka broker (the builder exposes no pattern getter).
+- [ ] `OrderBookSinkFactory.create()` — value-only (key=null) publish to `{side}-p{pair_id}`.
+      Only observable by consuming what it writes to a live broker.
+- [ ] `OrderBookJob.main()` — end-to-end topology: Postgres (pairs) + Kafka (in/out) + a Flink
+      MiniCluster. Highest-value integration test; covers the wiring nothing above exercises.
