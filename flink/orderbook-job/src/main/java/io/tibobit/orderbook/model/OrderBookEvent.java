@@ -8,7 +8,11 @@ import java.util.List;
  * Input event for a single pair+side from one exchange, as read from the
  * {side}-p{pair_id}-ex{exchange_id} Kafka topics. Carries either a full {@code snapshot}
  * or an incremental {@code update} (see {@code type}); the merger maintains a running book
- * per exchange from these (see OrderBookMerger).
+ * per exchange from these (see OrderBookMerger). Each {@code update} is validated for
+ * continuity via {@code sequence_id} and {@code sequence_jump} — the expected delta from the
+ * previous message (exchange ids do NOT increment by 1, they can jump), so an update is in
+ * order iff {@code sequence_id == lastSeq + sequence_jump}. A {@code snapshot} is the baseline
+ * and carries no jump ({@code sequence_jump == 0}).
  *
  * The wire event (see schemas/orderbook_event.avsc) also carries exchange_name, base and
  * quote; Flink works only with the IDs, so those extra fields are ignored on deserialization.

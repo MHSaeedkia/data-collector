@@ -112,3 +112,20 @@ expected delta from the previous message for that exchange. `OrderBookMerger.pro
   else `seq == lastSeq + sequence_jump` → in order, apply deltas.
 - New state `ExchangeBook.awaitingSnapshot` gates updates after a gap.
 NOTE: still no protection for restart cold-start (no Flink checkpointing — see section above).
+
+## Phase 4 — Unit testing (TDD, source: `flink/orderbook-job/src/test/`)
+
+Goal: spec-based coverage of the merger — assert the documented contract, deviations = bugs.
+See `memory/project_tdd_workflow.md` for the approach and stack.
+
+- [x] Test infra in `pom.xml`: JUnit 5 + AssertJ + `flink-test-utils` (`KeyedOneInputStreamOperatorTestHarness`) + JaCoCo + surefire — done 2026-06-30
+- [x] `OrderBookMergerTest` — 17 tests, **100% line + 100% branch** coverage of `OrderBookMerger`
+      (snapshot replace / null levels; update upsert/delete/no-delta/stale/gap; strict-seq;
+      asks↑/bids↓ sort; tie-break qty desc; equal-price-not-summed; BigDecimal scale collapse;
+      event_time = max; pair/side passthrough) — done 2026-06-30
+- [x] BUG FOUND & FIXED via test (red→green): updates were applied for the whole band
+      `lastSeq < seq <= lastSeq + jump`; the contract is **strict** `seq == lastSeq + jump`.
+      Now any non-exact `seq > lastSeq` discards the book + awaits snapshot — done 2026-06-30
+- Verified: Flink harness runs on the local JDK (Maven JDK 25); no JDK-21 toolchain needed.
+- [ ] Extend the same harness approach to remaining classes (deserializer, serializer,
+      source/sink factories, PairsLoader) for project-wide coverage
