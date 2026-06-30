@@ -42,7 +42,8 @@ INSERT INTO exchanges (id, name, label) VALUES
 (1, 'nobitex', 'نوبیتکس'),
 (2, 'bitpin', 'بیت پین'),
 (3, 'wallex', 'والکس'),
-(4, 'ramzinex', 'رمزینکس');
+(4, 'ramzinex', 'رمزینکس'),
+(5, 'bitget', 'بیت گت');
 SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
 
 -- seed markets
@@ -372,4 +373,31 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status") VALUES
 (4, '61', 107, 'unsubscribe'), -- ramzinex SHIB/IRR
 (4, '39', 108, 'unsubscribe'), -- ramzinex BTT/IRR
 (4, '552', 109, 'unsubscribe'), -- ramzinex 100PEPE/USDT
-(4, '366', 110, 'unsubscribe'); -- ramzinex 100PEPE/IRR
+(4, '366', 110, 'unsubscribe'), -- ramzinex 100PEPE/IRR
+(5, 'BTCUSDT', 1, 'unsubscribe'), -- bitget BTC/USDT
+(5, 'ETHUSDT', 3, 'unsubscribe'), -- bitget ETH/USDT
+(5, 'XRPUSDT', 5, 'unsubscribe'), -- bitget XRP/USDT
+(5, 'TRXUSDT', 7, 'unsubscribe'), -- bitget TRX/USDT
+(5, 'SOLUSDT', 9, 'unsubscribe'), -- bitget SOL/USDT
+(5, 'DOTUSDT', 11, 'unsubscribe'), -- bitget DOT/USDT
+(5, 'HYPEUSDT', 13, 'unsubscribe'), -- bitget HYPE/USDT
+(5, 'DOGEUSDT', 15, 'unsubscribe'), -- bitget DOGE/USDT
+(5, 'PEPEUSDT', 17, 'unsubscribe'), -- bitget PEPE/USDT
+(5, 'SUIUSDT', 19, 'unsubscribe'), -- bitget SUI/USDT
+(5, 'ZECUSDT', 21, 'unsubscribe'), -- bitget ZEC/USDT
+(5, 'XLMUSDT', 23, 'unsubscribe'), -- bitget XLM/USDT
+(5, 'LINKUSDT', 25, 'unsubscribe'), -- bitget LINK/USDT
+(5, 'AVAXUSDT', 27, 'unsubscribe'), -- bitget AVAX/USDT
+(5, 'PAXGUSDT', 29, 'unsubscribe'), -- bitget PAXG/USDT
+(5, 'XAUTUSDT', 31, 'unsubscribe'), -- bitget XAUT/USDT
+(5, 'NEARUSDT', 33, 'unsubscribe'), -- bitget NEAR/USDT
+(5, 'UNIUSDT', 35, 'unsubscribe'), -- bitget UNI/USDT
+(5, 'AAVEUSDT', 37, 'unsubscribe'), -- bitget AAVE/USDT
+(5, 'OKXUSDT', 39, 'unsubscribe'), -- bitget OKX/USDT
+(5, 'ADAUSDT', 41, 'unsubscribe'), -- bitget ADA/USDT
+(5, 'GRAMUSDT', 43, 'unsubscribe'), -- bitget GRAM/USDT
+(5, 'BNBUSDT', 45, 'unsubscribe'), -- bitget BNB/USDT
+(5, 'WLDUSDT', 47, 'unsubscribe'), -- bitget WLD/USDT
+(5, 'MNTUSDT', 49, 'unsubscribe'), -- bitget MNT/USDT
+(5, 'SHIBUSDT', 51, 'unsubscribe'), -- bitget SHIB/USDT
+(5, 'BTTUSDT', 53, 'unsubscribe'); -- bitget BTT/USDT
