@@ -25,6 +25,21 @@ had a bug: it applied the whole band `lastSeq < seq <= lastSeq + jump`. Fixed in
 TDD red→green; `seqBelowExpectedIsTreatedAsGap` pins it. First spec-based test run found a
 real MVP bug — the approach works.
 
+**Coverage status (2026-06-30):** 34 unit tests green. Fully unit-tested with 100% reachable
+coverage: `OrderBookMerger` (harness), `OrderBookEventDeserializer`, `OrderBookEventType`,
+`ConsolidatedOrderBookSerializer` (its `catch (JsonProcessingException)` is unreachable
+defensive code — a valid `ConsolidatedOrderBook` never fails Jackson — left untested on
+purpose), and `PairsLoader.Pair` record. Plain getter/setter POJOs (`OrderBookEvent`,
+`ConsolidatedOrderBook`, `ConsolidatedLevel`, `PriceLevel`, `ExchangeBook`) are deliberately
+NOT unit-tested — no logic, and the ser/deser tests exercise their Jackson bindings anyway.
+
+**Needs integration tests (no unit seam):** `PairsLoader.load()` (real JDBC + markets schema),
+`OrderBookSourceFactory`/`OrderBookSinkFactory` (the behaviour is the Kafka topic-pattern
+subscription / value-only publish — only observable against a live broker; builders expose no
+getters), and `OrderBookJob.main()` (end-to-end Postgres + Kafka + Flink MiniCluster). Rule of
+thumb applied: if the only possible unit assertion is "builder returned non-null", it is an
+integration test, not a unit test — don't write the worthless non-null test.
+
 ## Test infrastructure for `flink/orderbook-job` (Maven, Java 21, Flink 2.2.0)
 
 - **JUnit 5 (jupiter)** + **AssertJ** for assertions; **surefire** configured to run JUnit5.
