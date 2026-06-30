@@ -44,7 +44,7 @@ INSERT INTO exchanges (id, name, label) VALUES
 (2, 'bitpin', 'بیت پین'),
 (3, 'wallex', 'والکس'),
 (4, 'ramzinex', 'رمزینکس'),
-(5, 'opmfinex', 'او ام پی فینکس');
+(5, 'ompfinex', 'او ام پی فینکس');
 SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
 
 -- seed markets
