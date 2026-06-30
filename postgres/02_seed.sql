@@ -43,7 +43,8 @@ INSERT INTO exchanges (id, name, label) VALUES
 (2, 'bitpin', 'بیت پین'),
 (3, 'wallex', 'والکس'),
 (4, 'ramzinex', 'رمزینکس'),
-(5, 'bitget', 'بیت گت');
+(5, 'bitget', 'بیت گت'),
+(6, 'bybit', 'بای بیت');
 SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
 
 -- seed markets
@@ -400,4 +401,31 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status") VALUES
 (5, 'WLDUSDT', 47, 'unsubscribe'), -- bitget WLD/USDT
 (5, 'MNTUSDT', 49, 'unsubscribe'), -- bitget MNT/USDT
 (5, 'SHIBUSDT', 51, 'unsubscribe'), -- bitget SHIB/USDT
-(5, 'BTTUSDT', 53, 'unsubscribe'); -- bitget BTT/USDT
+(5, 'BTTUSDT', 53, 'unsubscribe'), -- bitget BTT/USDT
+(6, 'BTCUSDT', 1, 'unsubscribe'), -- bybit BTC/USDT
+(6, 'ETHUSDT', 3, 'unsubscribe'), -- bybit ETH/USDT
+(6, 'XRPUSDT', 5, 'unsubscribe'), -- bybit XRP/USDT
+(6, 'TRXUSDT', 7, 'unsubscribe'), -- bybit TRX/USDT
+(6, 'SOLUSDT', 9, 'unsubscribe'), -- bybit SOL/USDT
+(6, 'DOTUSDT', 11, 'unsubscribe'), -- bybit DOT/USDT
+(6, 'HYPEUSDT', 13, 'unsubscribe'), -- bybit HYPE/USDT
+(6, 'DOGEUSDT', 15, 'unsubscribe'), -- bybit DOGE/USDT
+(6, 'PEPEUSDT', 17, 'unsubscribe'), -- bybit PEPE/USDT
+(6, 'SUIUSDT', 19, 'unsubscribe'), -- bybit SUI/USDT
+(6, 'ZECUSDT', 21, 'unsubscribe'), -- bybit ZEC/USDT
+(6, 'XLMUSDT', 23, 'unsubscribe'), -- bybit XLM/USDT
+(6, 'LINKUSDT', 25, 'unsubscribe'), -- bybit LINK/USDT
+(6, 'AVAXUSDT', 27, 'unsubscribe'), -- bybit AVAX/USDT
+(6, 'PAXGUSDT', 29, 'unsubscribe'), -- bybit PAXG/USDT
+(6, 'XAUTUSDT', 31, 'unsubscribe'), -- bybit XAUT/USDT
+(6, 'NEARUSDT', 33, 'unsubscribe'), -- bybit NEAR/USDT
+(6, 'UNIUSDT', 35, 'unsubscribe'), -- bybit UNI/USDT
+(6, 'AAVEUSDT', 37, 'unsubscribe'), -- bybit AAVE/USDT
+(6, 'OKXUSDT', 39, 'unsubscribe'), -- bybit OKX/USDT
+(6, 'ADAUSDT', 41, 'unsubscribe'), -- bybit ADA/USDT
+(6, 'GRAMUSDT', 43, 'unsubscribe'), -- bybit GRAM/USDT
+(6, 'BNBUSDT', 45, 'unsubscribe'), -- bybit BNB/USDT
+(6, 'WLDUSDT', 47, 'unsubscribe'), -- bybit WLD/USDT
+(6, 'MNTUSDT', 49, 'unsubscribe'), -- bybit MNT/USDT
+(6, 'SHIBUSDT', 51, 'unsubscribe'), -- bybit SHIB/USDT
+(6, 'BTTUSDT', 53, 'unsubscribe'); -- bybit BTT/USDT
