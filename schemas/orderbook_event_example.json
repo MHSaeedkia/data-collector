@@ -8,6 +8,7 @@
 	"type": "snapshot",
 	"event_time": 1750680000000,
 	"sequence_id": 1042,
+	"sequence_jump": 300,
 	"levels": [
 		{ "price": "97240.50", "quantity": "0.42" },
 		{ "price": "97255.00", "quantity": "1.10" },

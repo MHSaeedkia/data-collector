@@ -31,6 +31,9 @@ public class OrderBookEvent {
     @JsonProperty("sequence_id")
     private long sequenceId;
 
+    @JsonProperty("sequence_jump")
+    private long sequenceJump;
+
     private List<PriceLevel> levels;
 
     public OrderBookEvent() {
@@ -82,6 +85,14 @@ public class OrderBookEvent {
 
     public void setSequenceId(long sequenceId) {
         this.sequenceId = sequenceId;
+    }
+
+    public long getSequenceJump() {
+        return sequenceJump;
+    }
+
+    public void setSequenceJump(long sequenceJump) {
+        this.sequenceJump = sequenceJump;
     }
 
     public List<PriceLevel> getLevels() {

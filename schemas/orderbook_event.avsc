@@ -54,6 +54,10 @@
 			"type": "long"
 		},
 		{
+			"name": "sequence_jump",
+			"type": "long"
+		},
+		{
 			"name": "levels",
 			"type": {
 				"type": "array",
