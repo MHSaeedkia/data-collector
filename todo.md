@@ -76,6 +76,13 @@ snapshot. Per-exchange state changes from "last event" to a *maintained* book th
       per-exchange book: `{ Map<price,qty> levels, long eventTime, long lastSeq }` (new `ExchangeBook` POJO) — done 2026-06-29
 - [x] `processElement`: branch on `type` (replace vs mutate); drop stale/duplicate `seq <= lastSeq` — done 2026-06-29
 - [x] Rebuild-union-sort-emit stays unchanged (now iterates the maintained map) — done 2026-06-29
+- [x] Add `sequence_jump` (long, required) to `schemas/orderbook_event.avsc` + example JSON (NiFi populates it) — done 2026-06-29
+- [x] Add `sequenceJump` field to `OrderBookEvent` model — done 2026-06-29
+- [x] Generator (`fake-data-generator/mian.go`): send only snapshots with `sequence_jump = 0` — done 2026-06-29
+- [x] Gap-detection logic in `OrderBookMerger` using `sequence_jump` — done 2026-06-29
+      (snapshot = unconditional baseline; update in-order iff `seq == lastSeq + sequence_jump`;
+       stale/dup `seq <= lastSeq` drop; gap `seq > lastSeq + sequence_jump` → clear book +
+       `ExchangeBook.awaitingSnapshot` flag, ignore updates until next snapshot resyncs)
 
 ### DEFERRED — cold start (revisit later)
 Problem: no Flink checkpointing/state backend is configured (docker-compose only sets
@@ -93,14 +100,32 @@ snapshots occasionally, that can be a long time.
 - Also defer the "ignore updates until first snapshot per exchange" gate (needed for a truly
   empty start / brand-new deploy with no checkpoint).
 
-### DEFERRED — sequence-id gap handling (revisit later)
-Question: when the merger sees a gap (`seq > lastSeq + 1`) for an exchange, what should it do?
-- CURRENT ASSUMPTION: no messages are dropped — we have every seq — so no gap handling yet
-  (only stale/duplicate drop via `seq <= lastSeq`).
-- Options to decide later:
-  - (A) Drop that exchange's book + wait for next snapshot to resync (safe/standard; needs
-        contiguous +1 sequence ids).
-  - (B) Apply anyway / tolerate (simpler; book can silently drift if a message was dropped).
-  - (C) Seq is only monotonic, not contiguous → can only detect stale/dups, no gap detection.
-- TO CONFIRM with the NiFi/exchange team: is `sequence_id` contiguous (+1 per message) or
-  merely increasing? And who generates it (exchange vs NiFi)?
+### DONE — sequence-id gap handling (2026-06-29)
+Increments are NOT +1 — exchanges can jump (~300) — so each event carries `sequence_jump`, the
+expected delta from the previous message for that exchange. `OrderBookMerger.processElement`:
+- snapshot → accepted unconditionally (no seq check; IS the baseline), replaces book, stores
+  `lastSeq`, clears `awaitingSnapshot`. Also the only way an exchange's book is first created,
+  so a leading `update` is ignored (cold-start "first event is a snapshot" now enforced).
+- update → `book == null` or `awaitingSnapshot` → ignore; `seq <= lastSeq` → stale/dup drop;
+  `seq > lastSeq + sequence_jump` → GAP: clear book + set `awaitingSnapshot`, wait for next
+  snapshot (chosen action: drop-book-and-resync, per user — safe, never serve a drifted book);
+  else `seq == lastSeq + sequence_jump` → in order, apply deltas.
+- New state `ExchangeBook.awaitingSnapshot` gates updates after a gap.
+NOTE: still no protection for restart cold-start (no Flink checkpointing — see section above).
+
+## Phase 4 — Unit testing (TDD, source: `flink/orderbook-job/src/test/`)
+
+Goal: spec-based coverage of the merger — assert the documented contract, deviations = bugs.
+See `memory/project_tdd_workflow.md` for the approach and stack.
+
+- [x] Test infra in `pom.xml`: JUnit 5 + AssertJ + `flink-test-utils` (`KeyedOneInputStreamOperatorTestHarness`) + JaCoCo + surefire — done 2026-06-30
+- [x] `OrderBookMergerTest` — 17 tests, **100% line + 100% branch** coverage of `OrderBookMerger`
+      (snapshot replace / null levels; update upsert/delete/no-delta/stale/gap; strict-seq;
+      asks↑/bids↓ sort; tie-break qty desc; equal-price-not-summed; BigDecimal scale collapse;
+      event_time = max; pair/side passthrough) — done 2026-06-30
+- [x] BUG FOUND & FIXED via test (red→green): updates were applied for the whole band
+      `lastSeq < seq <= lastSeq + jump`; the contract is **strict** `seq == lastSeq + jump`.
+      Now any non-exact `seq > lastSeq` discards the book + awaits snapshot — done 2026-06-30
+- Verified: Flink harness runs on the local JDK (Maven JDK 25); no JDK-21 toolchain needed.
+- [ ] Extend the same harness approach to remaining classes (deserializer, serializer,
+      source/sink factories, PairsLoader) for project-wide coverage

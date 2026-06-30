@@ -12,7 +12,10 @@ import java.util.TreeMap;
  *   - an {@code update} event upserts (quantity &gt; 0) or deletes (quantity == 0)
  *     individual price levels.
  * {@link #lastSeq} is the highest {@code sequence_id} applied so far; the merger uses it
- * to drop stale/duplicate events ({@code sequence_id <= lastSeq}).
+ * (together with the event's {@code sequence_jump}) to drop stale/duplicate events and to
+ * detect gaps. {@link #awaitingSnapshot} is set when a gap (missed messages) is detected:
+ * the book is cleared and {@code update}s are ignored until the next {@code snapshot}
+ * resyncs it.
  *
  * Plain POJO (no-arg ctor + getters/setters) so Flink can store it in MapState.
  */
@@ -26,6 +29,7 @@ public class ExchangeBook {
     private NavigableMap<BigDecimal, String> levels = new TreeMap<>();
     private long eventTime;
     private long lastSeq;
+    private boolean awaitingSnapshot;
 
     public ExchangeBook() {
     }
@@ -52,5 +56,13 @@ public class ExchangeBook {
 
     public void setLastSeq(long lastSeq) {
         this.lastSeq = lastSeq;
+    }
+
+    public boolean isAwaitingSnapshot() {
+        return awaitingSnapshot;
+    }
+
+    public void setAwaitingSnapshot(boolean awaitingSnapshot) {
+        this.awaitingSnapshot = awaitingSnapshot;
     }
 }

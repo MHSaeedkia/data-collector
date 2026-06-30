@@ -22,10 +22,14 @@ import java.util.Map;
 /**
  * Maintains a running order book per exchange for one pair+side and merges them into a
  * single price-sorted book. A {@code snapshot} event replaces that exchange's book; an
- * {@code update} event mutates it level-by-level (see {@link ExchangeBook}). Stale or
- * duplicate events are dropped via {@code sequence_id}. Quantities are NOT summed — each
- * level keeps its own exchange, so equal-price levels from different exchanges remain
- * separate, adjacent entries.
+ * {@code update} event mutates it level-by-level (see {@link ExchangeBook}). Updates are
+ * validated for continuity with {@code sequence_id}/{@code sequence_jump}: a stale or
+ * duplicate event ({@code seq <= lastSeq}) is dropped, an in-order event
+ * ({@code seq == lastSeq + sequence_jump}) is applied, and any other sequence above
+ * {@code lastSeq} — a gap from missed messages or an unexpected intermediate value —
+ * discards that exchange's book until the next {@code snapshot} resyncs it. Quantities are NOT
+ * summed — each level keeps its own exchange, so equal-price levels from different exchanges
+ * remain separate, adjacent entries.
  *
  * Sort: price ascending for asks, descending for bids; tie-break by larger
  * quantity first.
@@ -77,41 +81,55 @@ public class OrderBookMerger
         int exchangeId = event.getExchangeId();
         ExchangeBook book = booksByExchange.get(exchangeId);
 
-        // Drop stale/duplicate events. Only meaningful once a book already exists for this
-        // exchange; the first event for an exchange is always accepted. (Gap handling —
-        // seq > lastSeq + 1 — is deferred; see todo.md.)
-        if (book != null && event.getSequenceId() <= book.getLastSeq()) {
-            return;
-        }
-
         if (event.getType() == OrderBookEventType.SNAPSHOT) {
-            // Snapshot: replace this exchange's book wholesale.
+            // Snapshot: accepted unconditionally — it is the baseline, so no sequence check
+            // (and it clears any "awaiting snapshot" state left by a prior gap). Replace the
+            // book wholesale and record its sequence_id for validating the next update.
             book = new ExchangeBook();
             if (event.getLevels() != null) {
                 for (PriceLevel level : event.getLevels()) {
                     book.getLevels().put(new BigDecimal(level.getPrice()), level.getQuantity());
                 }
             }
+            book.setEventTime(event.getEventTime());
+            book.setLastSeq(event.getSequenceId());
+            booksByExchange.put(exchangeId, book);
         } else {
-            // Update: apply deltas on top of the existing book (empty if none yet — the
-            // cold-start assumption is that the first event per exchange is a snapshot).
-            if (book == null) {
-                book = new ExchangeBook();
+            // Update: only valid against a trusted baseline. With no book yet (cold start) or
+            // a book awaiting a snapshot after a gap, there is nothing to apply onto — ignore
+            // the update until a snapshot arrives.
+            if (book == null || book.isAwaitingSnapshot()) {
+                return;
             }
-            if (event.getLevels() != null) {
-                for (PriceLevel level : event.getLevels()) {
-                    BigDecimal price = new BigDecimal(level.getPrice());
-                    if (BigDecimal.ZERO.compareTo(new BigDecimal(level.getQuantity())) == 0) {
-                        book.getLevels().remove(price); // quantity 0 → delete level
-                    } else {
-                        book.getLevels().put(price, level.getQuantity()); // upsert
+            long seq = event.getSequenceId();
+            if (seq <= book.getLastSeq()) {
+                return; // stale / duplicate
+            }
+            if (seq != book.getLastSeq() + event.getSequenceJump()) {
+                // Out of order: the sequence is not exactly the expected next one — a forward
+                // gap (missed messages) or an unexpected intermediate value. Either way the
+                // book can no longer be trusted. Discard it and wait for the next snapshot to
+                // resync; updates are ignored until then.
+                book.getLevels().clear();
+                book.setAwaitingSnapshot(true);
+                booksByExchange.put(exchangeId, book);
+            } else {
+                // In order (seq == lastSeq + sequence_jump): apply the deltas in place.
+                if (event.getLevels() != null) {
+                    for (PriceLevel level : event.getLevels()) {
+                        BigDecimal price = new BigDecimal(level.getPrice());
+                        if (BigDecimal.ZERO.compareTo(new BigDecimal(level.getQuantity())) == 0) {
+                            book.getLevels().remove(price); // quantity 0 → delete level
+                        } else {
+                            book.getLevels().put(price, level.getQuantity()); // upsert
+                        }
                     }
                 }
+                book.setEventTime(event.getEventTime());
+                book.setLastSeq(event.getSequenceId());
+                booksByExchange.put(exchangeId, book);
             }
         }
-        book.setEventTime(event.getEventTime());
-        book.setLastSeq(event.getSequenceId());
-        booksByExchange.put(exchangeId, book);
 
         // Rebuild the whole consolidated book from scratch on every event: flatten every
         // exchange's maintained book into one list, tagging each level with its exchange_id.

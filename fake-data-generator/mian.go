@@ -55,6 +55,7 @@ type OrderBookEvent struct {
 	Side         string  `json:"side"`
 	Type         string  `json:"type"`
 	EventTime    int64   `json:"event_time"`
+	SequenceJump int64   `json:"sequence_jump"`
 	Levels       []Level `json:"levels"`
 }
 
@@ -152,6 +153,7 @@ func emit(ctx context.Context, writer *kafka.Writer, pair Pair, side string, exc
 		Side:         side,
 		Type:         "snapshot",
 		EventTime:    time.Now().UnixMilli(),
+		SequenceJump: 0, // generator sends only snapshots; a snapshot carries no jump
 		Levels:       levels,
 	}
 

@@ -151,6 +151,14 @@ Output price is normalized via `toPlainString()` (so display drops trailing zero
 **Sequence id (mandatory, done):** `sequence_id` (`long`, required) added to `schemas/orderbook_event.avsc`,
 example JSON, and `OrderBookEvent.sequenceId`; NiFi must populate it. Used now only for stale/duplicate drop.
 
+**Sequence jump (field added 2026-06-29):** `sequence_jump` (`long`, required) added to
+`schemas/orderbook_event.avsc`, example JSON, and `OrderBookEvent.sequenceJump`. NiFi now populates it.
+Resolves the old "is `sequence_id` contiguous +1?" question below: **NO — increments are not +1**; some
+exchanges jump by ~300 between consecutive updates, so `sequence_jump` carries the expected per-message
+increment (delta from the previous message for that exchange). Gap-detection logic is now implemented —
+see the gap-handling section below. Confirmed semantic: an update is in order iff
+`seq == lastSeq + sequence_jump`.
+
 ### DEFERRED — cold start (revisit later)
 **Verified 2026-06-29: NO Flink checkpointing/state backend is configured** — `docker-compose.yml`
 only sets `jobmanager.rpc.address` + `taskmanager.numberOfTaskSlots`. So keyed state is in-memory and
@@ -162,12 +170,29 @@ idiomatic, no merger code]; (B) log-compact output topic `{side}-p{pair_id}` (ke
 on startup — also gives downstream consumers (web UI) the current book instantly; (C) both. Also deferred:
 the "ignore updates until first snapshot per exchange" gate (for a truly empty / brand-new deploy).
 
-### DEFERRED — sequence-id gap handling (revisit later)
-When `seq > lastSeq + 1` (a gap). **Current assumption:** no messages dropped, so no gap handling yet.
-Options: (A) drop that exchange's book + wait for next snapshot to resync (safe/standard; needs
-contiguous +1 ids); (B) tolerate/apply anyway (book can silently drift); (C) seq is only monotonic, not
-contiguous → can only detect stale/dups. **TO CONFIRM with NiFi/exchange team:** is `sequence_id`
-contiguous (+1 per message) or merely increasing, and who generates it (exchange vs NiFi)?
+### DONE — sequence-id gap handling (2026-06-29)
+Increments are NOT +1 — exchanges can jump (~300) — so each event carries `sequence_jump` (the expected
+delta from the previous message). `OrderBookMerger.processElement` now validates per-exchange continuity:
+
+- **snapshot** → accepted unconditionally (NO seq check — it IS the baseline); replaces the book, stores
+  `lastSeq = sequence_id`, and clears `awaitingSnapshot`. This is also the only way to recover from a gap
+  and the only way an exchange's book is first created (so cold-start "first event is a snapshot" is now
+  enforced, not just assumed — a leading `update` is ignored).
+- **update** → must validate against a trusted baseline:
+  - `book == null` or `book.awaitingSnapshot` → ignore (no baseline yet / waiting to resync).
+  - `seq <= lastSeq` → stale/duplicate, drop.
+  - `seq > lastSeq + sequence_jump` → **real gap (missed messages)**: clear the book's levels + set
+    `awaitingSnapshot = true`, then re-emit (that exchange drops out of the consolidated book) and wait
+    for the next snapshot. Chosen action: **drop-book-and-resync** (user decision; safe/standard — never
+    serve a drifted book), not apply-anyway.
+  - else (`seq == lastSeq + sequence_jump`) → in order: apply deltas (qty>0 upsert / qty==0 delete),
+    advance `eventTime`/`lastSeq`.
+
+New state: `ExchangeBook.awaitingSnapshot` (boolean) gates updates after a gap until a snapshot resets it.
+Generator (`fake-data-generator/mian.go`) sends ONLY snapshots with `sequence_jump = 0`, so the update/gap
+path is exercised by real NiFi data, not the dev generator. Compiles clean (`mvn -q compile`).
+NOTE: cold-start on a *restart* is still unprotected — no Flink checkpointing (see cold-start section);
+in-memory state is lost on restart and only rebuilds once each exchange sends a fresh snapshot.
 
 Status: plan agreed; schema edit (`sequence_id`) pending because it's a shared contract with the NiFi
 team. Tracked in `todo.md` Phase 3.
