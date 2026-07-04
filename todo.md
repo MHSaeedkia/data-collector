@@ -194,11 +194,26 @@ Flat single-level shape confirmed by the wire example in
 - [x] Register with the schema registry (extended `scripts/warmup.sh` — subject `price-level-event`) — done 2026-07-04
 
 ### Step 1 — Project setup
-- [ ] Create Maven module `flink/orderbook-consolidator/pom.xml` (copy old pom as template;
+- [x] Create Maven module `flink/orderbook-consolidator/pom.xml` (copied old pom as template;
       `artifactId` = `orderbook-consolidator`, base package `io.tibobit.consolidator`, shade
-      `mainClass` = `OrderBookConsolidatorJob`)
-- [ ] Wire into the Flink build/deploy path (`flink/Dockerfile`, `flink/run-job.sh`,
-      `docker-compose.yml`) so both jobs can be built/submitted
+      `mainClass` = `io.tibobit.consolidator.OrderBookConsolidatorJob`). **Dropped the PostgreSQL
+      dependency** — Step 0 locked "No Postgres dependency" (no `PairsLoader`), so carrying it would
+      be a speculative dep. `.gitignore` (`target/`) mirrored. `mvn validate` green — done 2026-07-04
+- [x] Wire into the Flink build/deploy path — done 2026-07-04:
+      - Split the single `flink/run-job.sh` into **one self-contained script per module** (2026-07-04,
+        user request): `flink/orderbook-job/run-job.sh` (grep `OrderBookJob`) and
+        `flink/orderbook-consolidator/run-job.sh` (grep `OrderBookConsolidatorJob`). Each derives its
+        JAR/pom from its own `SCRIPT_DIR`, takes no args; old flink-level `run-job.sh` removed.
+      - Each project made fully self-contained (2026-07-04, user request): `flink/orderbook-job/` and
+        `flink/orderbook-consolidator/` each hold their own `Makefile` (`run-local`/`run-remote` →
+        `./run-job.sh`), `Dockerfile`, and `confluent-deps-pom.xml`. Consolidator's `Dockerfile` drops
+        the Postgres/JDBC libs (no Postgres — matches its pom). Shared `flink/Makefile`,
+        `flink/Dockerfile`, `flink/confluent-deps-pom.xml` removed.
+      - Per-project root composes: `docker-compose-orderbook-job.yml` + `docker-compose-orderbook-consolidator.yml`
+        (each = full stack; Flink cluster `build:`s from its project dir). Shared root `docker-compose.yml`
+        removed; root `Makefile` `refresh` → orderbook-job compose, added `refresh-consolidator`; `README.md`
+        updated. Both composes pass `docker compose config`. NOTE: identical container_names/ports → run
+        ONE stack at a time; the two Flink clusters can share nothing simultaneously.
 
 ### Step 2 — Data model
 - [ ] `PriceLevelEvent` — single-level input POJO (Jackson snake_case, ignore-unknown)

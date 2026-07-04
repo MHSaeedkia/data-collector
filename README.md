@@ -48,7 +48,9 @@ Tracked pairs across exchanges:
 ### Start the stack
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose-orderbook-job.yml up -d
+# consolidator stack (run one stack at a time — they share container names/ports):
+# docker compose -f docker-compose-orderbook-consolidator.yml up -d
 ```
 
 Services start in dependency order. NiFi takes ~90 seconds to become healthy.
@@ -87,10 +89,11 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 
 ```
 .
-├── docker-compose.yml
+├── docker-compose-orderbook-job.yml           # full stack; Flink cluster builds orderbook-job
+├── docker-compose-orderbook-consolidator.yml  # full stack; Flink cluster builds orderbook-consolidator
 ├── flink/
-│   ├── Dockerfile              # Flink + Kafka/JDBC/Avro connectors
-│   └── confluent-deps-pom.xml  # Schema Registry client dependencies
+│   ├── orderbook-job/          # Dockerfile, confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
+│   └── orderbook-consolidator/ # Dockerfile (no Postgres), confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
 ├── nifi/
 │   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
 ├── postgres/
@@ -106,7 +109,7 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ./scripts/warmup.sh
 
 cd flink
-./run-job.sh
+./orderbook-job/run-job.sh          # or: ./orderbook-consolidator/run-job.sh
 
 cd ../web
 npm i && npm start
