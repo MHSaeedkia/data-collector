@@ -234,12 +234,20 @@ All under `flink/orderbook-consolidator/src/main/java/io/tibobit/consolidator/mo
       package (kept `@JsonProperty` — these ARE the Kafka wire shape the web UI depends on; javadoc
       lightly reworded to drop the old `PriceLevel` @link). Do NOT change this shape.
 
-### Step 3 — Deserialization
-- [ ] `PriceLevelEventDeserializer` (`DeserializationSchema<PriceLevelEvent>`, Jackson)
+### Step 3 — Deserialization — done 2026-07-04
+- [x] `PriceLevelEventDeserializer` (`DeserializationSchema<PriceLevelEvent>`, Jackson) —
+      `io.tibobit.consolidator.deserializer`; mirrors orderbook-job's `OrderBookEventDeserializer`
+      (lazy `transient ObjectMapper`, `isEndOfStream=false`, `getProducedType=TypeInformation.of(...)`).
 
-### Step 4 — Sources
-- [ ] Main price-level `KafkaSource` — one topic-pattern subscription over all
-      `{side}-p{pair_id}-ex{exchange_id}` topics, `latest` offsets (live book, no replay)
+### Step 4 — Sources — done 2026-07-04
+- [x] Main price-level `KafkaSource` — `PriceLevelSourceFactory.create(bootstrap, groupId)` in
+      `io.tibobit.consolidator.source`. ONE topic-pattern subscription over all input topics
+      (`(asks|bids)-p[0-9]+-ex[0-9]+`), `latest` offsets (live book, no replay). DECISION: unlike
+      orderbook-job (one source per pair+side, pairs from Postgres), the consolidator uses a SINGLE
+      source over every input topic and routes downstream by each event's own
+      `pair_id`/`exchange_id`/`side` via `keyBy` — so no `PairsLoader`/Postgres, and new
+      pairs/exchanges are picked up automatically. The required `-ex{n}` segment excludes the
+      OUTPUT topics `{side}-p{pair_id}`, preventing self-consumption. `mvn compile` green.
 
 ### Step 5 — Core operators (two stages)
 Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; stage 2 re-keys by
