@@ -1,7 +1,7 @@
 ---
 services:
     jobmanager:
-        build: ./flink
+        build: ./flink/orderbook-job
         container_name: jobmanager
         hostname: jobmanager
         command: jobmanager
@@ -18,7 +18,7 @@ services:
             retries: 5
 
     taskmanager:
-        build: ./flink
+        build: ./flink/orderbook-job
         container_name: taskmanager
         hostname: taskmanager
         command: taskmanager

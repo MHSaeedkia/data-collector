@@ -2,12 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JAR="$SCRIPT_DIR/orderbook-job/target/orderbook-job-1.0-SNAPSHOT.jar"
+MODULE="orderbook-job"
+JAR="$SCRIPT_DIR/target/$MODULE-1.0-SNAPSHOT.jar"
 FLINK_API="${FLINK_API:-http://localhost:7070}"
 
 # 1. Build
 echo "==> Building..."
-mvn -f "$SCRIPT_DIR/orderbook-job/pom.xml" package -q -DskipTests
+mvn -f "$SCRIPT_DIR/pom.xml" package -q -DskipTests
 echo "    Built: $JAR"
 
 # 2. Upload JAR to Flink
