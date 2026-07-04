@@ -1,8 +1,8 @@
 ---
 name: orderbook-consolidator-decision
-description: Final decision for the greenfield flink/orderbook-consolidator/ rebuild — build the Order Book Consolidator as a Java Flink DataStream job; requirements R1–R6, the decisive one being R3 (per-(exchange,pair) wall-clock TTL expiry via processing-time timers re-armed on every upsert)
+description: Final decision for the greenfield flink/orderbook-consolidator/ rebuild — build the Order Book Consolidator as a Java Flink DataStream job; requirements R1, R2, R4, R5, R6 for now, with R3 (per-(exchange,pair) stale_time expiry) postponed to a later phase
 metadata:
-  type: project
+    type: project
 ---
 
 # Order Book Consolidator — Final Decision
@@ -21,18 +21,50 @@ A Flink streaming job that produces a live, consolidated cryptocurrency order bo
 - **Price-level stream (high volume).** One Kafka topic per `(side, pair, exchange)`, subscribed
   via a topic-pattern. Each message is one price level, already cleaned, validated, ordered and
   de-duplicated upstream (NiFi): `exchange_id`, `pair_id`, `side`, `event_time`, `price`,
-  `quantity` (plus display-only `exchange_name`/`base`/`quote`).
-- **TTL config stream (low volume).** A compacted stream carrying `ttl_ms` per
-  `(exchange_id, pair_id)`. TTL is uniform within one exchange-pair; different exchanges can have
-  different TTLs.
+  `quantity`. Display-only fields (`exchange_name`, `base`, `quote`) are not carried on the wire —
+  see the wire schema section below.
+- **Stale-time config stream (low volume, postponed — see "Postponed" section below).** A
+  compacted stream carrying `stale_time` per `(exchange_id, pair_id)`, for use once that feature
+  is built.
 
 **Output:** one consolidated book snapshot per `(pair, side)`, published to Kafka topic
 `{side}-p{pair_id}`, in a fixed shape (`pair_id`, `side`, `event_time`, `levels[]` with
 `exchange_id`/`price`/`quantity` per entry) that a downstream consumer already depends on and
 cannot change.
 
-**Scale:** many pairs × 2 sides × several exchanges, high-frequency level updates; TTL updates are
-rare; prices/quantities must be handled as exact decimals, never floating point.
+**Scale:** many pairs × 2 sides × several exchanges, high-frequency level updates; stale-time
+config updates are rare; prices/quantities must be handled as exact decimals, never floating point.
+
+## Input event wire schema (one price level per message)
+
+Each price-level message is a single flat level — **not** the old batched
+`levels[]`/`type`/`sequence_*` shape from `flink/orderbook-job/`. Concrete JSON:
+
+```json
+{
+	"exchange_id": 1,
+	"pair_id": 2,
+	"side": "asks",
+	"event_time": 1750680000000,
+	"price": "97240.50",
+	"quantity": "0.42"
+}
+```
+
+- `exchange_id`, `pair_id`, `side`, `event_time` — identity + freshness (the operator's key
+  material and R1's "latest" tie-break).
+- `price`, `quantity` — **strings**, parsed to `BigDecimal` from the wire string, never a float
+  (see `project_bigdecimal_rules`). `quantity == "0"` is the R2 removal signal.
+
+Display-only fields (`exchange_name`, `base`, `quote`) are not part of this wire schema — they are
+ignored by the job's logic and, if needed for display purposes downstream, should be resolved from
+`exchange_id`/`pair_id` via a lookup rather than carried on every message.
+
+Both an **Avro** schema (Confluent Schema Registry, the production transport) and a matching
+**JSON** example must be created for this shape under `schemas/` — e.g.
+`schemas/price_level_event.avsc` + `schemas/price_level_event_example.json` — mirroring the
+existing `orderbook_event.avsc` conventions but flat (drop `type`, `sequence_id`, `sequence_jump`,
+`levels[]`; add scalar `price`/`quantity` strings, and omit display-only fields).
 
 ## Requirements and how Java satisfies each one
 
@@ -59,53 +91,33 @@ price 11 -> qty 2
 price 12 -> qty 3
 ```
 
-**Mechanism:** `KeyedProcessFunction` keyed on `(pair, side, exchange, price)`, backed by
-`MapState<price, (quantity, event_time)>`. On each incoming event, if its `event_time` is newer
-than the stored one for that price, overwrite both fields in place — this is exactly the upsert
-behavior in the example above (price 10's entry is replaced, not duplicated).
-
-### R1 ↔ R3 interaction — TTL is per price-level entry, and resets on every refresh
-
-Each price-level entry carries its own `event_time`, and that entry's TTL deadline is always
-`event_time + ttl_ms` for **that entry's own, most recent `event_time`** — not the first time the
-price was ever seen. Continuing the example: when price 10 is refreshed from qty 1 to qty 4, its
-expiry deadline resets to the new event's `event_time + ttl_ms`. If no further refresh for price
-10 arrives before that new deadline passes (in real wall-clock time), price 10 is dropped from the
-resulting order book — independent of prices 11 and 12, which keep their own independent
-deadlines from their own last `event_time`. This is why the TTL timer (R3) must be **re-armed on
-every upsert**, not just set once when a price is first seen.
+**Mechanism:** `KeyedProcessFunction` keyed on `(pair, exchange, side)`, backed by
+`MapState<price, (quantity, event_time)>`. The key is **always** `(pair, exchange, side)` — one
+keyed instance per exchange's side of a pair — with `price` as the map key inside that state
+(locked Step 0, 2026-07-04; hard rule — never key the level state by `(pair, side)` alone). On each
+incoming event, if its `event_time` is newer than the stored one for that price, overwrite both
+fields in place — this is exactly the upsert behavior in the example above (price 10's entry is
+replaced, not duplicated). Because keyed state is scoped to its own key, this operator sees only
+one exchange, so the cross-exchange union (R4) happens in a **second operator re-keyed by
+`(pair, side)`** — see R4.
 
 ### R2 — Explicit removal
 
 **Requirement:** a message with `quantity = 0` removes that price level.
 
-**Mechanism:** in the same process function, `quantity == 0` → `state.remove(price)`, cancel that
-price's pending TTL timer (it's no longer needed), and emit a retraction for that level.
-
-### R3 — Time-based, per-exchange expiry
-
-**Requirement:** a level not refreshed within its `ttl_ms` must drop out, judged against **real
-wall-clock time**: keep the level while `event_time + ttl_ms >= current time`, drop it once
-that's false — independent of whether new events keep arriving for that exchange-pair.
-
-**Mechanism:** on every level upsert (R1), register a **processing-time timer** at
-`System.currentTimeMillis() + ttl_ms`, with the TTL for that `(exchange_id, pair_id)` read from
-**broadcast state** fed by the TTL stream. If the level is refreshed before the timer fires,
-cancel the old timer and register a new one (see R1 ↔ R3 above). If the timer fires with no
-refresh since, remove the level from state and emit a retraction. A **processing-time** timer
-(not an event-time timer) is required: event-time timers only fire once the Flink watermark
-passes the deadline, and the watermark for a key can stall indefinitely if that exchange-pair
-goes idle — leaving a stale level in the book forever. A processing-time timer fires purely off
-the wall clock, matching the actual requirement exactly.
+**Mechanism:** in the same process function, `quantity == 0` → `state.remove(price)`, and emit a
+retraction for that level.
 
 ### R4 — Cross-exchange consolidation
 
 **Requirement:** union all exchanges for a `(pair, side)` into one book; never sum quantities
 across exchanges (equal prices from different exchanges stay separate, adjacent entries).
 
-**Mechanism:** rebuild the union list from the keyed state for all exchanges under that
-`(pair, side)` on each event, emit as an array of `(exchange_id, price, quantity)` entries —
-never aggregated/summed.
+**Mechanism:** a **second operator re-keyed by `(pair, side)`** consumes the per-exchange books
+emitted by the R1 operator (which is keyed by `(pair, exchange, side)` and so cannot see other
+exchanges). It holds each exchange's latest levels in `MapState<exchange_id, levels>` and, on each
+update, rebuilds the union across all exchanges, emitting an array of `(exchange_id, price,
+quantity)` entries — never aggregated/summed.
 
 ### R5 — Ordering & precision
 
@@ -123,32 +135,47 @@ that must not change.
 **Mechanism:** a single `KafkaSink` whose serialization schema selects the target topic per
 record — native dynamic topic routing from one operator, no per-pair job templating needed.
 
+## Postponed — R3, stale-level expiry (`stale_time`)
+
+This requirement is **not being built in this phase**. It's captured here so it isn't lost, and
+will be picked up later.
+
+**What it is:** every price level needs a way to disappear from the order book on its own if
+nothing refreshes it for a while — even if the source never explicitly tells us to remove it.
+Each `(exchange, pair)` will have its own configurable `stale_time`: the maximum duration a price
+level is allowed to go without a new update before it's considered stale and dropped from the
+book. Different exchange-pairs can have different `stale_time` values — some sources may be
+expected to update more frequently than others, so what counts as "gone quiet for too long"
+differs per exchange-pair.
+
+**Why it matters:** without this, a price level could be shown as still active in the
+consolidated book indefinitely, even though the exchange that posted it has stopped sending any
+updates for it (e.g. a disconnect, an outage, or simply because that price is no longer being
+quoted) and never sent an explicit removal message. `stale_time` is what keeps the book honest in
+that situation — a level is only ever shown if it has been refreshed recently enough, according to
+its own exchange-pair's definition of "recently enough."
+
+**What's deferred, specifically:** the mechanics of _how_ this gets implemented (timers, clocks,
+state management, etc.) are intentionally left out of this decision for now. That will be
+revisited when this requirement is picked back up.
+
 ## Why Java over Flink SQL
 
 Flink SQL is more concise for R1, R2, R4, and R5 — deduplication, `WHERE quantity > 0`,
 `ARRAY_AGG` with `ORDER BY`, and `DECIMAL` types all have native, few-line SQL expressions for
-those requirements. But R3 and R6 are where SQL falls short:
+those requirements. For the requirements being built now, the deciding factor is R6:
 
-- **R3 (expiry) — the decisive requirement.** SQL's only relevant lever, `table.exec.state.ttl`,
-  is:
-    - **A single global value** — it cannot vary per exchange-pair, but R3 requires a different TTL
-      per `(exchange_id, pair_id)`, driven by the TTL stream.
-    - **Silent** — it frees idle state internally but never emits a retraction downstream, so an
-      expired level would keep sitting in the last-published book. That is a correctness break, not
-      a cosmetic gap.
-
-    Because of both points, pure SQL cannot express this expiry at all. It can only fall back to
-    trusting the upstream to always send an explicit `quantity = 0` removal (R2) whenever a level
-    dies — which is not something the job itself can guarantee or verify. If that trust is not
-    acceptable — and it is not, per the confirmed requirement that expiry inside the job be a
-    correctness guarantee — SQL cannot satisfy R3.
-
-- **R6 (many output topics) — a secondary, structural wrinkle.** A SQL Kafka sink writes to one
+- **R6 (many output topics) — the deciding requirement for now.** A SQL Kafka sink writes to one
   topic; the connector has no per-row topic routing. Emitting all `{side}-p{pair_id}` topics in
   SQL would require generating one `INSERT` statement per `(pair, side)` at startup and bundling
   them into a single `StatementSet` — workable, but the job becomes many templated inserts rather
   than one query, and needs the active-pairs catalog to be known at startup. Java's `KafkaSink`
   routes per record natively from a single operator, with no such constraint.
+
+- **General flexibility.** Java gives full low-level stream control (custom windows, side
+  outputs, complex state, timers) for requirements beyond what SQL expresses declaratively. This
+  keeps the door open for future needs — including R3 once it's picked back up — without having
+  to re-platform the job later.
 
 Additional trade-offs accepted by choosing Java over SQL:
 
@@ -158,17 +185,15 @@ Additional trade-offs accepted by choosing Java over SQL:
 - **Test style shifts to unit-style** — operator test harnesses (fast, isolated) rather than
   integration-style `TableEnvironment` + MiniCluster tests. This is a net positive for iteration
   speed, but a different testing approach than SQL would use.
-- Java gives **full low-level stream control** (custom windows, side outputs, complex state,
-  timers) for any future requirements beyond R1–R6, whereas SQL abstracts that away.
 
 ## Bottom line
 
-Every requirement (R1–R6) is satisfied correctly in Java. R3 (per-exchange, wall-clock expiry) is
-the requirement that actually forces the choice: it needs a TTL that varies per exchange-pair and
-a mechanism that reliably emits a removal when a level goes stale, and Flink SQL has no primitive
-that does both — it can only lean on trusting the upstream, which is not acceptable given expiry
-is a correctness guarantee, not a best-effort safety net. R6 reinforces the same direction, since
-SQL needs per-pair statement templating to reach many output topics where Java routes natively.
-Combined with full low-level control for future needs, the Order Book Consolidator should be built
-in Java on the Flink DataStream API, with **processing-time timers (re-armed on every level
-refresh)** as the core mechanism for R3.
+For the requirements being built now (R1, R2, R4, R5, R6), Java is chosen mainly because of R6:
+Flink SQL has no native way to route output to many dynamically-named topics without per-pair
+statement templating, while Java's `KafkaSink` does this natively from a single operator. Java
+also preserves full low-level control for requirements not yet built. R3 (stale-level expiry via
+`stale_time`) is postponed to a later phase — once it's picked back up, it is expected to further
+reinforce the choice of Java, since SQL has no native way to express a per-exchange-pair,
+independently-configurable expiry duration with a guaranteed removal signal. For now, the Order
+Book Consolidator should be built in Java on the Flink DataStream API, covering R1, R2, R4, R5,
+and R6.

@@ -1,8 +1,5 @@
 {
 	"exchange_id": 1,
-	"exchange_name": "bitpin",
-	"base": "BTC",
-	"quote": "USDT",
 	"pair_id": 2,
 	"side": "asks",
 	"type": "snapshot",

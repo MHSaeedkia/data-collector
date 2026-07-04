@@ -9,9 +9,11 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://localhost:8082}"
 AVRO_SCHEMA_SUBJECT="${AVRO_SCHEMA_SUBJECT:-orderbook-event}"
 JSON_SCHEMA_SUBJECT="${JSON_SCHEMA_SUBJECT:-orderbook-event-json}"
+PRICE_LEVEL_SCHEMA_SUBJECT="${PRICE_LEVEL_SCHEMA_SUBJECT:-price-level-event}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AVRO_SCHEMA_FILE="$SCRIPT_DIR/../schemas/orderbook_event.avsc"
+PRICE_LEVEL_SCHEMA_FILE="$SCRIPT_DIR/../schemas/price_level_event.avsc"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required but not installed."; exit 1; }
@@ -46,6 +48,7 @@ register_schema() {
 # --- Schema Registry ---
 
 register_schema "$AVRO_SCHEMA_SUBJECT" "AVRO" "$AVRO_SCHEMA_FILE"
+register_schema "$PRICE_LEVEL_SCHEMA_SUBJECT" "AVRO" "$PRICE_LEVEL_SCHEMA_FILE"
 
 # --- Kafka Topics ---
 

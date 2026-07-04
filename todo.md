@@ -153,3 +153,126 @@ DB / cluster (Testcontainers Kafka + Postgres, or an embedded equivalent):
       Only observable by consuming what it writes to a live broker.
 - [ ] `OrderBookJob.main()` — end-to-end topology: Postgres (pairs) + Kafka (in/out) + a Flink
       MiniCluster. Highest-value integration test; covers the wiring nothing above exercises.
+
+## Phase 5 — Order Book Consolidator (greenfield `flink/orderbook-consolidator/`)
+
+New Java Flink DataStream job, built **beside** `flink/orderbook-job/` (that one is left as-is).
+See `memory/project_orderbook_consolidator_decision.md` for the requirements and why Java over
+Flink SQL. Scope of THIS phase: **R1, R2, R4, R5, R6**. **R3 (per-(exchange,pair) `stale_time`
+expiry / TTL) is POSTPONED** per the decision doc — its deferred work is captured in the
+"Postponed — R3" block at the end of this phase. The consolidator is NOT a copy of the old merger
+— the input model is different (one flat price level per message, no
+`type`/`sequence_id`/`sequence_jump`). Output shape (`{side}-p{pair_id}`) is unchanged, so `web/`
+stays untouched. Precision rules: `BigDecimal` from the wire string everywhere — see
+`memory/project_bigdecimal_rules.md`.
+
+### Step 0 — Locked design decisions (2026-07-04)
+- [x] **Keying granularity.** The R1 level-state operator is keyed by
+      **`(pair_id, exchange_id, side)`** (one keyed instance per exchange's side of a pair), holding
+      `MapState<price, StoredLevel>`. HARD RULE — never key the level state by `(pair, side)` alone.
+      Because a keyed operator sees only its own key's state, the cross-exchange union (R4) is a
+      **second operator re-keyed by `(pair_id, side)`** that merges the per-exchange books.
+      (Decision-doc R1 + R4 mechanisms updated to match — 2026-07-04.)
+- [x] **"Retraction" = re-emit the full snapshot.** Output is a full `ConsolidatedOrderBook` per
+      topic (not a Flink retract stream), so R2 removal = rebuild + emit the book minus the dropped
+      level. Downstream contract stays "latest full book per topic".
+- [x] **Input message = a single price level.** Lean input schema (`exchange_id`, `pair_id`,
+      `side`, `event_time`, `price`, `quantity`). No `type`/`levels[]`/`sequence_*`. Display-only
+      `exchange_name`/`base`/`quote` are NOT on the wire (omitted, per doc) — resolved downstream
+      from ids if needed. Schema built in Step 0.5.
+- [x] **No Postgres dependency.** One topic-pattern source over every `{side}-p{pair}-ex*` topic +
+      dynamic sink routing (R6) → no `PairsLoader`/startup DB read.
+
+### Step 0.5 — Schemas (`schemas/`)
+Flat single-level shape confirmed by the wire example in
+`memory/project_orderbook_consolidator_decision.md`. Mirror `orderbook_event.avsc` conventions.
+- [x] `schemas/price_level_event.avsc` — Avro (Confluent Schema Registry, production transport):
+      `exchange_id:int`, `pair_id:int`, `side` enum(asks,bids), `event_time` long timestamp-millis,
+      `price:string`, `quantity:string`. Display-only fields omitted. Dropped
+      `type`/`sequence_id`/`sequence_jump`/`levels[]`; `price`/`quantity` scalar — done 2026-07-04
+- [x] `schemas/price_level_event_example.json` — matching example (the doc's BTC/USDT wire sample) — done 2026-07-04
+- [x] Register with the schema registry (extended `scripts/warmup.sh` — subject `price-level-event`) — done 2026-07-04
+
+### Step 1 — Project setup
+- [ ] Create Maven module `flink/orderbook-consolidator/pom.xml` (copy old pom as template;
+      `artifactId` = `orderbook-consolidator`, base package `io.tibobit.consolidator`, shade
+      `mainClass` = `OrderBookConsolidatorJob`)
+- [ ] Wire into the Flink build/deploy path (`flink/Dockerfile`, `flink/run-job.sh`,
+      `docker-compose.yml`) so both jobs can be built/submitted
+
+### Step 2 — Data model
+- [ ] `PriceLevelEvent` — single-level input POJO (Jackson snake_case, ignore-unknown)
+- [ ] `StoredLevel` — stage-1 keyed-state value: `quantity`, `eventTime`
+- [ ] `ExchangeBook` — stage-1 → stage-2 record: `pair_id`, `exchange_id`, `side`, `levels[]`,
+      `eventTime` (one exchange's maintained book, emitted after each upsert/remove)
+- [ ] Reuse output shape: copy `ConsolidatedLevel` + `ConsolidatedOrderBook` into the new package
+      (fixed wire shape the web UI depends on — do NOT change it)
+
+### Step 3 — Deserialization
+- [ ] `PriceLevelEventDeserializer` (`DeserializationSchema<PriceLevelEvent>`, Jackson)
+
+### Step 4 — Sources
+- [ ] Main price-level `KafkaSource` — one topic-pattern subscription over all
+      `{side}-p{pair_id}-ex{exchange_id}` topics, `latest` offsets (live book, no replay)
+
+### Step 5 — Core operators (two stages)
+Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; stage 2 re-keys by
+`(pair_id, side)` to union across exchanges (R4). Both are `KeyedProcessFunction`s.
+- [ ] **Stage 1 — per-exchange book** (keyed `(pair_id, exchange_id, side)`,
+      `MapState<price, StoredLevel>`): `processElement` — R1 upsert-latest-by-`event_time` per
+      `price`; R2 `quantity == 0` → remove; emit that exchange's maintained book (`ExchangeBook`,
+      `event_time` = max of its levels) on each change.
+- [ ] **Stage 2 — cross-exchange consolidation** (keyed `(pair_id, side)`,
+      `MapState<exchange_id, levels>`): on each `ExchangeBook`, replace that exchange's entry; R4
+      rebuild union across exchanges (never sum equal prices); R5 sort (asks↑/bids↓, tie-break qty
+      desc, `BigDecimal`); `event_time` on output = max across exchanges; emit `ConsolidatedOrderBook`.
+
+### Step 6 — Sink (R6, dynamic topic routing)
+- [ ] Single `KafkaSink` whose `KafkaRecordSerializationSchema` selects topic `{side}-p{pair_id}`
+      per record (no per-pair sink templating); reuse `ConsolidatedOrderBookSerializer`
+
+### Step 7 — Job wiring
+- [ ] `OrderBookConsolidatorJob.main` — price-level source → `keyBy((pair_id, exchange_id, side))`
+      → stage-1 operator → `keyBy((pair_id, side))` → stage-2 operator → sink; Kafka config
+      (bootstrap, group id, topic names) via env with docker-compose defaults
+
+### Step 8 — Build & deploy
+- [ ] Build fat JAR (`mvn package`)
+- [ ] Submit to the Flink cluster; verify a live consolidated book on `{side}-p{pair_id}` in `web/`
+
+### Step 9 — Tests (TDD — see `memory/project_tdd_workflow.md`)
+- [ ] Test infra in pom: JUnit 5 + AssertJ + `flink-test-utils` + JaCoCo (as in old module),
+      `KeyedOneInputStreamOperatorTestHarness`
+- [ ] Stage-1 test — R1 upsert-latest (older `event_time` ignored); R2 qty=0 remove; per-exchange
+      `event_time` = max (keyed `(pair, exchange, side)`)
+- [ ] Stage-2 test — R4 union not-summed; R5 sort + tie-break + `BigDecimal` scale collapse;
+      `event_time` = max across exchanges; dynamic topic per pair+side (keyed `(pair, side)`)
+- [ ] `PriceLevelEventDeserializerTest`
+
+### Infra / dev support (as needed)
+- [ ] Extend `fake-data-generator/` to emit flat single-level events
+
+### Postponed — R3 (per-(exchange,pair) `stale_time` / TTL expiry)
+Deferred to a later phase per `memory/project_orderbook_consolidator_decision.md`. Captured so it
+isn't lost. When R3 is picked back up it pulls in:
+- Step 0 decisions: **per-level timer strategy** — store each level's `ttlDeadline` in
+  `StoredLevel`, register a processing-time timer at `event_time + ttl_ms` (re-armed on every
+  upsert); `onTimer(ts)` scans the pair+side's levels and evicts every `deadline <= ts`, then
+  re-emits; decide cancel/re-register vs. let the scan absorb stale timers. **TTL config stream** —
+  topic name + shape (`exchange_id`, `pair_id`, `ttl_ms`), compacted, consumed from EARLIEST so
+  broadcast state bootstraps at startup; cold-start behaviour when a level arrives before its
+  `(exchange_id,pair_id)` TTL is known (default TTL vs skip expiry until config seen).
+- Schemas: `schemas/ttl_config.avsc` (+ example JSON) — `exchange_id:int`, `pair_id:int`,
+  `ttl_ms:long`; register with the schema registry.
+- Data model: `TtlConfig` broadcast POJO; add `ttlDeadline` to `StoredLevel`.
+- Deserialization: `TtlConfigDeserializer` (`DeserializationSchema<TtlConfig>`).
+- Sources: TTL config `KafkaSource` — compacted topic, EARLIEST offsets, `.broadcast(descriptor)`.
+- Operator: switch `KeyedProcessFunction` → `KeyedBroadcastProcessFunction`; add
+  `processBroadcastElement` (upsert `ttl_ms` into broadcast state), `onTimer` (evict
+  `ttlDeadline <= now`, re-emit), and timer (re-)arm + cancel-on-remove in `processElement`.
+- Job wiring: build both sources, `broadcast` the TTL stream, `connect` it to the keyed main stream.
+- Tests: R3 TTL expiry via `setProcessingTime`, TTL re-arm on refresh, per-exchange TTL from
+  broadcast, idle-pair still evicts (proves processing-time not event-time); broadcast/timer-capable
+  harness (`KeyedBroadcastProcessFunction` + `setProcessingTime`); `TtlConfigDeserializerTest`.
+- Infra: provision the compacted TTL config topic (extend `scripts/warmup.sh`); extend
+  `fake-data-generator/` to emit a few TTL config records.
