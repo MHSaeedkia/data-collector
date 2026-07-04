@@ -23,24 +23,9 @@ Do **not** duplicate structural facts (call graphs, who-calls-what, file lists) 
 
 ---
 
-## Codebase Intelligence Rules — `codebase-memory-mcp` (CRITICAL)
-
-The `codebase-memory-mcp` server is the **primary tool for understanding code structure**. Prefer it over grep-and-read exploration.
-
-- **Before reading source files to answer a structural question, query the MCP first.** Structural questions include: "what calls this?", "what does this call?", "what breaks if I change this?", "where is this route/handler defined?", "what's the overall architecture?".
-- Use it to **scope changes**: run an impact/call-path query before editing shared code, so surgical changes stay surgical (see Guideline 3).
-- **Only read the specific files the MCP points you to.** Do not fall back to reading the codebase chunk by chunk unless the MCP genuinely can't answer.
-- If the index looks stale or missing (queries return nothing for code you can see exists), **re-index the repository**, then retry.
-- Exact tool names come from the server — run `/mcp` to see them. Typical capabilities: architecture overview, semantic/graph search, call-path tracing, impact analysis, and Architecture Decision Records (ADRs).
-
-**When NOT to use the MCP:** reading a specific known file's contents, editing code, running tests, or anything non-structural. It answers _how the code connects_, not _what a line says_.
-
----
-
 # Token Management
 
-- **Use `codebase-memory-mcp` for structural exploration instead of reading files chunk by chunk.** This is the main token-saving lever — a few structural queries replace large grep-and-read cycles.
-- When you must read source directly, read only the specific files/regions the MCP identified, not whole directories.
+- **Read files chunk by chunk.** This is the main token-saving lever.
 - Always update `todo.md` when you are done.
 
 ---

@@ -32,6 +32,15 @@ A Flink streaming job that produces a live, consolidated cryptocurrency order bo
 `exchange_id`/`price`/`quantity` per entry) that a downstream consumer already depends on and
 cannot change.
 
+**Clarification ratified by user (2026-07-04):** re-reviewed the required behaviour against the
+running implementation — it matches. Two points confirmed explicitly:
+- **Topic separator stays hyphen** (`asks-p2-ex1` → `asks-p2`). The user's underscore notation
+  (`asks_p2`) was informal; hyphen is the live convention across web/orderbook-job/warmup ([[kafka-topic-strategy]]).
+- **Output level price is the CANONICAL stripped form**, not the raw wire string — e.g. input
+  `"97240.50"` is emitted as `"97240.5"` (stage-1 keys/emits `stripTrailingZeros().toPlainString()`).
+  This was previously only a noted side-effect; it is now a ratified requirement. **Do NOT "fix" the
+  output price back to the original wire string.** ([[bigdecimal-rules]])
+
 **Scale:** many pairs × 2 sides × several exchanges, high-frequency level updates; stale-time
 config updates are rare; prices/quantities must be handled as exact decimals, never floating point.
 

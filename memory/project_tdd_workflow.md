@@ -54,5 +54,26 @@ integration test, not a unit test — don't write the worthless non-null test.
   classpath, but `flink-test-utils` (and the `flink-runtime`/`flink-streaming-java` test-jars
   it pulls) must be added at `test` scope for the harness.
 
+## Coverage for `flink/orderbook-consolidator` (2026-07-04)
+
+Step 9 done: 24 spec-based tests, all green. Same infra (JUnit5 + AssertJ +
+`KeyedOneInputStreamOperatorTestHarness` + JaCoCo) — it was already in the consolidator pom from
+Step 1, no changes needed.
+- `PerExchangeBookBuilderTest` (9) — stage 1 R1/R2, per-exchange `event_time`=max, canonical
+  price-key collapse. Keyed `(pair, exchange, side)`.
+- `CrossExchangeConsolidatorTest` (9) — stage 2 R4 union-not-summed, R5 sort/tie-break/BigDecimal,
+  per-exchange replacement, `event_time`=max, R6 routing fields. Keyed `(pair, side)`.
+- `PriceLevelEventDeserializerTest` (6) — wire mapping / ignoreUnknown / lazy mapper / produced type.
+- Intentionally uncovered: `CrossExchangeConsolidator`'s `getLevels()!=null` false-branch —
+  defensive, unreachable (stage-1 always emits a list). Same stance as orderbook-job's untested
+  serializer `catch`.
+
+**GOTCHA — JaCoCo 0.8.12 on JDK 26 (both flink modules):** `mvn test` prints alarming
+`java.lang.instrument.IllegalClassFormatException ... Unsupported class file major version 70`
+(= JDK 26) while JaCoCo tries to instrument *bootstrap* classes (`java.sql.Timestamp/Time/Date`,
+CLDR providers). **This is non-fatal noise** — the build still exits 0, tests still run, the
+coverage report is still generated. Do NOT bump JaCoCo or add `-Djacoco.skip` to make it "pass";
+it already passes. (0.8.13 is in the local `~/.m2` but the bump isn't needed and wasn't made.)
+
 Related: [[orderbook-aggregation]] (the behaviour under test), [[bigdecimal-rules]]
 (price/qty are BigDecimal-from-string — assert on exact decimal strings, never doubles).

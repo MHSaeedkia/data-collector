@@ -249,39 +249,72 @@ All under `flink/orderbook-consolidator/src/main/java/io/tibobit/consolidator/mo
       pairs/exchanges are picked up automatically. The required `-ex{n}` segment excludes the
       OUTPUT topics `{side}-p{pair_id}`, preventing self-consumption. `mvn compile` green.
 
-### Step 5 — Core operators (two stages)
+### Step 5 — Core operators (two stages) — done 2026-07-04
 Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; stage 2 re-keys by
-`(pair_id, side)` to union across exchanges (R4). Both are `KeyedProcessFunction`s.
-- [ ] **Stage 1 — per-exchange book** (keyed `(pair_id, exchange_id, side)`,
+`(pair_id, side)` to union across exchanges (R4). Both are `KeyedProcessFunction`s. In
+`io.tibobit.consolidator.operator`; `mvn compile` green.
+- [x] **Stage 1 — `PerExchangeBookBuilder`** (keyed `(pair_id, exchange_id, side)`,
       `MapState<price, StoredLevel>`): `processElement` — R1 upsert-latest-by-`event_time` per
-      `price`; R2 `quantity == 0` → remove; emit that exchange's maintained book (`ExchangeBook`,
-      `event_time` = max of its levels) on each change.
-- [ ] **Stage 2 — cross-exchange consolidation** (keyed `(pair_id, side)`,
-      `MapState<exchange_id, levels>`): on each `ExchangeBook`, replace that exchange's entry; R4
-      rebuild union across exchanges (never sum equal prices); R5 sort (asks↑/bids↓, tie-break qty
-      desc, `BigDecimal`); `event_time` on output = max across exchanges; emit `ConsolidatedOrderBook`.
+      `price` (accept iff incoming `event_time >= stored`, else drop as stale — no emit); R2
+      `quantity == 0` (BigDecimal `signum()==0`) → remove (qty=0 for an absent price = no change,
+      no emit); emit that exchange's maintained book (`ExchangeBook`, `event_time` = max of its
+      levels, or the triggering event's time when the book is now empty) on each change.
+      DECISION: MapState is hash-based so it will NOT collapse equal prices of different scale like
+      the old job's `TreeMap` did — so the price MapState **key is canonicalized** via
+      `new BigDecimal(price).stripTrailingZeros().toPlainString()` ([[bigdecimal-rules]]); that
+      canonical string is also the emitted level price.
+- [x] **Stage 2 — `CrossExchangeConsolidator`** (keyed `(pair_id, side)`,
+      `MapState<exchange_id, ExchangeBook>`): on each `ExchangeBook`, replace that exchange's entry;
+      R4 rebuild union across exchanges (straight concat of each book's `ConsolidatedLevel`s — never
+      sum equal prices); R5 sort (asks↑/bids↓, tie-break qty desc, `BigDecimal`); `event_time` on
+      output = max across exchanges; emit `ConsolidatedOrderBook`. DECISION: sort direction is chosen
+      **per record from `book.getSide()`** (asks/bids comparators both built in `open()`), NOT from a
+      constructor arg like the old per-side merger — because the single unified topology means one
+      operator instance serves both asks and bids keys.
 
-### Step 6 — Sink (R6, dynamic topic routing)
-- [ ] Single `KafkaSink` whose `KafkaRecordSerializationSchema` selects topic `{side}-p{pair_id}`
-      per record (no per-pair sink templating); reuse `ConsolidatedOrderBookSerializer`
+### Step 6 — Sink (R6, dynamic topic routing) — done 2026-07-04
+- [x] `ConsolidatedOrderBookSinkFactory.create(bootstrap)` — single `KafkaSink` whose
+      `KafkaRecordSerializationSchema.setTopicSelector(...)` picks topic `{side}-p{pair_id}` per
+      record (value-only, key=null); `ConsolidatedOrderBookSerializer` copied into
+      `io.tibobit.consolidator.serializer` (mirrors orderbook-job's — the modules share no code).
+      The `TopicSelector` lambda is cast to `TopicSelector<ConsolidatedOrderBook>` for inference.
 
-### Step 7 — Job wiring
-- [ ] `OrderBookConsolidatorJob.main` — price-level source → `keyBy((pair_id, exchange_id, side))`
-      → stage-1 operator → `keyBy((pair_id, side))` → stage-2 operator → sink; Kafka config
-      (bootstrap, group id, topic names) via env with docker-compose defaults
+### Step 7 — Job wiring — done 2026-07-04
+- [x] `OrderBookConsolidatorJob.main` — price-level source → `keyBy((pair_id, exchange_id, side))`
+      → `PerExchangeBookBuilder` → `keyBy((pair_id, side))` → `CrossExchangeConsolidator` →
+      `ConsolidatedOrderBookSinkFactory` sink (+ `print`). Kafka config via env
+      (`KAFKA_BOOTSTRAP_SERVERS`=`kafka:29092`, `KAFKA_GROUP_ID`=`orderbook-consolidator-flink` —
+      distinct group from orderbook-job's `orderbook-flink`). `WatermarkStrategy.noWatermarks()`
+      (latest-wins is driven by the in-state `event_time` compare, not event-time windows).
+      DECISION: both `keyBy`s use **anonymous `KeySelector` classes, not lambdas** — Flink's
+      TypeExtractor can't infer the `String` key type from a concatenation lambda.
 
 ### Step 8 — Build & deploy
 - [ ] Build fat JAR (`mvn package`)
 - [ ] Submit to the Flink cluster; verify a live consolidated book on `{side}-p{pair_id}` in `web/`
 
-### Step 9 — Tests (TDD — see `memory/project_tdd_workflow.md`)
-- [ ] Test infra in pom: JUnit 5 + AssertJ + `flink-test-utils` + JaCoCo (as in old module),
-      `KeyedOneInputStreamOperatorTestHarness`
-- [ ] Stage-1 test — R1 upsert-latest (older `event_time` ignored); R2 qty=0 remove; per-exchange
-      `event_time` = max (keyed `(pair, exchange, side)`)
-- [ ] Stage-2 test — R4 union not-summed; R5 sort + tie-break + `BigDecimal` scale collapse;
-      `event_time` = max across exchanges; dynamic topic per pair+side (keyed `(pair, side)`)
-- [ ] `PriceLevelEventDeserializerTest`
+### Step 9 — Tests (TDD — see `memory/project_tdd_workflow.md`) — done 2026-07-04
+- [x] Test infra in pom: JUnit 5 + AssertJ + `flink-test-utils` + JaCoCo (as in old module),
+      `KeyedOneInputStreamOperatorTestHarness` (already present from Step 1). `mvn test` → 24 green.
+- [x] Stage-1 test — `PerExchangeBookBuilderTest` (9): R1 newer upserts / older stale-dropped
+      (no emit) / equal `event_time` applies (pins `>=`); R2 qty=0 remove / qty=0 on absent price
+      no-op; per-exchange `event_time` = max across remaining levels (not the triggering event) +
+      empty-book fallback to the event's time; canonical price key collapses `0.10`≡`0.1`.
+      Keyed `(pair, exchange, side)` via `KeyedOneInputStreamOperatorTestHarness`.
+- [x] Stage-2 test — `CrossExchangeConsolidatorTest` (9): R4 equal-price-across-exchanges kept
+      separate not-summed; R5 asks↑/bids↓, tie-break qty desc, numeric-not-lexicographic sort,
+      equal-price-different-scale tie-broken (BigDecimal-equal, original strings preserved);
+      same-exchange book replaces its entry (not accumulated); `event_time` = max across
+      exchanges; emptied exchange still contributes its `event_time`; carries pair_id/side for R6.
+      Keyed `(pair, side)`. NOTE: the `getLevels()!=null` guard's false-branch is left uncovered
+      on purpose — defensive, unreachable (stage-1 always emits a list), per the TDD-memory stance.
+- [x] `PriceLevelEventDeserializerTest` (6): snake_case mapping + exact decimal strings, qty=0
+      preserved, ignoreUnknown (exchange_name/base/quote), lazy-mapper reuse, isEndOfStream=false,
+      producedType=PriceLevelEvent.
+- DECISION: no build-config change. `mvn test` (JaCoCo on) exits 0 despite scary
+  `Unsupported class file major version 70` lines — that is non-fatal JaCoCo 0.8.12 noise
+  instrumenting JDK 26 *bootstrap* classes (java.sql.*); identical in orderbook-job, which also
+  exits 0. Report still generated. Do NOT bump JaCoCo or skip the agent (see [[tdd-workflow]]).
 
 ### Infra / dev support (as needed)
 - [ ] Extend `fake-data-generator/` to emit flat single-level events
