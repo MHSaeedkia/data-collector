@@ -1,0 +1,8 @@
+{
+	"exchange_id": 1,
+	"pair_id": 2,
+	"side": "asks",
+	"event_time": 1750680000000,
+	"price": "97240.50",
+	"quantity": "0.42"
+}
