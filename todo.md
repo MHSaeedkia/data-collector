@@ -215,13 +215,24 @@ Flat single-level shape confirmed by the wire example in
         updated. Both composes pass `docker compose config`. NOTE: identical container_names/ports → run
         ONE stack at a time; the two Flink clusters can share nothing simultaneously.
 
-### Step 2 — Data model
-- [ ] `PriceLevelEvent` — single-level input POJO (Jackson snake_case, ignore-unknown)
-- [ ] `StoredLevel` — stage-1 keyed-state value: `quantity`, `eventTime`
-- [ ] `ExchangeBook` — stage-1 → stage-2 record: `pair_id`, `exchange_id`, `side`, `levels[]`,
-      `eventTime` (one exchange's maintained book, emitted after each upsert/remove)
-- [ ] Reuse output shape: copy `ConsolidatedLevel` + `ConsolidatedOrderBook` into the new package
-      (fixed wire shape the web UI depends on — do NOT change it)
+### Step 2 — Data model — done 2026-07-04
+All under `flink/orderbook-consolidator/src/main/java/io/tibobit/consolidator/model/`; `mvn compile` green.
+- [x] `PriceLevelEvent` — single-level input POJO (`@JsonIgnoreProperties(ignoreUnknown=true)`,
+      `@JsonProperty` snake_case): `exchange_id:int`, `pair_id:int`, `side:String`,
+      `event_time:long`, `price:String`, `quantity:String` (matches `schemas/price_level_event.avsc`;
+      no type/sequence/levels[]). No-arg + all-args ctor.
+- [x] `StoredLevel` — stage-1 keyed-state value: `quantity:String`, `eventTime:long` (plain POJO,
+      no Jackson — internal MapState value only; price is the map key, exchange/pair/side the
+      operator key, so neither is stored here).
+- [x] `ExchangeBook` — stage-1 → stage-2 record: `pairId`, `exchangeId`, `side`,
+      `levels:List<ConsolidatedLevel>`, `eventTime` (plain POJO, no Jackson — inter-operator record
+      + stage-2 MapState value). DECISION: `levels` are `ConsolidatedLevel` (each already stamped
+      with this book's `exchange_id` by stage-1) — that's why `PriceLevel` was NOT copied; the
+      consolidator has ONE rung type (`ConsolidatedLevel`) and R4 union becomes a straight concat.
+      Distinct class from the old orderbook-job `ExchangeBook` (that one = NavigableMap + seq state).
+- [x] Copied output shape `ConsolidatedLevel` + `ConsolidatedOrderBook` verbatim into the new
+      package (kept `@JsonProperty` — these ARE the Kafka wire shape the web UI depends on; javadoc
+      lightly reworded to drop the old `PriceLevel` @link). Do NOT change this shape.
 
 ### Step 3 — Deserialization
 - [ ] `PriceLevelEventDeserializer` (`DeserializationSchema<PriceLevelEvent>`, Jackson)
