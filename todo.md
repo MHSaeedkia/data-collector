@@ -54,6 +54,10 @@ Note: the Kafka source already merges exchanges at transport level (regex
 - [x] Node.js (Express + kafkajs + ws) standalone app; consumes consolidated `{pair}-{side}` topics
 - [x] WebSocket push to browser; latest book per topic kept in memory
 - [x] Single-page UI: pair dropdown (multiple pairs), live asks/bids book with spread
+- [x] Refactored `web/` Go app from one `main.go` into a hexagonal/clean architecture
+      (`internal/domain`, `ports`, `registry`, `hub`, `ingest`, `kafka`, `postgres` adapters) with
+      testify unit tests on the previously-untestable logic; `main.go` is now a thin composition
+      root only, no behavior change — done 2026-07-06 (see `memory/project_orderbook_web.md`)
 
 ## Phase 2 — Avro + Schema Registry (deferred)
 - [ ] Migrate `OrderBookEventDeserializer` from JSON to Avro + Confluent Schema Registry
