@@ -311,7 +311,7 @@ bybit,WLDUSDT,disable
 bybit,MNTUSDT,disable
 bybit,SHIBUSDT,disable
 bybit,BTTUSDT,disable
-okx,BTC-USDT,subscribe
+okx,BTC-USDT,disable
 okx,ETH-USDT,disable
 okx,XRP-USDT,disable
 okx,TRX-USDT,disable
