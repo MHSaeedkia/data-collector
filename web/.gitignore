@@ -1,2 +1,5 @@
 # compiled binary
 /orderbook-web
+
+# local config (copy .env.example -> .env and edit)
+/.env

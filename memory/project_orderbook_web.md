@@ -32,19 +32,55 @@ the markets lookup joins `currencies` for the symbols:
 browser is `{ pair_id, base, quote, side, event_time, levels:[{price, quantity, exchange:{id,name,label}}] }`.
 Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نامشخص` for exchange).
 
-## Files
+## Files (refactored 2026-07-06 into hexagonal/clean architecture)
 
-- `web/main.go` — `registry` (id→display maps, periodic refresh), `hub` (WS clients + latest
-  book per topic), `consume` (franz-go poll loop), `main` (wiring). HTTP server starts FIRST
-  and stays up even if Kafka/postgres are down (errors are logged, not fatal).
-- `web/public/index.html` — single-page UI (vanilla JS), pair dropdown, asks/bids tables,
-  spread, live WS updates with auto-reconnect. Connects to `ws://host/ws`. Essentially
-  unchanged from the Node version because the server enriches books into the same shape
-  (`base`/`quote`/`level.exchange.label`) the page already expected — only the WS URL changed.
-  **Embedded into the binary** via `//go:embed public` (served with `fs.Sub` + `http.FS`), so
-  the build is a single self-contained executable that runs from anywhere — no `public/` dir
-  needed at runtime.
-- `web/go.mod`/`go.sum`, `web/.gitignore` (ignores the compiled `/orderbook-web`), `web/README.md`.
+Originally everything lived in one `web/main.go`. Rewritten (behavior unchanged, verified via
+unit tests + a manual boot smoke test) into `internal/` packages so the previously-untestable
+logic (DB-merge-on-partial-failure, enrichment fallback, WS broadcast/prune, bad-message
+handling) has real unit tests, without needing a live postgres/Kafka/websocket in tests.
+`main.go` deliberately stays in `web/` root (not `cmd/`) so `go run .` / `go build .` / the
+Dockerfile's build path need zero changes.
+
+- `web/main.go` — composition root ONLY: reads env, builds the pgx pool, wires
+  `postgres.Repository` → `registry.Registry` → `ingest.HandleRecord` → `hub.Hub`, starts the
+  Kafka consumer goroutine + refresh ticker, serves HTTP. Not unit-tested (pure wiring).
+- `web/internal/domain/` — plain structs only, no logic, no deps: `Market`, `Exchange` (display
+  metadata), `RawBook`/`RawLevel` (Flink wire shape), `Book`/`Level` (enriched wire shape sent to
+  browser), `WSSnapshot`/`WSUpdate` (the two WS message envelopes).
+- `web/internal/ports/` — `MarketRepository` interface (`LoadMarkets`/`LoadExchanges` →
+  `map[int]domain.Market` / `map[int]domain.Exchange`). Exists so `registry` doesn't depend on
+  `*pgxpool.Pool` directly. Two separate methods (not one combined query) preserves the original
+  "a failed exchanges load doesn't discard a successful markets load" behavior.
+- `web/internal/registry/` — `Registry` (was the old `registry` struct): `Refresh(ctx)` merges via
+  the `ports.MarketRepository` interface (only replaces a map if the load returned something —
+  same transient-error tolerance as before), `Enrich(RawBook) Book` is the pure id→display
+  resolution with the unknown-id placeholder fallback (`p{id}`/`?`, `unknown`/`نامشخص`).
+  `registry_test.go`: partial-failure-preserves-data, unknown-id fallback, level order/fields —
+  all via a `fakeRepo`, no DB.
+- `web/internal/hub/` — `Hub` (was the old `hub` struct): add/remove/publish/`ServeWS`. Depends on
+  a small `conn` interface (`WriteJSON`/`ReadMessage`/`Close`) instead of `*websocket.Conn`
+  directly, satisfied implicitly by gorilla's real conn. `hub_test.go`: snapshot-on-add,
+  broadcast-to-all, drop-client-on-write-failure, remove-closes-and-unregisters — all via a
+  `fakeConn`, no real socket.
+- `web/internal/ingest/` — new package: `HandleRecord(enricher, publisher, topic, value)` is the
+  per-Kafka-record glue (unmarshal → `Enrich` → `Publish`) that used to be inline in `consume`'s
+  `EachRecord` callback. Takes two 1-method interfaces (`enricher`/`publisher`) narrowed from
+  `*registry.Registry`/`*hub.Hub` so its bad-JSON-is-skipped-not-fatal behavior has its own test
+  independent of those packages' constructors.
+- `web/internal/kafka/` — `Consumer.Run(ctx, onRecord)`: thin franz-go adapter (fresh consumer
+  group + earliest-offset reset, same as before), owns the poll loop, calls back per record. No
+  branching logic of its own → not unit-tested (would only assert "franz-go was called").
+- `web/internal/postgres/` — `Repository` implementing `ports.MarketRepository` via pgx; same two
+  SQL queries as before, no branching logic → not unit-tested (the merge logic it feeds is tested
+  in `registry`).
+- `web/public/index.html` — unchanged: single-page UI (vanilla JS), pair dropdown, asks/bids
+  tables, spread, live WS updates with auto-reconnect. Connects to `ws://host/ws`.
+  **Embedded into the binary** via `//go:embed public` (served with `fs.Sub` + `http.FS`).
+- `web/go.mod`/`go.sum` — added `github.com/stretchr/testify` (test-only dep, user chose testify
+  over stdlib `testing` for assertions); `web/vendor/` re-vendored (`go mod vendor`) so the
+  Dockerfile's offline `-mod=vendor` build still works unmodified.
+- `web/.gitignore` (ignores the compiled `/orderbook-web`), `web/README.md` (unchanged — run/build
+  commands are still `go run .` / `go build -o orderbook-web .` from `web/`).
 
 ## Key implementation notes
 
