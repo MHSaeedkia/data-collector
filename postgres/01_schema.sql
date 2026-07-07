@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS markets (
     quote_id BIGINT NOT NULL REFERENCES currencies(id) ON DELETE RESTRICT ON UPDATE CASCADE,
     price_precision INTEGER,
     quantity_precision INTEGER,
-    CONSTRAINT unique_market UNIQUE (base_id, quote_id)
+    CONSTRAINT unique_market UNIQUE (base_id, quote_id),
+    CONSTRAINT chk_base_quote_diff CHECK (base_id <> quote_id)
 );
 
 -- create table
@@ -45,5 +46,12 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     market VARCHAR(100) NOT NULL,
     market_id BIGINT NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
+    amount_rebase INT NOT NULL DEFAULT 0,
     CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market)
 );
+
+-- indexes on foreign keys (Postgres does not create these automatically)
+CREATE INDEX IF NOT EXISTS idx_markets_base_id ON markets(base_id);
+CREATE INDEX IF NOT EXISTS idx_markets_quote_id ON markets(quote_id);
+CREATE INDEX IF NOT EXISTS idx_exchange_markets_exchange_id ON exchange_markets(exchange_id);
+CREATE INDEX IF NOT EXISTS idx_exchange_markets_market_id ON exchange_markets(market_id);

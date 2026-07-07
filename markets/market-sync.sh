@@ -2,7 +2,7 @@
 
 # ─────────────────────────────────────────────
 # Config
-BASE_URL="http://localhost:8081/control-plane"
+BASE_URL="http://192.168.150.104:8081/control-plane"
 MARKETS_FILE="$(dirname "${BASH_SOURCE[0]}")/markets.csv"
 MAX_RETRIES=3
 RETRY_DELAY=2  # seconds between retries
