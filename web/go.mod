@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/joho/godotenv v1.5.1
 	github.com/stretchr/testify v1.11.1
 	github.com/twmb/franz-go v1.21.4
 )

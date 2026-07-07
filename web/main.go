@@ -6,11 +6,11 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"orderbook-web/internal/config"
 	"orderbook-web/internal/hub"
 	"orderbook-web/internal/ingest"
 	"orderbook-web/internal/kafka"
@@ -23,21 +23,12 @@ import (
 //go:embed public
 var staticFiles embed.FS
 
-func env(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 func main() {
 	ctx := context.Background()
 
-	port := env("PORT", "3000")
-	broker := env("KAFKA_BROKER", "localhost:9092")
-	dbURL := env("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/markets")
+	cfg := config.Load(".env")
 
-	pool, err := pgxpool.New(ctx, dbURL)
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("postgres pool: %v", err)
 	}
@@ -65,9 +56,9 @@ func main() {
 	mux.HandleFunc("/ws", h.ServeWS)
 
 	go func() {
-		consumer, err := kafka.NewConsumer(broker)
+		consumer, err := kafka.NewConsumer(cfg.KafkaBroker)
 		if err != nil {
-			log.Printf("Kafka consumer error (UI stays up; ensure broker at %s is reachable): %v", broker, err)
+			log.Printf("Kafka consumer error (UI stays up; ensure broker at %s is reachable): %v", cfg.KafkaBroker, err)
 			return
 		}
 		consumer.Run(ctx, func(topic string, value []byte) {
@@ -76,9 +67,9 @@ func main() {
 	}()
 
 	// Serve the UI immediately so the page loads even before (or without) Kafka.
-	log.Printf("Order book UI:    http://localhost:%s", port)
-	log.Printf("Kafka broker:     %s", broker)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	log.Printf("Order book UI:    http://localhost:%s", cfg.Port)
+	log.Printf("Kafka broker:     %s", cfg.KafkaBroker)
+	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
 		log.Fatal(err)
 	}
 }
