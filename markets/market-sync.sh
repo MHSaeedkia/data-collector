@@ -9,15 +9,6 @@ RETRY_DELAY=2  # seconds between retries
 REVERSE=false
 
 # ─────────────────────────────────────────────
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-GRAY='\033[0;90m'
-NC='\033[0m'
-
-# ─────────────────────────────────────────────
 # Parse flags
 for arg in "$@"; do
   case $arg in
@@ -26,26 +17,20 @@ for arg in "$@"; do
   esac
 done
 
+# ─────────────────────────────────────────────
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+GRAY='\033[0;90m'
+NC='\033[0m'
+
 ok()   { echo -e "${GREEN}[OK]${NC}     $1"; }
 fail() { echo -e "${RED}[FAIL]${NC}   $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}   $1"; }
 log()  { echo -e "${BLUE}[INFO]${NC}   $1"; }
 skip() { echo -e "${GRAY}[SKIP]${NC}   $1"; }
-
-# ─────────────────────────────────────────────
-# UUID generator (with fallbacks)
-gen_uuid() {
-  if command -v uuidgen >/dev/null 2>&1; then
-    uuidgen
-  elif [ -r /proc/sys/kernel/random/uuid ]; then
-    cat /proc/sys/kernel/random/uuid
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import uuid; print(uuid.uuid4())'
-  else
-    fail "No UUID generator available (need uuidgen, /proc/sys/kernel/random/uuid, or python3)"
-    exit 1
-  fi
-}
 
 # ─────────────────────────────────────────────
 # Validate
@@ -93,11 +78,7 @@ while IFS=',' read -r exchange market action; do
 
   TOTAL=$((TOTAL + 1))
   ENDPOINT="$BASE_URL/$action"
-
-  # One fencing_token per logical request; reused across retries of the SAME request
-  FENCING_TOKEN=$(gen_uuid)
-  PAYLOAD="{\"exchange\": \"$exchange\", \"market\": \"$market\", \"fencing_token\": \"$FENCING_TOKEN\"}"
-
+  PAYLOAD="{\"exchange\": \"$exchange\", \"market\": \"$market\"}"
   ATTEMPT=0
   SENT=false
 
@@ -111,7 +92,7 @@ while IFS=',' read -r exchange market action; do
       --max-time 10)
 
     if [[ "$HTTP_CODE" =~ ^2 ]]; then
-      ok "[$action] $exchange / $market  (HTTP $HTTP_CODE, token=$FENCING_TOKEN)"
+      ok "[$action] $exchange / $market  (HTTP $HTTP_CODE)"
       SUCCESS=$((SUCCESS + 1))
       SENT=true
       break
@@ -124,7 +105,7 @@ while IFS=',' read -r exchange market action; do
   done
 
   if [ "$SENT" = false ]; then
-    fail "[$action] $exchange / $market  → failed after $MAX_RETRIES attempts (last HTTP: $HTTP_CODE, token=$FENCING_TOKEN)"
+    fail "[$action] $exchange / $market  → failed after $MAX_RETRIES attempts (last HTTP: $HTTP_CODE)"
     FAILED=$((FAILED + 1))
   fi
 
