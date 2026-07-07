@@ -289,9 +289,13 @@ Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; st
       DECISION: both `keyBy`s use **anonymous `KeySelector` classes, not lambdas** — Flink's
       TypeExtractor can't infer the `String` key type from a concatenation lambda.
 
-### Step 8 — Build & deploy
-- [ ] Build fat JAR (`mvn package`)
-- [ ] Submit to the Flink cluster; verify a live consolidated book on `{side}-p{pair_id}` in `web/`
+### Step 8 — Build & deploy — done 2026-07-07
+- [x] Build fat JAR (`mvn package`) — deploy server (`tibobit-data-collector`) had no Java/Maven at
+      all, causing `refresh-consolidator`'s `run-job.sh` to fail with `mvn: command not found`;
+      installed Temurin JDK 21 + Maven on the server (see `memory/project_ubuntu_server_env.md`) —
+      `mvn package` now builds clean
+- [x] Submit to the Flink cluster — ran `sudo ./run-job.sh` end-to-end: build → upload → submit →
+      job reached `RUNNING`
 
 ### Step 9 — Tests (TDD — see `memory/project_tdd_workflow.md`) — done 2026-07-04
 - [x] Test infra in pom: JUnit 5 + AssertJ + `flink-test-utils` + JaCoCo (as in old module),
