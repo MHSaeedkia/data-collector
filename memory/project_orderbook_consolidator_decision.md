@@ -233,3 +233,17 @@ touch the existing anonymous volumes on the server** (user wants to decide separ
 to migrate any data from them) — this change only affects what happens on future container
 recreation; a `docker compose up` on the current containers won't retroactively adopt the new named
 volumes for already-running containers.
+
+**schema-registry startup race + `restart: on-failure` (2026-07-08):** on a fresh `docker compose up`
+on the server (after the volume changes above), `schema-registry` exited (1) while `kafka` was
+`healthy`. Root cause confirmed via `docker logs schema-registry`: Kafka's healthcheck
+(`kafka-topics --list`) only proves the broker responds — it doesn't guarantee the freshly
+auto-created `_schemas` topic already has an elected partition leader. schema-registry's one-shot
+init write (`Noop` record) hit `NotLeaderOrFollowerException` and the Confluent image treats this
+as fatal (no internal retry) rather than backing off. Confirmed unrelated to the volume changes
+(`_schemas` had a healthy leader moments later; `/etc/kafka/secrets` / `/etc/schema-registry/secrets`
+played no part). Fixed live via `docker start schema-registry` (came up healthy on retry), and
+**added `restart: on-failure` to every service** in `docker-compose-orderbook-consolidator.yml`
+(not just schema-registry) since this class of "dependency reports healthy but isn't fully ready"
+race can in principle hit any service here on a cold start — commit `1d08353`. **Not yet deployed
+to the server** — user will `git pull` + recreate there themselves when ready.
