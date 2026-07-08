@@ -217,3 +217,19 @@ without volumes — they hold no local persisted state (schema-registry's state 
 would be a no-op. No checkpoint/savepoint volume was added because checkpointing is not enabled in
 the job (`DeliveryGuarantee.NONE`, fire-and-forget sink — see source comments in
 `ConsolidatedOrderBookSinkFactory`); add one if checkpointing is ever turned on.
+
+**Anonymous volumes eliminated (2026-07-08):** SSH'd into the deploy server (`tibobit-data-collector`,
+requires `sudo docker ...` — [[server-build-env]]) and found 9 anonymous volumes, all coming from
+`VOLUME` instructions baked into base images, not from the compose file: `nifi` had 6
+(`python_extensions`, `database_repository`, `nar_extensions`, `provenance_repository`,
+`content_repository`, `flowfile_repository`), `schema-registry` had 1 (`/etc/schema-registry/secrets`),
+`postgres` had 1 (`/var/lib/postgresql` — the parent dir; distinct from the already-named
+`/var/lib/postgresql/18/docker`), `kafka` had 1 (`/etc/kafka/secrets`). Added explicit named volumes
+for all 9 mount points in `docker-compose-orderbook-consolidator.yml` (`data-collector-nifi-*`,
+`data-collector-schema-registry-secrets`, `data-collector-postgres-lib`, `data-collector-kafka-secrets`),
+following the existing `data-collector-<service>-<purpose>` naming convention. `kafka-ui`/`web`
+confirmed still volume-free (stateless, consistent with the note above). **Deliberately did NOT
+touch the existing anonymous volumes on the server** (user wants to decide separately whether/how
+to migrate any data from them) — this change only affects what happens on future container
+recreation; a `docker compose up` on the current containers won't retroactively adopt the new named
+volumes for already-running containers.

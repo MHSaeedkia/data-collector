@@ -58,6 +58,7 @@ services:
             CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg==
         volumes:
             - data-collector-kafka-data:/var/lib/kafka/data
+            - data-collector-kafka-secrets:/etc/kafka/secrets
         networks:
             - data-collector-net
         healthcheck:
@@ -87,6 +88,8 @@ services:
             SCHEMA_REGISTRY_HOST_NAME: schema-registry
             SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
             SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8082
+        volumes:
+            - data-collector-schema-registry-secrets:/etc/schema-registry/secrets
         networks:
             - data-collector-net
         healthcheck:
@@ -132,6 +135,12 @@ services:
             - data-collector-nifi-conf:/opt/nifi/nifi-current/conf
             - data-collector-nifi-state:/opt/nifi/nifi-current/state
             - data-collector-nifi-logs:/opt/nifi/nifi-current/logs
+            - data-collector-nifi-python-extensions:/opt/nifi/nifi-current/python_extensions
+            - data-collector-nifi-database-repository:/opt/nifi/nifi-current/database_repository
+            - data-collector-nifi-nar-extensions:/opt/nifi/nifi-current/nar_extensions
+            - data-collector-nifi-provenance-repository:/opt/nifi/nifi-current/provenance_repository
+            - data-collector-nifi-content-repository:/opt/nifi/nifi-current/content_repository
+            - data-collector-nifi-flowfile-repository:/opt/nifi/nifi-current/flowfile_repository
         networks:
             - data-collector-net
         healthcheck:
@@ -157,6 +166,7 @@ services:
             POSTGRES_DB: postgres
         volumes:
             - data-collector-postgres-data:/var/lib/postgresql/18/docker
+            - data-collector-postgres-lib:/var/lib/postgresql
             - ./postgres:/docker-entrypoint-initdb.d
         networks:
             - data-collector-net
@@ -185,10 +195,19 @@ services:
 
 volumes:
     data-collector-kafka-data:
+    data-collector-kafka-secrets:
+    data-collector-schema-registry-secrets:
     data-collector-postgres-data:
+    data-collector-postgres-lib:
     data-collector-nifi-conf:
     data-collector-nifi-state:
     data-collector-nifi-logs:
+    data-collector-nifi-python-extensions:
+    data-collector-nifi-database-repository:
+    data-collector-nifi-nar-extensions:
+    data-collector-nifi-provenance-repository:
+    data-collector-nifi-content-repository:
+    data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
     data-collector-taskmanager-logs:
 
