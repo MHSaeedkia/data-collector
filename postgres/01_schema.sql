@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     market VARCHAR(100) NOT NULL,
     market_id BIGINT NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
-    amount_rebase INT NOT NULL DEFAULT 0,
+    price_amount_rebase INT NOT NULL DEFAULT 0,
+    volume_amount_rebase INT NOT NULL DEFAULT 0,
     CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market)
 );
 
