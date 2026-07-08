@@ -4,6 +4,7 @@ services:
         build: ./flink/orderbook-consolidator
         container_name: jobmanager
         hostname: jobmanager
+        restart: on-failure
         command: jobmanager
         ports:
             - "7070:8081"
@@ -23,6 +24,7 @@ services:
         build: ./flink/orderbook-consolidator
         container_name: taskmanager
         hostname: taskmanager
+        restart: on-failure
         command: taskmanager
         depends_on:
             jobmanager:
@@ -40,6 +42,7 @@ services:
         image: confluentinc/cp-kafka:7.8.0
         container_name: kafka
         hostname: kafka
+        restart: on-failure
         ports:
             - "9092:9092" # host access: localhost:9092
         environment:
@@ -79,6 +82,7 @@ services:
         image: confluentinc/cp-schema-registry:7.6.1
         container_name: schema-registry
         hostname: schema-registry
+        restart: on-failure
         depends_on:
             kafka:
                 condition: service_healthy
@@ -103,6 +107,7 @@ services:
         image: provectuslabs/kafka-ui:latest
         container_name: kafka-ui
         hostname: kafka-ui
+        restart: on-failure
         depends_on:
             kafka:
                 condition: service_healthy
@@ -121,6 +126,7 @@ services:
         build: ./nifi
         container_name: nifi
         hostname: nifi
+        restart: on-failure
         depends_on:
             kafka:
                 condition: service_healthy
@@ -158,6 +164,7 @@ services:
         image: postgres:18
         container_name: postgres
         hostname: postgres
+        restart: on-failure
         ports:
             - "5432:5432"
         environment:
@@ -179,6 +186,7 @@ services:
         build: ./web
         container_name: orderbook-web
         hostname: orderbook-web
+        restart: on-failure
         depends_on:
             kafka:
                 condition: service_healthy
