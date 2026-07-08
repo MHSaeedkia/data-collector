@@ -69,8 +69,8 @@ nobitex,HYPEUSDT,disable
 nobitex,HYPEIRT,disable
 nobitex,DOGEUSDT,disable
 nobitex,DOGEIRT,disable
-nobitex,PEPEUSDT,disable
-nobitex,PEPEIRT,disable
+nobitex,1M_PEPEUSDT,disable
+nobitex,1M_PEPEIRT,disable
 nobitex,SUIUSDT,disable
 nobitex,SUIIRT,disable
 nobitex,ZECUSDT,disable
