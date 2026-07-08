@@ -73,9 +73,11 @@ Dockerfile's build path need zero changes.
 - `web/internal/postgres/` — `Repository` implementing `ports.MarketRepository` via pgx; same two
   SQL queries as before, no branching logic → not unit-tested (the merge logic it feeds is tested
   in `registry`).
-- `web/public/index.html` — unchanged: single-page UI (vanilla JS), pair dropdown, asks/bids
+- `web/public/index.html` — single-page UI (vanilla JS), pair dropdown, asks/bids
   tables, spread, live WS updates with auto-reconnect. Connects to `ws://host/ws`.
   **Embedded into the binary** via `//go:embed public` (served with `fs.Sub` + `http.FS`).
+  2026-07-08: `header` is `position: fixed` (stays pinned on scroll); `main` got
+  `margin-top: 53px` to match the header's rendered height so content isn't hidden under it.
 - `web/go.mod`/`go.sum` — added `github.com/stretchr/testify` (test-only dep, user chose testify
   over stdlib `testing` for assertions); `web/vendor/` re-vendored (`go mod vendor`) so the
   Dockerfile's offline `-mod=vendor` build still works unmodified.

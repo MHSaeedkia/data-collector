@@ -31,6 +31,11 @@
 				padding: 14px 20px;
 				border-bottom: 1px solid var(--line);
 				background: var(--panel);
+				position: fixed;
+				top: 0;
+				left: 0;
+				right: 0;
+				z-index: 10;
 			}
 			header h1 {
 				font-size: 15px;
@@ -66,12 +71,12 @@
 				max-width: 720px;
 				margin: 0 auto;
 				padding: 20px;
+				margin-top: 53px;
 			}
 			.book {
 				background: var(--panel);
 				border: 1px solid var(--line);
 				border-radius: 10px;
-				overflow: hidden;
 			}
 			table {
 				width: 100%;
@@ -88,6 +93,18 @@
 				font-size: 11px;
 				text-transform: uppercase;
 				letter-spacing: 0.04em;
+			}
+			thead th {
+				position: sticky;
+				top: 59px;
+				background: var(--panel);
+				z-index: 5;
+			}
+			thead th:first-child {
+				border-top-left-radius: 10px;
+			}
+			thead th:last-child {
+				border-top-right-radius: 10px;
 			}
 			th.exch,
 			td.exch {
