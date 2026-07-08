@@ -212,11 +212,26 @@
 				if (selectedPair) $pair.value = selectedPair;
 			}
 
-			function rows(levels, cls) {
+			function decimalPlaces(str) {
+				const i = String(str).indexOf(".");
+				return i === -1 ? 0 : String(str).length - i - 1;
+			}
+
+			function padDecimals(str, places) {
+				str = String(str);
+				const dot = str.indexOf(".");
+				const current = dot === -1 ? 0 : str.length - dot - 1;
+				if (current === places) return str;
+				if (dot === -1)
+					return places > 0 ? `${str}.${"0".repeat(places)}` : str;
+				return str + "0".repeat(places - current);
+			}
+
+			function rows(levels, priceDecimals, qtyDecimals) {
 				return levels
 					.map(
 						(l) =>
-							`<tr><td class="price">${l.price}</td><td>${l.quantity}</td><td class="exch">${l.exchange.label}</td></tr>`,
+							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td><td class="exch">${l.exchange.name}</td></tr>`,
 					)
 					.join("");
 			}
@@ -248,15 +263,25 @@
 						? bestAsk - bestBid
 						: null;
 
+				const allLevels = [...askLevels, ...bidLevels];
+				const priceDecimals = Math.max(
+					0,
+					...allLevels.map((l) => decimalPlaces(l.price)),
+				);
+				const qtyDecimals = Math.max(
+					0,
+					...allLevels.map((l) => decimalPlaces(l.quantity)),
+				);
+
 				const head =
 					'<tr><th>Price</th><th>Qty</th><th class="exch">Exchange</th></tr>';
 				$book.innerHTML = `
-        <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels)}</tbody></table>
+        <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels, priceDecimals, qtyDecimals)}</tbody></table>
         <div class="spread">
           <span>spread</span>
           <span>${spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 8 }) : "—"}</span>
         </div>
-        <table class="bids"><tbody>${rows(bidLevels)}</tbody></table>
+        <table class="bids"><tbody>${rows(bidLevels, priceDecimals, qtyDecimals)}</tbody></table>
       `;
 
 				const t = Math.max(

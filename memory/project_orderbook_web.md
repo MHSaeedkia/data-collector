@@ -78,6 +78,13 @@ Dockerfile's build path need zero changes.
   **Embedded into the binary** via `//go:embed public` (served with `fs.Sub` + `http.FS`).
   2026-07-08: `header` is `position: fixed` (stays pinned on scroll); `main` got
   `margin-top: 53px` to match the header's rendered height so content isn't hidden under it.
+  2026-07-08: price/quantity columns now display uniform decimal places. `price`/`quantity`
+  are wire strings (`domain.Level`, [[bigdecimal-rules]]-exact, not floats), so decimal count
+  varies per level (e.g. "123", "45.6", "0.001"). `render()` computes `priceDecimals`/
+  `qtyDecimals` as the max `decimalPlaces()` across ALL rendered levels (asks+bids combined,
+  since visually it's one column) and `rows()` zero-pads every value to that width via
+  `padDecimals()` (string-based, no `parseFloat`, so exactness is preserved). Recomputed on
+  every `render()` call so it tracks the live snapshot.
 - `web/go.mod`/`go.sum` — added `github.com/stretchr/testify` (test-only dep, user chose testify
   over stdlib `testing` for assertions); `web/vendor/` re-vendored (`go mod vendor`) so the
   Dockerfile's offline `-mod=vendor` build still works unmodified.
