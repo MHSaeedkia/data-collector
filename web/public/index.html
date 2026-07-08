@@ -88,7 +88,7 @@
 				text-align: right;
 			}
 			th {
-				color: var(--muted);
+				color: var(--text);
 				font-weight: 500;
 				font-size: 11px;
 				text-transform: uppercase;
@@ -99,6 +99,8 @@
 				top: 59px;
 				background: var(--panel);
 				z-index: 5;
+				color: var(--text);
+				font-weight: bold;
 			}
 			thead th:first-child {
 				border-top-left-radius: 10px;
@@ -109,10 +111,14 @@
 			th.exch,
 			td.exch {
 				text-align: left;
-				color: var(--muted);
 			}
+
 			tbody tr {
 				border-top: 1px solid var(--line);
+			}
+
+			td {
+				color: var(--muted);
 			}
 			.asks td.price {
 				color: var(--ask);
