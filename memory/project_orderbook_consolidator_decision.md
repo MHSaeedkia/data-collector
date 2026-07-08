@@ -206,3 +206,14 @@ reinforce the choice of Java, since SQL has no native way to express a per-excha
 independently-configurable expiry duration with a guaranteed removal signal. For now, the Order
 Book Consolidator should be built in Java on the Flink DataStream API, covering R1, R2, R4, R5,
 and R6.
+
+## Deployment: docker-compose volumes (2026-07-08)
+
+`docker-compose-orderbook-consolidator.yml` `jobmanager`/`taskmanager` now mount named volumes at
+`/opt/flink/log` (`data-collector-jobmanager-logs`, `data-collector-taskmanager-logs`) so Flink
+logs survive container recreation. `schema-registry`/`kafka-ui`/`web` were deliberately left
+without volumes — they hold no local persisted state (schema-registry's state lives in the Kafka
+`_schemas` topic; kafka-ui and web are stateless and log to stdout), so an empty bind mount there
+would be a no-op. No checkpoint/savepoint volume was added because checkpointing is not enabled in
+the job (`DeliveryGuarantee.NONE`, fire-and-forget sink — see source comments in
+`ConsolidatedOrderBookSinkFactory`); add one if checkpointing is ever turned on.

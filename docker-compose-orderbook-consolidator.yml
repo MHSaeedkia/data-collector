@@ -10,6 +10,8 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
+        volumes:
+            - data-collector-jobmanager-logs:/opt/flink/log
         networks:
             - data-collector-net
         healthcheck:
@@ -29,6 +31,8 @@ services:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 4
+        volumes:
+            - data-collector-taskmanager-logs:/opt/flink/log
         networks:
             - data-collector-net
 
@@ -185,6 +189,8 @@ volumes:
     data-collector-nifi-conf:
     data-collector-nifi-state:
     data-collector-nifi-logs:
+    data-collector-jobmanager-logs:
+    data-collector-taskmanager-logs:
 
 networks:
     data-collector-net:
