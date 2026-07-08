@@ -69,7 +69,7 @@ func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 	for _, rl := range rb.Levels {
 		ex, ok := r.exchanges[rl.ExchangeID]
 		if !ok {
-			ex = domain.Exchange{ID: rl.ExchangeID, Name: "unknown", Label: "unknown"}
+			ex = domain.Exchange{ID: rl.ExchangeID, Name: "unknown", Label: "نامشخص"}
 		}
 		levels = append(levels, domain.Level{Price: rl.Price, Quantity: rl.Quantity, Exchange: ex})
 	}
