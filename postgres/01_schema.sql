@@ -28,8 +28,14 @@ CREATE TABLE IF NOT EXISTS markets (
     quote_id BIGINT NOT NULL REFERENCES currencies(id) ON DELETE RESTRICT ON UPDATE CASCADE,
     price_precision INTEGER,
     quantity_precision INTEGER,
+    display_price_precision INTEGER,
+    display_quantity_precision INTEGER,
     CONSTRAINT unique_market UNIQUE (base_id, quote_id),
-    CONSTRAINT chk_base_quote_diff CHECK (base_id <> quote_id)
+    CONSTRAINT chk_base_quote_diff CHECK (base_id <> quote_id),
+    CONSTRAINT chk_price_precision_nonneg CHECK (price_precision IS NULL OR price_precision >= 0),
+    CONSTRAINT chk_quantity_precision_nonneg CHECK (quantity_precision IS NULL OR quantity_precision >= 0),
+    CONSTRAINT chk_display_price_precision_nonneg CHECK (display_price_precision IS NULL OR display_price_precision >= 0),
+    CONSTRAINT chk_display_quantity_precision_nonneg CHECK (display_quantity_precision IS NULL OR display_quantity_precision >= 0)
 );
 
 -- create table

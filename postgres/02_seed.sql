@@ -47,63 +47,63 @@ INSERT INTO currencies (id, "name") VALUES
 SELECT setval(pg_get_serial_sequence('currencies', 'id'), (SELECT MAX(id) FROM currencies));
 
 -- ===== markets =====
-INSERT INTO markets (id, base_id, quote_id, price_precision, quantity_precision) VALUES
-(1, 3, 1, 2, 8), -- BTC/USDT
-(2, 3, 2, 2, 8), -- BTC/IRT
-(3, 4, 1, 2, 8), -- ETH/USDT
-(4, 4, 2, 2, 8), -- ETH/IRT
-(5, 5, 1, 2, 8), -- XRP/USDT
-(6, 5, 2, 2, 8), -- XRP/IRT
-(7, 6, 1, 2, 8), -- TRX/USDT
-(8, 6, 2, 2, 8), -- TRX/IRT
-(9, 7, 1, 2, 8), -- SOL/USDT
-(10, 7, 2, 2, 8), -- SOL/IRT
-(11, 8, 1, 2, 8), -- DOT/USDT
-(12, 8, 2, 2, 8), -- DOT/IRT
-(13, 9, 1, 2, 8), -- HYPE/USDT
-(14, 9, 2, 2, 8), -- HYPE/IRT
-(15, 10, 1, 2, 8), -- DOGE/USDT
-(16, 10, 2, 2, 8), -- DOGE/IRT
-(17, 11, 1, 10, 10), -- PEPE/USDT
-(18, 11, 2, 10, 10), -- PEPE/IRT
-(19, 12, 1, 2, 8), -- SUI/USDT
-(20, 12, 2, 2, 8), -- SUI/IRT
-(21, 13, 1, 2, 8), -- ZEC/USDT
-(22, 13, 2, 2, 8), -- ZEC/IRT
-(23, 14, 1, 2, 8), -- XLM/USDT
-(24, 14, 2, 2, 8), -- XLM/IRT
-(25, 15, 1, 2, 8), -- LINK/USDT
-(26, 15, 2, 2, 8), -- LINK/IRT
-(27, 16, 1, 2, 8), -- AVAX/USDT
-(28, 16, 2, 2, 8), -- AVAX/IRT
-(29, 17, 1, 2, 8), -- PAXG/USDT
-(30, 17, 2, 2, 8), -- PAXG/IRT
-(31, 18, 1, 2, 8), -- XAUT/USDT
-(32, 18, 2, 2, 8), -- XAUT/IRT
-(33, 19, 1, 2, 8), -- NEAR/USDT
-(34, 19, 2, 2, 8), -- NEAR/IRT
-(35, 20, 1, 2, 8), -- UNI/USDT
-(36, 20, 2, 2, 8), -- UNI/IRT
-(37, 21, 1, 2, 8), -- AAVE/USDT
-(38, 21, 2, 2, 8), -- AAVE/IRT
-(39, 22, 1, 2, 8), -- OKX/USDT
-(40, 22, 2, 2, 8), -- OKX/IRT
-(41, 23, 1, 2, 8), -- ADA/USDT
-(42, 23, 2, 2, 8), -- ADA/IRT
-(43, 24, 1, 2, 8), -- GRAM/USDT
-(44, 24, 2, 2, 8), -- GRAM/IRT
-(45, 25, 1, 2, 8), -- BNB/USDT
-(46, 25, 2, 2, 8), -- BNB/IRT
-(47, 26, 1, 2, 8), -- WLD/USDT
-(48, 26, 2, 2, 8), -- WLD/IRT
-(49, 27, 1, 2, 8), -- MNT/USDT
-(50, 27, 2, 2, 8), -- MNT/IRT
-(51, 28, 1, 2, 8), -- SHIB/USDT
-(52, 28, 2, 2, 8), -- SHIB/IRT
-(53, 29, 1, 2, 8), -- BTT/USDT
-(54, 29, 2, 2, 8), -- BTT/IRT
-(55, 30, 1, 2, 8), -- TON/USDT
-(56, 30, 2, 2, 8); -- TON/IRT
+INSERT INTO markets (id, base_id, quote_id, price_precision, quantity_precision, display_price_precision, display_quantity_precision) VALUES
+(1, 3, 1, 2, 8, 2, 8), -- BTC/USDT
+(2, 3, 2, 2, 8, 2, 8), -- BTC/IRT
+(3, 4, 1, 2, 8, 2, 8), -- ETH/USDT
+(4, 4, 2, 2, 8, 2, 8), -- ETH/IRT
+(5, 5, 1, 2, 8, 2, 8), -- XRP/USDT
+(6, 5, 2, 2, 8, 2, 8), -- XRP/IRT
+(7, 6, 1, 2, 8, 2, 8), -- TRX/USDT
+(8, 6, 2, 2, 8, 2, 8), -- TRX/IRT
+(9, 7, 1, 2, 8, 2, 8), -- SOL/USDT
+(10, 7, 2, 2, 8, 2, 8), -- SOL/IRT
+(11, 8, 1, 2, 8, 2, 8), -- DOT/USDT
+(12, 8, 2, 2, 8, 2, 8), -- DOT/IRT
+(13, 9, 1, 2, 8, 2, 8), -- HYPE/USDT
+(14, 9, 2, 2, 8, 2, 8), -- HYPE/IRT
+(15, 10, 1, 2, 8, 2, 8), -- DOGE/USDT
+(16, 10, 2, 2, 8, 2, 8), -- DOGE/IRT
+(17, 11, 1, 10, 10, 2, 8), -- PEPE/USDT
+(18, 11, 2, 10, 10, 2, 8), -- PEPE/IRT
+(19, 12, 1, 2, 8, 2, 8), -- SUI/USDT
+(20, 12, 2, 2, 8, 2, 8), -- SUI/IRT
+(21, 13, 1, 2, 8, 2, 8), -- ZEC/USDT
+(22, 13, 2, 2, 8, 2, 8), -- ZEC/IRT
+(23, 14, 1, 2, 8, 2, 8), -- XLM/USDT
+(24, 14, 2, 2, 8, 2, 8), -- XLM/IRT
+(25, 15, 1, 2, 8, 2, 8), -- LINK/USDT
+(26, 15, 2, 2, 8, 2, 8), -- LINK/IRT
+(27, 16, 1, 2, 8, 2, 8), -- AVAX/USDT
+(28, 16, 2, 2, 8, 2, 8), -- AVAX/IRT
+(29, 17, 1, 2, 8, 2, 8), -- PAXG/USDT
+(30, 17, 2, 2, 8, 2, 8), -- PAXG/IRT
+(31, 18, 1, 2, 8, 2, 8), -- XAUT/USDT
+(32, 18, 2, 2, 8, 2, 8), -- XAUT/IRT
+(33, 19, 1, 2, 8, 2, 8), -- NEAR/USDT
+(34, 19, 2, 2, 8, 2, 8), -- NEAR/IRT
+(35, 20, 1, 2, 8, 2, 8), -- UNI/USDT
+(36, 20, 2, 2, 8, 2, 8), -- UNI/IRT
+(37, 21, 1, 2, 8, 2, 8), -- AAVE/USDT
+(38, 21, 2, 2, 8, 2, 8), -- AAVE/IRT
+(39, 22, 1, 2, 8, 2, 8), -- OKX/USDT
+(40, 22, 2, 2, 8, 2, 8), -- OKX/IRT
+(41, 23, 1, 2, 8, 2, 8), -- ADA/USDT
+(42, 23, 2, 2, 8, 2, 8), -- ADA/IRT
+(43, 24, 1, 2, 8, 2, 8), -- GRAM/USDT
+(44, 24, 2, 2, 8, 2, 8), -- GRAM/IRT
+(45, 25, 1, 2, 8, 2, 8), -- BNB/USDT
+(46, 25, 2, 2, 8, 2, 8), -- BNB/IRT
+(47, 26, 1, 2, 8, 2, 8), -- WLD/USDT
+(48, 26, 2, 2, 8, 2, 8), -- WLD/IRT
+(49, 27, 1, 2, 8, 2, 8), -- MNT/USDT
+(50, 27, 2, 2, 8, 2, 8), -- MNT/IRT
+(51, 28, 1, 2, 8, 2, 8), -- SHIB/USDT
+(52, 28, 2, 2, 8, 2, 8), -- SHIB/IRT
+(53, 29, 1, 2, 8, 2, 8), -- BTT/USDT
+(54, 29, 2, 2, 8, 2, 8), -- BTT/IRT
+(55, 30, 1, 2, 8, 2, 8), -- TON/USDT
+(56, 30, 2, 2, 8, 2, 8); -- TON/IRT
 SELECT setval(pg_get_serial_sequence('markets', 'id'), (SELECT MAX(id) FROM markets));
 
 -- ===== exchange_markets =====

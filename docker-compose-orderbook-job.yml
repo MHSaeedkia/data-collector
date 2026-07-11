@@ -13,7 +13,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+            test: [ "CMD", "curl", "-f", "http://localhost:8081/overview" ]
             interval: 10s
             retries: 5
 
@@ -57,14 +57,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test:
-                [
-                    "CMD",
-                    "kafka-topics",
-                    "--bootstrap-server",
-                    "kafka:29092",
-                    "--list",
-                ]
+            test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:29092", "--list" ]
             interval: 15s
             timeout: 10s
             retries: 5
@@ -86,7 +79,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: ["CMD", "curl", "-f", "http://localhost:8082/subjects"]
+            test: [ "CMD", "curl", "-f", "http://localhost:8082/subjects" ]
             interval: 10s
             timeout: 5s
             retries: 5
@@ -131,11 +124,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test:
-                [
-                    "CMD-SHELL",
-                    "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'",
-                ]
+            test: [ "CMD-SHELL", "curl -k -s -o /dev/null -w '%{http_code}' https://$(hostname):8443/nifi-api/system-diagnostics | grep -qE '^[2-4]'" ]
             interval: 30s
             timeout: 10s
             retries: 5
@@ -157,7 +146,7 @@ services:
         networks:
             - data-collector-net
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            test: [ "CMD-SHELL", "pg_isready -U postgres" ]
             interval: 10s
             retries: 5
 
