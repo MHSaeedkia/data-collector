@@ -1,0 +1,50 @@
+{
+	"type": "record",
+	"name": "ConsolidatedOrderBookEvent",
+	"namespace": "io.tibobit.orderbook",
+	"fields": [
+		{
+			"name": "pair_id",
+			"type": "int"
+		},
+		{
+			"name": "side",
+			"type": {
+				"type": "enum",
+				"name": "Side",
+				"symbols": ["asks", "bids"]
+			}
+		},
+		{
+			"name": "event_time",
+			"type": {
+				"type": "long",
+				"logicalType": "timestamp-millis"
+			}
+		},
+		{
+			"name": "levels",
+			"type": {
+				"type": "array",
+				"items": {
+					"type": "record",
+					"name": "ConsolidatedLevel",
+					"fields": [
+						{
+							"name": "exchange_id",
+							"type": "int"
+						},
+						{
+							"name": "price",
+							"type": "string"
+						},
+						{
+							"name": "quantity",
+							"type": "string"
+						}
+					]
+				}
+			}
+		}
+	]
+}

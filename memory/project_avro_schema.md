@@ -1,6 +1,6 @@
 ---
 name: avro-schema-orderbook
-description: Avro schema design for normalized order book events in schema registry, used by NiFi (producer) and Flink (consumer)
+description: Avro schema design for normalized order book events (OrderBookEvent, PriceLevelEvent, ConsolidatedOrderBookEvent) in schema registry
 metadata:
     type: project
 ---
@@ -62,5 +62,31 @@ Exchange APIs return price and quantity as strings to avoid floating-point preci
 
 **Why:** Schema registry contract between NiFi and Flink for the order book pipeline.
 **How to apply:** Any new exchange integration must produce events conforming to this schema after NiFi normalization.
+
+## Schema: ConsolidatedOrderBookEvent (added 2026-07-11)
+
+File: `schemas/consolidated_order_book_event.avsc`, record name `ConsolidatedOrderBookEvent`,
+namespace `io.tibobit.orderbook`. Example payload: `schemas/consolidated_order_book_event_example.json`.
+Registered in `scripts/warmup.sh` as subject `consolidated-order-book-event`, same pattern as
+`price-level-event`.
+
+This documents the **output** wire shape of `flink/orderbook-consolidator/`'s
+`ConsolidatedOrderBook`/`ConsolidatedLevel` model (see
+[[orderbook-consolidator-decision]]), published to `{side}-p{pair_id}` and consumed by `web/`.
+That output shape is fixed/frozen — do not change it; this schema is a documentation/contract
+mirror of it, not a driver of it.
+
+| Field        | Avro type                          | Notes                                              |
+| ------------ | ----------------------------------- | --------------------------------------------------- |
+| `pair_id`    | int (required)                      | DB `markets.id`                                     |
+| `side`       | enum `asks`\|`bids` (required)      | Matches topic suffix                                 |
+| `event_time` | long timestamp-millis (required)    | Max `event_time` across contributing exchange books  |
+| `levels`     | array of record (required)          | Each: `exchange_id:int`, `price:string`, `quantity:string` — union across exchanges, never summed; equal prices from different exchanges stay as separate adjacent entries |
+
+**Important caveat — this schema is registered but NOT actually used for wire encoding.** Exactly
+like `price_level_event.avsc` above, `ConsolidatedOrderBookSerializer` (the sink) writes plain
+Jackson JSON bytes, not Confluent Avro binary. Registering the `.avsc` in the schema registry here
+is a documentation/contract step (mirrors the existing project convention), not a switch to Avro
+wire encoding — don't assume the schema registry enforces this shape at runtime.
 
 [[kafka-topic-strategy]]

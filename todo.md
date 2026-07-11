@@ -310,6 +310,13 @@ Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; st
       record (value-only, key=null); `ConsolidatedOrderBookSerializer` copied into
       `io.tibobit.consolidator.serializer` (mirrors orderbook-job's — the modules share no code).
       The `TopicSelector` lambda is cast to `TopicSelector<ConsolidatedOrderBook>` for inference.
+- [x] `schemas/consolidated_order_book_event.avsc` + example JSON — Avro schema for the
+      `ConsolidatedOrderBook` output wire shape (`pair_id:int`, `side` enum(asks,bids),
+      `event_time` long timestamp-millis, `levels`: array of `{exchange_id:int, price:string,
+      quantity:string}`), mirroring `price_level_event.avsc` conventions. Registered in
+      `scripts/warmup.sh` (subject `consolidated-order-book-event`) — done 2026-07-11. Same as
+      `price_level_event.avsc`, this is a schema-registry contract for documentation/consumers;
+      `ConsolidatedOrderBookSerializer` still writes plain JSON, not Confluent Avro wire format.
 
 ### Step 7 — Job wiring — done 2026-07-04
 

@@ -1,0 +1,17 @@
+{
+	"pair_id": 1,
+	"side": "asks",
+	"event_time": 1750680000000,
+	"levels": [
+		{
+			"exchange_id": 1,
+			"price": "97240.5",
+			"quantity": "0.42"
+		},
+		{
+			"exchange_id": 2,
+			"price": "97240.5",
+			"quantity": "0.10"
+		}
+	]
+}
