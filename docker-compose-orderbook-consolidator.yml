@@ -147,6 +147,11 @@ services:
             - data-collector-nifi-provenance-repository:/opt/nifi/nifi-current/provenance_repository
             - data-collector-nifi-content-repository:/opt/nifi/nifi-current/content_repository
             - data-collector-nifi-flowfile-repository:/opt/nifi/nifi-current/flowfile_repository
+        logging:
+            driver: json-file
+            options:
+                max-size: "1G"
+                max-file: "5"
         networks:
             - data-collector-net
         healthcheck:
