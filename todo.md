@@ -6,6 +6,7 @@
 - [x] Avro schema: `schemas/orderbook_event.avsc` registered in schema registry
 - [x] JSON schema: `schemas/orderbook_event.json` registered in schema registry
 - [x] Topic provisioning: pre-create topics from postgres markets table (`scripts/warmup.sh`)
+- [x] Topic retention: input `{side}-p{pair_id}-ex{exchange_id}` = 1h, output `{side}-p{pair_id}` = 6h (`scripts/warmup.sh`) — done 2026-07-11
 
 ## Phase 1 — Flink JSON pipeline (source: `flink/orderbook-job/`)
 

@@ -49,6 +49,8 @@ Processing all pairs for one exchange (e.g. everything from `nobitex`) is not a 
 
 Topics are pre-provisioned by `scripts/warmup.sh` from the postgres `markets` + `exchange_markets` + `exchanges` tables (rows where `exchange_markets.status = 'subscribe'`) — not auto-created. warmup.sh first registers the Avro schema, then creates input + output topics (single partition, replication-factor 1).
 
+**Retention (added 2026-07-11):** input topics `{side}-p{pair_id}-ex{exchange_id}` get `retention.ms=3600000` (1 hour); output topics `{side}-p{pair_id}` get `retention.ms=21600000` (6 hours), passed via `--config retention.ms=...` in `create_topic()`. Input topics are raw per-exchange firehose (short-lived, high volume); output topics are the consolidated book consumers care about (longer window for replay/late web-UI connects). **Caveat:** topic creation uses `--if-not-exists`, so retention is only applied when a topic is first created — topics already provisioned on the server before this change keep their old (unset/broker-default) retention and need `kafka-configs --alter --entity-type topics --entity-name <topic> --add-config retention.ms=...` to update in place; not yet run against the deployed server.
+
 Its query selects only `m.id, em.exchange_id, e.name` (topic names are ID-based, so base/quote symbols are not needed) — updated 2026-06-29 when [[db-schema]] dropped `markets.base`/`quote`; the old query `SELECT m.id, m.base, m.quote, …` now errors. NOTE: all `exchange_markets` rows are seeded `unsubscribe`, so warmup creates zero topics until some are flipped to `subscribe`.
 
 **Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.

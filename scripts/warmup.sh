@@ -61,8 +61,7 @@ pairs=$(docker exec "$POSTGRES_CONTAINER" psql \
     -c "SELECT m.id, em.exchange_id, e.name as exchange_name
         FROM exchange_markets em
         JOIN markets m ON em.market_id = m.id
-        JOIN exchanges e ON e.id = em.exchange_id
-        WHERE em.status = 'subscribe'")
+        JOIN exchanges e ON e.id = em.exchange_id")
 
 if [ -z "$pairs" ]; then
     echo "No active subscriptions found in exchange_markets."
@@ -71,22 +70,27 @@ fi
 
 echo "Creating Kafka topics..."
 
+INPUT_RETENTION_MS=3600000    # 1 hour
+OUTPUT_RETENTION_MS=21600000  # 6 hours
+
 create_topic() {
     local topic="$1"
-    echo "  -> $topic"
+    local retention_ms="$2"
+    echo "  -> $topic (retention: ${retention_ms}ms)"
     docker exec "$KAFKA_CONTAINER" kafka-topics \
         --bootstrap-server "$KAFKA_BOOTSTRAP" \
         --create \
         --if-not-exists \
         --topic "$topic" \
         --partitions 1 \
-        --replication-factor 1
+        --replication-factor 1 \
+        --config "retention.ms=$retention_ms"
 }
 
 # Input topics — one per side+pair+exchange (NiFi produces, Flink source consumes).
 while IFS='|' read -r pair_id exchange_id exchange_name; do
     for side in asks bids; do
-        create_topic "${side}-p${pair_id}-ex${exchange_id}"
+        create_topic "${side}-p${pair_id}-ex${exchange_id}" "$INPUT_RETENTION_MS"
     done
 done <<< "$pairs"
 
@@ -94,7 +98,7 @@ done <<< "$pairs"
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
-        create_topic "${side}-p${pair_id}"
+        create_topic "${side}-p${pair_id}" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 
