@@ -72,11 +72,11 @@ echo "Creating Kafka topics..."
 
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
-PARALLEL_JOBS="${PARALLEL_JOBS:-20}"
 
 create_topic() {
     local topic="$1"
     local retention_ms="$2"
+    echo "  -> $topic (retention: ${retention_ms}ms)"
     docker exec "$KAFKA_CONTAINER" kafka-topics \
         --bootstrap-server "$KAFKA_BOOTSTRAP" \
         --create \
@@ -84,31 +84,22 @@ create_topic() {
         --topic "$topic" \
         --partitions 1 \
         --replication-factor 1 \
-        --config "retention.ms=$retention_ms" \
-        && echo "  -> $topic (retention: ${retention_ms}ms)"
+        --config "retention.ms=$retention_ms"
 }
-export -f create_topic
-export KAFKA_CONTAINER KAFKA_BOOTSTRAP
 
-# Each `kafka-topics --create` call starts a fresh JVM inside the container, so
-# creating topics one at a time is dominated by JVM startup, not Kafka itself.
-# Build the full topic list up front and fan the calls out with xargs -P so
-# many JVMs start concurrently instead of sequentially.
+# Input topics — one per side+pair+exchange (NiFi produces, Flink source consumes).
+while IFS='|' read -r pair_id exchange_id exchange_name; do
+    for side in asks bids; do
+        create_topic "${side}-p${pair_id}-ex${exchange_id}" "$INPUT_RETENTION_MS"
+    done
+done <<< "$pairs"
+
+# Output topics — one per side+pair (Flink aggregation writes the consolidated book here).
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
-{
-    # Input topics — one per side+pair+exchange (NiFi produces, Flink source consumes).
-    while IFS='|' read -r pair_id exchange_id exchange_name; do
-        for side in asks bids; do
-            echo "${side}-p${pair_id}-ex${exchange_id} $INPUT_RETENTION_MS"
-        done
-    done <<< "$pairs"
-
-    # Output topics — one per side+pair (Flink aggregation writes the consolidated book here).
-    while IFS='|' read -r pair_id; do
-        for side in asks bids; do
-            echo "${side}-p${pair_id} $OUTPUT_RETENTION_MS"
-        done
-    done <<< "$distinct_pairs"
-} | xargs -P "$PARALLEL_JOBS" -n2 bash -c 'create_topic "$1" "$2"' _
+while IFS='|' read -r pair_id; do
+    for side in asks bids; do
+        create_topic "${side}-p${pair_id}" "$OUTPUT_RETENTION_MS"
+    done
+done <<< "$distinct_pairs"
 
 echo "Done."
