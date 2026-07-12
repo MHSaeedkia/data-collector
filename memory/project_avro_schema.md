@@ -83,10 +83,16 @@ mirror of it, not a driver of it.
 | `event_time` | long timestamp-millis (required)    | Max `event_time` across contributing exchange books  |
 | `levels`     | array of record (required)          | Each: `exchange_id:int`, `price:string`, `quantity:string` — union across exchanges, never summed; equal prices from different exchanges stay as separate adjacent entries |
 
-**Important caveat — this schema is registered but NOT actually used for wire encoding.** Exactly
-like `price_level_event.avsc` above, `ConsolidatedOrderBookSerializer` (the sink) writes plain
-Jackson JSON bytes, not Confluent Avro binary. Registering the `.avsc` in the schema registry here
-is a documentation/contract step (mirrors the existing project convention), not a switch to Avro
-wire encoding — don't assume the schema registry enforces this shape at runtime.
+**Update 2026-07-11 — now TRUE Avro wire encoding, not just documentation.** The caveat that used
+to live here (and still applies to `orderbook_event.avsc`/`orderbook-job` above — untouched) is
+now **stale for this schema and for `price_level_event.avsc`**: `flink/orderbook-consolidator/`
+was refactored to real Confluent Avro binary on both source and sink —
+`ConsolidatedOrderBookSerializer` now emits Confluent-wire-format bytes (magic byte + schema id +
+Avro payload) via `ConfluentRegistryAvroSerializationSchema`, and `PriceLevelEventDeserializer`
+decodes the same way via `ConfluentRegistryAvroDeserializationSchema`. All Jackson/JSON code and
+`@JsonProperty`/`@JsonIgnoreProperties` annotations were removed from that module. Full details,
+including two **known deploy-blocking downstream risks** (`web/` still expects JSON;
+NiFi's actual producer format on the input topics is unverified), are in
+[[orderbook-consolidator-decision]] under "Wire format: JSON → true Confluent Avro (2026-07-11)".
 
 [[kafka-topic-strategy]]

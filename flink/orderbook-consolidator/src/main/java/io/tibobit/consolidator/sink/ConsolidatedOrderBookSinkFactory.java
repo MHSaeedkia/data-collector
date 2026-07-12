@@ -15,14 +15,14 @@ import org.apache.flink.connector.kafka.sink.TopicSelector;
 public class ConsolidatedOrderBookSinkFactory {
 
     // Builder defaults to DeliveryGuarantee.NONE — fire-and-forget, no checkpointing.
-    public static KafkaSink<ConsolidatedOrderBook> create(String bootstrapServers) {
+    public static KafkaSink<ConsolidatedOrderBook> create(String bootstrapServers, String schemaRegistryUrl) {
         return KafkaSink.<ConsolidatedOrderBook>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setRecordSerializer(KafkaRecordSerializationSchema.<ConsolidatedOrderBook>builder()
                         // R6: route each record to {side}-p{pair_id} (e.g. asks-p2).
                         .setTopicSelector((TopicSelector<ConsolidatedOrderBook>)
                                 book -> book.getSide() + "-p" + book.getPairId())
-                        .setValueSerializationSchema(new ConsolidatedOrderBookSerializer())
+                        .setValueSerializationSchema(new ConsolidatedOrderBookSerializer(schemaRegistryUrl))
                         .build())
                 .build();
     }

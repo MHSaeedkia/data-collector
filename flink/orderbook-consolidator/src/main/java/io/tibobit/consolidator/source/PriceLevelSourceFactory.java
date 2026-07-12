@@ -23,14 +23,14 @@ public class PriceLevelSourceFactory {
     private static final Pattern INPUT_TOPIC_PATTERN =
             Pattern.compile("(asks|bids)-p[0-9]+-ex[0-9]+");
 
-    public static KafkaSource<PriceLevelEvent> create(String bootstrapServers, String groupId) {
+    public static KafkaSource<PriceLevelEvent> create(String bootstrapServers, String groupId, String schemaRegistryUrl) {
         return KafkaSource.<PriceLevelEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 // Start at the tip: we want the live book, not historical replay.
                 .setStartingOffsets(OffsetsInitializer.latest())
-                .setValueOnlyDeserializer(new PriceLevelEventDeserializer())
+                .setValueOnlyDeserializer(new PriceLevelEventDeserializer(schemaRegistryUrl))
                 .build();
     }
 }

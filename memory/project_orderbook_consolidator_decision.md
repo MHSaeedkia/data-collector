@@ -247,3 +247,107 @@ played no part). Fixed live via `docker start schema-registry` (came up healthy 
 (not just schema-registry) since this class of "dependency reports healthy but isn't fully ready"
 race can in principle hit any service here on a cold start — commit `1d08353`. **Not yet deployed
 to the server** — user will `git pull` + recreate there themselves when ready.
+
+## Wire format: JSON → true Confluent Avro (2026-07-11)
+
+`flink/orderbook-consolidator/` refactored end-to-end from Jackson JSON to real Confluent
+Schema Registry Avro binary encoding, on both source and sink. This supersedes the
+[[avro-schema]] note that `.avsc` registration was "documentation only" — that is now **only
+still true for `orderbook_event.avsc`/`orderbook-job`**, which was NOT touched. For this module:
+
+- **Deserializer** (`PriceLevelEventDeserializer`): wraps
+  `ConfluentRegistryAvroDeserializationSchema.forGeneric(schema, schemaRegistryUrl)`, maps the
+  resulting `GenericRecord` onto the existing `PriceLevelEvent` POJO via a package-private static
+  `toPriceLevelEvent(GenericRecord)` (kept pure/testable without a live registry).
+- **Serializer** (`ConsolidatedOrderBookSerializer`): wraps
+  `ConfluentRegistryAvroSerializationSchema.forGeneric(subject, schema, schemaRegistryUrl)`,
+  subject `consolidated-order-book-event` (matches `warmup.sh`); builds the `GenericRecord` from
+  `ConsolidatedOrderBook` via a package-private static `toGenericRecord(book, schema)`.
+- **Schema source of truth stays `schemas/*.avsc`** — no duplication. A `maven-resources-plugin`
+  `copy-resources` execution (bound to `generate-resources`) copies
+  `price_level_event.avsc`/`consolidated_order_book_event.avsc` from the repo-root `schemas/`
+  dir into `target/classes/avro/`, so they end up bundled in the shaded jar at `avro/*.avsc` —
+  required because only the jar (not the repo) exists in the Flink containers at runtime. Loaded
+  via `io.tibobit.consolidator.avro.AvroSchemaLoader.load("/avro/...")`, a tiny
+  `Schema.Parser().parse(classpath-resource)` wrapper.
+- **`SCHEMA_REGISTRY_URL` env var added** to `OrderBookConsolidatorJob`, default
+  `http://schema-registry:8082` (in-network hostname:port from `docker-compose-orderbook-consolidator.yml`,
+  same pattern as the existing `KAFKA_BOOTSTRAP_SERVERS` default) — not set explicitly in the
+  compose file, matching how bootstrap-servers is handled too.
+- **pom.xml**: added `provided`-scope `avro`, `flink-avro`, `flink-avro-confluent-registry`,
+  `kafka-schema-registry-client` (+ confluent maven repo) — versions match what the Dockerfile
+  already `wget`s into `/opt/flink/lib/` (this infra was pre-staged in the Docker image before
+  this refactor but unused — see the Dockerfile's "Avro format + Confluent Schema Registry
+  support" block, present since the image was first built). Removed the `jackson-databind`
+  dependency entirely — nothing in this module uses Jackson anymore.
+- **Jackson annotations removed** (`@JsonProperty`, `@JsonIgnoreProperties`) from the model POJOs
+  (`PriceLevelEvent`, `ConsolidatedLevel`, `ConsolidatedOrderBook`) — they did nothing once Jackson
+  left the wire path. `ExchangeBook`/`StoredLevel` were untouched (never had Jackson annotations —
+  they're inter-operator/state records, never touch Kafka).
+- Tests rewritten to build `GenericRecord`s via `GenericRecordBuilder` and assert on the
+  `toPriceLevelEvent`/`toGenericRecord` pure-mapping functions directly, rather than feeding raw
+  JSON strings — the Confluent registry encode/decode itself is Flink/Confluent library code, not
+  re-tested here. 25/25 tests green (`mvn -o test`); shaded jar verified to contain
+  `avro/price_level_event.avsc` + `avro/consolidated_order_book_event.avsc` (`jar tf`).
+
+**⚠️ Known blast radius NOT yet addressed (deliberately out of scope for this refactor — user
+asked only to refactor this module):**
+
+1. **`web/internal/ingest/ingest.go` (`HandleRecord`) still does `json.Unmarshal(value, &rb)`** on
+   the raw Kafka record bytes from the `{side}-p{pair_id}` output topics. Now that
+   `ConsolidatedOrderBookSerializer` emits Confluent-wire-format Avro binary (magic byte + 4-byte
+   schema id + Avro payload) instead of JSON, every message will fail `json.Unmarshal` and get
+   silently dropped (`"Skipping bad message on %s: %v"`) — **the web UI will stop receiving any
+   live order book updates** until `web/` is updated to decode Avro via the schema registry (e.g.
+   `hamba/avro` + a schema-registry-aware wire-format reader) instead of `encoding/json`. See
+   [[orderbook-web]].
+2. **NiFi's producer format for the input topics (`{side}-p{pair_id}-ex{exchange_id}`) is
+   unknown/unverified** — NiFi is owned by a separate team and not implemented in this repo (see
+   [[avro-schema]]). If NiFi is still publishing plain JSON (as `price_level_event.avsc`'s prior
+   "documentation only" status implied it might be), `PriceLevelEventDeserializer` will now fail
+   to decode every incoming message (`ConfluentRegistryAvroDeserializationSchema` expects the
+   Confluent magic-byte-prefixed wire format, not raw JSON). **This must be confirmed with the
+   NiFi team before deploying this refactor**, or the consolidator will receive nothing but decode
+   errors on its input side.
+
+Both are real, deploy-blocking risks, not just cleanup items — flagged here rather than silently
+left for a future session to rediscover the hard way.
+
+## Schema source of truth: registry-only at runtime, not the bundled jar copy (2026-07-12)
+
+User rule: every event to producers/consumers **MUST be validated using the schema in the Schema
+Registry, and nowhere else**. The 2026-07-11 refactor above technically violated this — both
+(de)serializers loaded their Avro `Schema` object from a classpath resource
+(`avro/price_level_event.avsc`/`avro/consolidated_order_book_event.avsc`) bundled into the shaded
+jar at build time. That local copy, not the registry, was the actual source of the schema shape:
+on serialize it was pushed to the registry (drift risk if the jar was stale vs. what `warmup.sh`
+had registered); on deserialize it was used as the Avro *reader* schema for projection. Fixed:
+
+- **`AvroSchemaLoader.loadLatest(schemaRegistryUrl, subject)`** (new method) fetches the schema
+  live via `io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient
+  .getLatestSchemaMetadata(subject).getSchema()`, parsed with `Schema.Parser().parse(...)`. Both
+  `PriceLevelEventDeserializer` and `ConsolidatedOrderBookSerializer` now call this (lazily, same
+  transient-field-on-first-use pattern as before) instead of `AvroSchemaLoader.load(classpathResource)`.
+  Subjects used are the existing fixed ones `price-level-event` / `consolidated-order-book-event`
+  (unchanged, already registered by `warmup.sh` — see [[kafka-topic-strategy]]), **not** the
+  per-topic `<topic>-value` subjects added there on 2026-07-12 — those exist only so kafka-ui
+  auto-defaults to AVRO serde per topic; the Flink job itself always reads/writes via the one
+  fixed logical subject per event type, same content, same global schema ID either way.
+- **`AvroSchemaLoader.load(classpathResource)` kept, but test-only now.** Production code no
+  longer calls it. `pom.xml`'s `copy-avro-schemas` `maven-resources-plugin` execution was
+  retargeted from `generate-resources`/`${project.build.outputDirectory}/avro` to
+  `generate-test-resources`/`${project.build.testOutputDirectory}/avro` — the canonical
+  `schemas/*.avsc` files now land only on the **test** classpath (so unit tests can build fixture
+  `GenericRecord`s without a live registry), never in `target/classes` or the shaded jar. Verified
+  via `jar tf target/orderbook-consolidator-1.0-SNAPSHOT.jar | grep avro/` → only
+  `AvroSchemaLoader.class`, no `.avsc` files. 25/25 tests still green (`mvn -o test`).
+- **Consequence:** the Flink job now has a hard runtime dependency on the Schema Registry being
+  reachable and already having both subjects registered *before* the job starts consuming/producing
+  (true today since `warmup.sh` runs before the job in the deploy flow) — if the registry is down
+  or the subject is missing, the first `deserialize`/`serialize` call throws
+  `IllegalStateException` (lazy-init failure), which is the correct fail-fast behavior for "schema
+  must come from the registry and nowhere else," not a regression.
+- `warmup.sh` was **not** changed for this rule — it's the schema *deployment* tool (pushes the
+  canonical `.avsc` files into the registry in the first place); it doesn't validate/encode/decode
+  business events itself, so the rule doesn't apply to it. It remains the only place the
+  repo-root `schemas/*.avsc` files feed into the registry for this module.

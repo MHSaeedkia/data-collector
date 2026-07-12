@@ -7,7 +7,8 @@
 - [x] JSON schema: `schemas/orderbook_event.json` registered in schema registry
 - [x] Topic provisioning: pre-create topics from postgres markets table (`scripts/warmup.sh`)
 - [x] Topic retention: input `{side}-p{pair_id}-ex{exchange_id}` = 1h, output `{side}-p{pair_id}` = 6h (`scripts/warmup.sh`) — done 2026-07-11
-- [x] Speed up topic creation: parallelized `create_topic` calls in `scripts/warmup.sh` via `xargs -P` (was one `docker exec kafka-topics` JVM startup per topic, sequential) — done 2026-07-11
+- [x] Speed up topic creation: parallelized `create_topic` calls in `scripts/warmup.sh` via `xargs -P` — done 2026-07-11, **reverted same day** (commit `81c18de`), script is sequential again
+- [x] Bind each topic to its Avro schema: `scripts/warmup.sh` now registers `<topic>-value` (TopicNameStrategy) for every created topic — input topics → `price_level_event.avsc`, output topics → `consolidated_order_book_event.avsc` — so kafka-ui defaults its Produce-Message serde to AVRO per topic instead of String/Bytes — done 2026-07-12
 
 ## Phase 1 — Flink JSON pipeline (source: `flink/orderbook-job/`)
 
@@ -305,18 +306,19 @@ Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; st
 
 ### Step 6 — Sink (R6, dynamic topic routing) — done 2026-07-04
 
-- [x] `ConsolidatedOrderBookSinkFactory.create(bootstrap)` — single `KafkaSink` whose
-      `KafkaRecordSerializationSchema.setTopicSelector(...)` picks topic `{side}-p{pair_id}` per
-      record (value-only, key=null); `ConsolidatedOrderBookSerializer` copied into
+- [x] `ConsolidatedOrderBookSinkFactory.create(bootstrap, schemaRegistryUrl)` — single `KafkaSink`
+      whose `KafkaRecordSerializationSchema.setTopicSelector(...)` picks topic `{side}-p{pair_id}`
+      per record (value-only, key=null); `ConsolidatedOrderBookSerializer` copied into
       `io.tibobit.consolidator.serializer` (mirrors orderbook-job's — the modules share no code).
       The `TopicSelector` lambda is cast to `TopicSelector<ConsolidatedOrderBook>` for inference.
+      Signature gained `schemaRegistryUrl` 2026-07-11 — see Step 10.
 - [x] `schemas/consolidated_order_book_event.avsc` + example JSON — Avro schema for the
       `ConsolidatedOrderBook` output wire shape (`pair_id:int`, `side` enum(asks,bids),
       `event_time` long timestamp-millis, `levels`: array of `{exchange_id:int, price:string,
       quantity:string}`), mirroring `price_level_event.avsc` conventions. Registered in
-      `scripts/warmup.sh` (subject `consolidated-order-book-event`) — done 2026-07-11. Same as
-      `price_level_event.avsc`, this is a schema-registry contract for documentation/consumers;
-      `ConsolidatedOrderBookSerializer` still writes plain JSON, not Confluent Avro wire format.
+      `scripts/warmup.sh` (subject `consolidated-order-book-event`) — done 2026-07-11.
+      **Superseded 2026-07-11 (same day):** `ConsolidatedOrderBookSerializer` now writes real
+      Confluent Avro wire bytes from this schema, not JSON — see Step 10.
 
 ### Step 7 — Job wiring — done 2026-07-04
 
@@ -354,13 +356,114 @@ Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; st
       exchanges; emptied exchange still contributes its `event_time`; carries pair_id/side for R6.
       Keyed `(pair, side)`. NOTE: the `getLevels()!=null` guard's false-branch is left uncovered
       on purpose — defensive, unreachable (stage-1 always emits a list), per the TDD-memory stance.
-- [x] `PriceLevelEventDeserializerTest` (6): snake_case mapping + exact decimal strings, qty=0
-      preserved, ignoreUnknown (exchange_name/base/quote), lazy-mapper reuse, isEndOfStream=false,
-      producedType=PriceLevelEvent.
+- [x] `PriceLevelEventDeserializerTest` (6, JSON-based as of 2026-07-04): snake_case mapping +
+      exact decimal strings, qty=0 preserved, ignoreUnknown (exchange_name/base/quote),
+      lazy-mapper reuse, isEndOfStream=false, producedType=PriceLevelEvent. **Rewritten
+      2026-07-11 for Avro — see Step 10; count now 4, JSON-specific cases dropped.**
 - DECISION: no build-config change. `mvn test` (JaCoCo on) exits 0 despite scary
   `Unsupported class file major version 70` lines — that is non-fatal JaCoCo 0.8.12 noise
   instrumenting JDK 26 _bootstrap_ classes (java.sql.\*); identical in orderbook-job, which also
   exits 0. Report still generated. Do NOT bump JaCoCo or skip the agent (see [[tdd-workflow]]).
+
+### Step 10 — Refactor wire format: JSON → true Confluent Avro — done 2026-07-11
+
+- [x] `pom.xml`: added `provided`-scope `avro`, `flink-avro`, `flink-avro-confluent-registry`,
+      `kafka-schema-registry-client` (+ confluent maven repo); removed `jackson-databind`.
+      `maven-resources-plugin` `copy-resources` execution (bound `generate-resources`) copies
+      `schemas/price_level_event.avsc` + `schemas/consolidated_order_book_event.avsc` from the
+      repo root into `target/classes/avro/` — single source of truth, no duplicated schema files.
+      **Superseded 2026-07-12 — see Step 11: this copy step now targets test resources only.**
+- [x] New `io.tibobit.consolidator.avro.AvroSchemaLoader` — loads an Avro `Schema` from a
+      classpath resource (`Schema.Parser().parse(...)`). **Superseded 2026-07-12 — see Step 11:
+      production now calls `loadLatest(url,subject)` instead, this method is test-only now.**
+- [x] `PriceLevelEventDeserializer(schemaRegistryUrl)` — wraps
+      `ConfluentRegistryAvroDeserializationSchema.forGeneric(schema, url)`; maps `GenericRecord` →
+      `PriceLevelEvent` via package-private static `toPriceLevelEvent` (pure, no registry needed
+      to unit test).
+- [x] `ConsolidatedOrderBookSerializer(schemaRegistryUrl)` — wraps
+      `ConfluentRegistryAvroSerializationSchema.forGeneric(subject="consolidated-order-book-event",
+      schema, url)`; maps `ConsolidatedOrderBook` → `GenericRecord` via package-private static
+      `toGenericRecord` (same pure-mapping pattern).
+- [x] `PriceLevelSourceFactory.create(bootstrap, groupId, schemaRegistryUrl)` /
+      `ConsolidatedOrderBookSinkFactory.create(bootstrap, schemaRegistryUrl)` — both gained the
+      new param. `OrderBookConsolidatorJob.main` reads `SCHEMA_REGISTRY_URL` env var (default
+      `http://schema-registry:8082`, in-network host:port, same pattern as
+      `KAFKA_BOOTSTRAP_SERVERS`) and threads it through.
+- [x] Removed `@JsonProperty`/`@JsonIgnoreProperties` from `PriceLevelEvent`, `ConsolidatedLevel`,
+      `ConsolidatedOrderBook` — dead once Jackson left the wire path. `ExchangeBook`/`StoredLevel`
+      untouched (never had Jackson annotations; inter-operator/state-only, never touch Kafka).
+- [x] `PriceLevelEventDeserializerTest` rewritten (4 tests) + new
+      `ConsolidatedOrderBookSerializerTest` (3 tests) added — both assert on the pure
+      `toPriceLevelEvent`/`toGenericRecord` mapping functions via `GenericRecordBuilder`, not on
+      raw JSON strings. `mvn -o test` → 25/25 green. `jar tf` on the packaged shaded jar confirmed
+      `avro/price_level_event.avsc` + `avro/consolidated_order_book_event.avsc` were bundled.
+      **Superseded 2026-07-12 — see Step 11: shaded jar no longer bundles any `.avsc` file.**
+- [ ] **NOT done — deploy blockers, out of this refactor's scope:**
+  - `web/internal/ingest/ingest.go` `HandleRecord` still does `json.Unmarshal` on the consolidated
+    book bytes; will silently drop every message once this ships (the sink now writes Avro binary,
+    not JSON). Needs an Avro-aware Go decoder (e.g. `hamba/avro` + Confluent wire-format framing)
+    before this can go live. See [[orderbook-web]].
+  - NiFi's actual producer format on the input topics (`{side}-p{pair_id}-ex{exchange_id}`) is
+    unverified — if NiFi still writes JSON, `PriceLevelEventDeserializer` will fail to decode
+    everything it receives. Must confirm with the NiFi team before deploying.
+  - Full detail in `memory/project_orderbook_consolidator_decision.md` under "Wire format: JSON →
+    true Confluent Avro (2026-07-11)".
+
+### Step 11 — Schema source of truth: Schema Registry only, not a bundled jar copy — done 2026-07-12
+
+Rule: every event to producers/consumers MUST be validated using the schema in the Schema
+Registry, and nowhere else. Step 10's refactor still loaded the Avro `Schema` from a classpath
+resource bundled into the shaded jar — fixed:
+
+- [x] `AvroSchemaLoader.loadLatest(schemaRegistryUrl, subject)` — new method, fetches the schema
+      live via `CachedSchemaRegistryClient.getLatestSchemaMetadata(subject).getSchema()`.
+      `PriceLevelEventDeserializer` (subject `price-level-event`) and
+      `ConsolidatedOrderBookSerializer` (subject `consolidated-order-book-event`) now call this
+      instead of `AvroSchemaLoader.load(classpathResource)`.
+- [x] `AvroSchemaLoader.load(classpathResource)` kept but now test-only — no production caller.
+- [x] `pom.xml`'s `copy-avro-schemas` execution retargeted from
+      `generate-resources`/`target/classes/avro` to `generate-test-resources`/
+      `target/test-classes/avro` — canonical `schemas/*.avsc` now lands only on the test
+      classpath, never in the shaded jar.
+- [x] Verified: `mvn -o test` → 25/25 green; `jar tf target/orderbook-consolidator-1.0-SNAPSHOT.jar
+      | grep avro/` → only `AvroSchemaLoader.class`, no `.avsc` files.
+- [x] `scripts/warmup.sh` — not changed for this rule; it's the schema *deployment* tool (pushes
+      `schemas/*.avsc` into the registry), not a producer/consumer of business events, so the rule
+      doesn't apply to it.
+- Full detail in `memory/project_orderbook_consolidator_decision.md` under "Schema source of
+  truth: registry-only at runtime, not the bundled jar copy (2026-07-12)".
+
+### Step 12 — Revert per-topic schema registration; keep only the 3 canonical schemas — done 2026-07-12
+
+Step 10/11 had `scripts/warmup.sh` also register each topic's schema under its own `<topic>-value`
+subject so kafka-ui would auto-default to AVRO per topic. User flagged this as clutter (one
+duplicate subject per topic, on top of the 3 real ones) and asked for Flink + kafka-ui to both
+reference the existing 3 schemas directly instead.
+
+- [x] Reverted `scripts/warmup.sh` to its Step-9 state — only `orderbook-event`,
+      `price-level-event`, `consolidated-order-book-event` are registered; no `<topic>-value`
+      subjects created per topic.
+- [x] Confirmed Flink already only ever uses the 3 canonical subjects (`AvroSchemaLoader.loadLatest`
+      with fixed subject names, from Step 11) — no code change needed there.
+- [x] **kafka-ui auto-default-to-AVRO-per-topic — done 2026-07-12.** First tried telling the user
+      to just manually pick Avro in kafka-ui's produce screen — **wrong**, verified live that
+      kafka-ui's produce dropdown only lists serdes whose applicability check passes per topic, so
+      with no matching subject there was nothing to pick at all (`GET .../topic/{t}/serdes` showed
+      `valueSerde: null`). Real fix: two named custom serde instances of the built-in
+      `SchemaRegistrySerde` class in `docker-compose-orderbook-consolidator.yml`'s `kafka-ui`
+      service, each bound via `topicValuesPattern` to one topic shape and pinned via
+      `properties.schemaNameTemplate` (literal, no `%s`) to the matching canonical subject —
+      `PriceLevelEventAvro` → `price-level-event` for `^(asks|bids)-p[0-9]+-ex[0-9]+$`,
+      `ConsolidatedOrderBookEventAvro` → `consolidated-order-book-event` for
+      `^(asks|bids)-p[0-9]+$`. Registry itself untouched (still exactly 3 subjects — no clutter).
+      Verified live end-to-end: produced a real message via kafka-ui's API with
+      `valueSerde: PriceLevelEventAvro`, consumed the raw bytes, hand-decoded the Confluent wire
+      format (magic byte + schema id 2 + Avro payload), confirmed schema id 2 resolves to
+      `price-level-event`/`PriceLevelEvent` and all field values round-tripped correctly. Test
+      message cleaned up (topic delete+recreate) afterward.
+- Full detail + the two config gotchas (reserved `name: SchemaRegistry`, `properties.` nesting
+  requirement) in `memory/project_kafka_topic_strategy.md` under "kafka-ui AVRO-per-topic without
+  registry clutter — solved 2026-07-12".
 
 ### Infra / dev support (as needed)
 

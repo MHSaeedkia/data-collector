@@ -1,6 +1,5 @@
 package io.tibobit.consolidator.model;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 
 /**
@@ -11,13 +10,11 @@ import java.util.List;
  */
 public class ConsolidatedOrderBook {
 
-    @JsonProperty("pair_id")
     private int pairId;
     private String side;
     private List<ConsolidatedLevel> levels;
 
     // Max event_time across the contributing exchange books.
-    @JsonProperty("event_time")
     private long eventTime;
 
     public ConsolidatedOrderBook() {

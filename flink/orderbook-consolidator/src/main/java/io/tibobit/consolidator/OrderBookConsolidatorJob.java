@@ -32,13 +32,15 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 public class OrderBookConsolidatorJob {
 
     public static void main(String[] args) throws Exception {
-        // Kafka config — defaults target the docker-compose network; override via env vars.
+        // Kafka/schema registry config — defaults target the docker-compose network; override via env vars.
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
         String groupId = getEnv("KAFKA_GROUP_ID", "orderbook-consolidator-flink");
+        String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        KafkaSource<PriceLevelEvent> source = PriceLevelSourceFactory.create(bootstrapServers, groupId);
+        KafkaSource<PriceLevelEvent> source =
+                PriceLevelSourceFactory.create(bootstrapServers, groupId, schemaRegistryUrl);
 
         // No watermarks: latest-wins is driven by each event's own event_time compared in state,
         // not by event-time windows.
@@ -69,7 +71,8 @@ public class OrderBookConsolidatorJob {
                 .name("consolidated-book");
 
         // R6: single sink, output topic chosen per record ({side}-p{pair_id}).
-        consolidated.sinkTo(ConsolidatedOrderBookSinkFactory.create(bootstrapServers)).name("consolidated-sink");
+        consolidated.sinkTo(ConsolidatedOrderBookSinkFactory.create(bootstrapServers, schemaRegistryUrl))
+                .name("consolidated-sink");
 
         // Also print to stdout for verification.
         consolidated.print("consolidated");

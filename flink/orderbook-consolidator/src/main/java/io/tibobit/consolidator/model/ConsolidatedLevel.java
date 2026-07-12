@@ -1,7 +1,5 @@
 package io.tibobit.consolidator.model;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 /**
  * One level of a {@link ConsolidatedOrderBook}. It carries its own {@code exchange_id}:
  * because the cross-exchange merge (R4) unions levels rather than summing them, each level
@@ -11,7 +9,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  */
 public class ConsolidatedLevel {
 
-    @JsonProperty("exchange_id")
     private int exchangeId;
     private String price;
     private String quantity;
