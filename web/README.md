@@ -1,7 +1,7 @@
 # Order Book Web UI
 
 Live viewer for the consolidated order book topics produced by the Flink job
-(`{side}-p{pair_id}`, e.g. `asks-p2`, `bids-p2`).
+(`p{pair_id}-{side}`, e.g. `p2-asks`, `p2-bids`).
 
 A small Go server consumes those topics, resolves the IDs to human-readable labels from
 postgres, keeps the latest book per topic, and pushes updates to the browser over WebSocket.
@@ -52,8 +52,8 @@ module proxy; run `go mod vendor` after changing dependencies.
   `quote`, or `exchange_name`. The server resolves them for display by loading the `markets`
   and `exchanges` tables from postgres (refreshed every 10s), then enriches each book before
   pushing it to the browser. Unknown ids fall back to placeholders.
-- Subscribes via regex `^(asks|bids)-p\d+$`, so it reads only the consolidated **output**
-  topics — input topics (`{side}-p{pair_id}-ex{exchange_id}`) carry a trailing `-ex…` and
+- Subscribes via regex `^p\d+-(asks|bids)$`, so it reads only the consolidated **output**
+  topics — input topics (`ex{exchange_id}-p{pair_id}-{side}`) carry a leading `ex…-` and
   don't match.
 - Uses a fresh consumer group each start and resets to the earliest offset, so the current
   book shows on load. Fine for dev; for high-volume topics this replays history on each restart.
