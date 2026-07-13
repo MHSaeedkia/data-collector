@@ -48,9 +48,17 @@ the R3-postponed block lives on in `memory/project_orderbook_consolidator_decisi
 
 ## Milestone 0 — Contracts & prerequisites (blocks everything)
 
-- [ ] Collect REAL sample raw payloads per exchange (nobitex, bitpin, wallex): at least one
-      snapshot + one update each, from NiFi or the exchanges' docs/websockets. Commit as test
-      fixtures (they drive job-1 TDD). → verify: fixtures in the repo, one per exchange × type
+- [x] Collect REAL sample raw payloads per exchange — DONE 2026-07-13, see `sample-raw-data.md`
+      (fetched from live `ex{id}-raw` topics via kafka-ui). Found **7 live exchanges**, not 3:
+      nobitex, bitpin, wallex, ramzinex, bitget, bybit, ompfinex (okx in DB, no topic yet).
+      Three regimes: full-snapshot-per-msg (ex1/2/4), per-SIDE snapshot no-seq (ex3),
+      delta-with-seq (ex5/6/7). Remaining gaps for fixtures:
+      - [ ] capture a bybit `type:snapshot` + bitget `action:update` + ompfinex initial-book
+            frame (none in the latest-200 window)
+      - [ ] investigate seq anomalies before job-2 rules: bitget non-monotonic `seq`,
+            bybit `u` gaps, ompfinex `U`/`u` range gaps (NiFi losing messages?)
+      - [ ] ex1 had multi-document Kafka records (2 newline-joined JSON docs, mixed channels) —
+            job 1 must split records
 - [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange,
       who creates the raw topics, retention. → verify: written agreement in
       `memory/project_raw_pipeline_decision.md`

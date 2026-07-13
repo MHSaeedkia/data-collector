@@ -70,6 +70,27 @@ added mid-decision as "step6/step7"). The topic names below are the ground truth
   default ~1min). Note: unlike the consolidator (deliberately Postgres-free), these jobs DO
   depend on Postgres.
 
+## Raw payload reality check (2026-07-13, from live `ex{id}-raw` topics)
+
+Samples fetched from server kafka-ui (192.168.150.104:8080) and categorized in
+**`sample-raw-data.md`** (repo root) — that file is the wire-format ground truth for job 1.
+Headlines (details + verbatim samples there):
+
+- **7 live exchanges, not 3**: 1=nobitex, 2=bitpin, 3=wallex, 4=ramzinex, 5=bitget, 6=bybit,
+  7=ompfinex (server `exchanges` table; 8=okx exists in DB, no topic yet). The market key inside
+  each payload's channel/topic string == `exchange_markets.market` exactly.
+- **Three regimes**: full-snapshot-every-msg (ex1/ex2/ex4), full-snapshot-per-SIDE with NO seq
+  fields (ex3 wallex — buyDepth/sellDepth are separate messages), delta-with-seq (ex5/ex6/ex7,
+  qty="0" = delete). The shared Avro event + jobs 2/5 must cover all three.
+- **wallex + ramzinex send prices/qtys as JSON numbers** — BigDecimal must come from the decimal
+  literal (Jackson `USE_BIG_DECIMAL_FOR_FLOATS`), never double ([[bigdecimal-rules]]).
+- **ex1 records can contain 2 newline-concatenated JSON docs (even different channels)** —
+  job 1 must split multi-document records.
+- **Seq anomalies to investigate before job 2**: bitget `seq` non-monotonic per instId; bybit
+  `u` gaps (~30% of consecutive msgs); ompfinex `U`/`u` range gaps. Possibly NiFi message loss.
+- Missing fixtures still: bybit `type:snapshot`, bitget `action:update`, ompfinex initial book.
+- Kafka records: key=null, 1 partition per topic.
+
 ## Design notes / open items (record before implementing)
 
 - **Job 6 vanished-level handling**: emitting only the current book's levels would leave deleted

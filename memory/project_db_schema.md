@@ -18,9 +18,13 @@ Normalized on 2026-06-29 (commit e240fe3): a `currencies` lookup table was added
 - `exchange_markets(id, exchange_id → exchanges, market VARCHAR(100), market_id → markets, status subscription_status DEFAULT 'unsubscribe', price_amount_rebase INT NOT NULL DEFAULT 0, volume_amount_rebase INT NOT NULL DEFAULT 0, UNIQUE(exchange_id, market))`. `market` is the exchange-specific symbol string (e.g. `BTCUSDT`, `BTC_USDT`, `BTCTMN`). The two `*_rebase` columns drive job 3 of [[raw-pipeline-decision]] — exact rebase formula not confirmed yet (likely 10^n exponent, verify before use).
 - enum `subscription_status` = `subscribe | unsubscribe | pending-subscribe | pending-unsubscribe`.
 
-### Seed data (as of 2026-06-29)
+### Seed data (as of 2026-06-29) — ⚠ LOCAL SEED ONLY, server DB has diverged
 - 30 currencies (ids 1–27 base assets BTC…BTT; 28=USDT, 29=IRT, 30=TMN).
 - 3 exchanges: `1 nobitex` (نوبیتکس), `2 bitpin` (بیت پین), **`3 wallex` (والکس) — added 2026-06-29**.
+- **Server DB (192.168.150.104, checked 2026-07-13) has 8 exchanges**: 1=nobitex, 2=bitpin,
+  3=wallex, 4=ramzinex, 5=bitget, 6=bybit, 7=ompfinex, 8=okx — and subscribed exchange_markets
+  rows per exchange (ex4/ex7 store NUMERIC market ids in `market`, e.g. `218`, `14`). The local
+  `02_seed.sql` no longer reflects production. See `sample-raw-data.md` + [[raw-pipeline-decision]].
 - 81 markets: 27 base assets × {USDT, IRT, TMN}. All `price_precision=2, quantity_precision=8`.
 - ~162 `exchange_markets` rows, **all seeded `status='unsubscribe'`** → [[kafka-topic-strategy]] warmup creates **zero** topics until rows are flipped to `subscribe`.
 - Each INSERT block fixes explicit ids then `setval(pg_get_serial_sequence(...))` to realign the sequence.
