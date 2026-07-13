@@ -7,19 +7,19 @@ metadata:
 
 ## Decision: Topic per side+pair+exchange (ID-based names)
 
-**Input topic** → `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`, `bids-p2-ex1`)
-**Output topic** → `{side}-p{pair_id}` (e.g. `asks-p2`) — Flink writes the consolidated book here
+**Input topic** → `ex{exchange_id}-p{pair_id}-{side}` (e.g. `ex1-p2-asks`, `ex1-p2-bids`)
+**Output topic** → `p{pair_id}-{side}` (e.g. `p2-asks`) — Flink writes the consolidated book here
 **Key** → null (one exchange per input topic guarantees ordering)
 **Body** → see [[avro-schema-orderbook]] (base, quote, pair_id, exchange_id, exchange_name, side, type, event_time, levels)
 
-`pair_id` = `markets.id`, `exchange_id` = `exchanges.id`. Topic names use the **DB integer IDs**, not the human-readable base/quote/exchange_name. Side comes first.
+`pair_id` = `markets.id`, `exchange_id` = `exchanges.id`. Topic names use the **DB integer IDs**, not the human-readable base/quote/exchange_name. Exchange comes first on input topics.
 
 ## Rationale
 
 - One exchange publishes to one input topic — ordering is guaranteed with a single partition, no key needed
 - Partition count is 1 per topic; no skew, no idle partitions, no repartitioning when exchanges are added or removed
-- Flink aggregates across exchanges via regex on input topics: `{side}-p{pair_id}-ex.*` (e.g. `asks-p2-ex.*`) picks up all exchanges for that side+pair automatically — new exchanges need no Flink config change
-- Output topic `{side}-p{pair_id}` is a prefix of the input names, but the required `-ex` segment keeps it out of the input regex, so the job won't re-consume its own output (no feedback loop)
+- Flink aggregates across exchanges via regex on input topics: `ex.*-p{pair_id}-{side}` (e.g. `ex.*-p2-asks`) picks up all exchanges for that side+pair automatically — new exchanges need no Flink config change
+- Output topic `p{pair_id}-{side}` does not collide with the input naming shape (`ex{exchange_id}-p{pair_id}-{side}` always starts with `ex`), so the job won't re-consume its own output (no feedback loop)
 - IDs keep topic names compact and decoupled from display strings (avoids casing/charset issues). `exchanges.name` is unique and immutable (README RULE) so names would also be stable, but IDs are shorter
 - Topic count at scale: 10 exchanges × 200 pairs × 2 sides = 4000 topics — fine for modern Kafka (KRaft)
 
@@ -32,6 +32,15 @@ Old scheme: input `{base}-{quote}-{side}-{exchange_name}` (e.g. `BTC-USDT-asks-n
 Flink job migration (done): Flink works **only with `pair_id` and `exchange_id`** — `base`, `quote`, `exchange_name` were removed from all Flink models. `OrderBookEvent` keeps `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `levels` and is annotated `@JsonIgnoreProperties(ignoreUnknown=true)` so it tolerates the descriptive fields the wire JSON still carries (the avsc schema is unchanged). `PairsLoader` selects only `m.id` into `Pair(id)`. `OrderBookSourceFactory` subscribes by regex `{side}-p{pairId}-ex.*`. `OrderBookJob` keys by `pairId` and names operators + sink topic `{side}-p{pair_id}`. `OrderBookMerger` is `KeyedProcessFunction<Integer,…>` with `MapState<Integer,…>` keyed by `exchange_id`. `ConsolidatedOrderBook` = `{ pair_id, side, levels, event_time }`; `ConsolidatedLevel` = `{ exchange_id, price, quantity }`.
 
 Web app migration (done): rewritten in Go (replacing Node `server.js`), subscribes by regex `^(asks|bids)-p\d+$` (output topics), and resolves `pair_id`/`exchange_id` → display labels from postgres since the output carries no base/quote/exchange_name. See [[orderbook-web]].
+
+## Naming scheme change (2026-07-12): segment order flipped
+
+**Input topic**: `{side}-p{pair_id}-ex{exchange_id}` → **`ex{exchange_id}-p{pair_id}-{side}`** (e.g. `asks-p2-ex1` → `ex1-p2-asks`).
+**Output topic**: `{side}-p{pair_id}` → **`p{pair_id}-{side}`** (e.g. `asks-p2` → `p2-asks`).
+
+Same identifiers, same separators, only the ordering of segments changed (exchange-first on input, side-last everywhere; output drops the exchange segment as before). Updated in this pass: this doc, `scripts/warmup.sh` (`create_topic` calls + retention comments), `flink/orderbook-consolidator` (`PriceLevelSourceFactory`'s input-topic regex, `ConsolidatedOrderBookSinkFactory`'s topic-selector, doc comments), and `docker-compose-orderbook-consolidator.yml`'s kafka-ui `TOPICVALUESPATTERN` serde bindings (same rename, no behavior change beyond matching the new names).
+
+**⚠️ Not updated in this pass (deliberately, user will request separately):** `web/` still subscribes by the **old** output regex `^(asks|bids)-p\d+$`, which no longer matches the new `p{pair_id}-{side}` output topics — the web UI will receive zero order-book updates until it's updated to `^p\d+-(asks|bids)$`. `flink/orderbook-job/` (the old JSON-pipeline job, superseded by `orderbook-consolidator` — see [[orderbook-consolidator-decision]]) also still uses the old scheme in `OrderBookSourceFactory`/`OrderBookJob`; left untouched as it's not part of this change's scope. `fake-data-generator/mian.go` (dev stand-in for NiFi, `topicName()`/`emit()`) also still builds `{side}-p{pair_id}-ex{exchange_id}` names — not requested in this pass, so left alone; it will publish to topics the new consolidator regex no longer matches until updated. NiFi's producer side (owned by a separate team, not in this repo) is also unverified against the new input-topic names — same caveat as already flagged in [[orderbook-consolidator-decision]] for the Avro migration.
 
 ## What was rejected and why
 
@@ -60,15 +69,17 @@ Topics are pre-provisioned by `scripts/warmup.sh` from the postgres `markets` + 
 ```
 KAFKA_CLUSTERS_0_SERDE_0_NAME: PriceLevelEventAvro
 KAFKA_CLUSTERS_0_SERDE_0_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^(asks|bids)-p[0-9]+-ex[0-9]+$
+KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^ex[0-9]+-p[0-9]+-(asks|bids)$
 KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_URL: http://schema-registry:8082
 KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: price-level-event
 KAFKA_CLUSTERS_0_SERDE_1_NAME: ConsolidatedOrderBookEventAvro
 KAFKA_CLUSTERS_0_SERDE_1_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^(asks|bids)-p[0-9]+$
+KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
 KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_URL: http://schema-registry:8082
 KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_SCHEMANAMETEMPLATE: consolidated-order-book-event
 ```
+
+(`TOPICVALUESPATTERN` values above updated same day for the segment-order rename described earlier in this doc — originally `^(asks|bids)-p[0-9]+-ex[0-9]+$` / `^(asks|bids)-p[0-9]+$`.)
 
 Two gotchas that cost debugging time, worth remembering:
 1. **`name: SchemaRegistry` is reserved** for the single cluster-auto-configured instance — a second serde entry reusing that name crashes kafka-ui at startup (`ValidationException: Multiple serdes with same name`). Each extra instance needs a unique `name` + explicit `className`.

@@ -18,11 +18,11 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
  * Job entry point for the order book consolidator.
  *
  * Pipeline (one unified topology — every pair/exchange/side flows through a single stream):
- *   Kafka input topics  {side}-p{pair_id}-ex{exchange_id}   (every exchange, every pair)
+ *   Kafka input topics  ex{exchange_id}-p{pair_id}-{side}   (every exchange, every pair)
  *     -> source                             (one regex subscription — PriceLevelSourceFactory)
  *     -> keyBy(pair_id, exchange_id, side)  -> PerExchangeBookBuilder    (stage 1: R1/R2 per exchange)
  *     -> keyBy(pair_id, side)               -> CrossExchangeConsolidator (stage 2: R4 union / R5 sort)
- *     -> Kafka output topic  {side}-p{pair_id}   (R6 dynamic per-record routing)
+ *     -> Kafka output topic  p{pair_id}-{side}   (R6 dynamic per-record routing)
  *        + print() to stdout for verification.
  *
  * Unlike orderbook-job there is no Postgres/PairsLoader: the source subscribes to every input
@@ -70,7 +70,7 @@ public class OrderBookConsolidatorJob {
                 .process(new CrossExchangeConsolidator())
                 .name("consolidated-book");
 
-        // R6: single sink, output topic chosen per record ({side}-p{pair_id}).
+        // R6: single sink, output topic chosen per record (p{pair_id}-{side}).
         consolidated.sinkTo(ConsolidatedOrderBookSinkFactory.create(bootstrapServers, schemaRegistryUrl))
                 .name("consolidated-sink");
 

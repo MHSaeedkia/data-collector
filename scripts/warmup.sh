@@ -90,18 +90,18 @@ create_topic() {
         --config "retention.ms=$retention_ms"
 }
 
-# Input topics — one per side+pair+exchange (NiFi produces, Flink source consumes).
+# Input topics — one per exchange+pair+side (NiFi produces, Flink source consumes).
 while IFS='|' read -r pair_id exchange_id exchange_name; do
     for side in asks bids; do
-        create_topic "${side}-p${pair_id}-ex${exchange_id}" "$INPUT_RETENTION_MS"
+        create_topic "ex${exchange_id}-p${pair_id}-${side}" "$INPUT_RETENTION_MS"
     done
 done <<< "$pairs"
 
-# Output topics — one per side+pair (Flink aggregation writes the consolidated book here).
+# Output topics — one per pair+side (Flink aggregation writes the consolidated book here).
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
-        create_topic "${side}-p${pair_id}" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 

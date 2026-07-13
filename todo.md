@@ -9,6 +9,7 @@
 - [x] Topic retention: input `{side}-p{pair_id}-ex{exchange_id}` = 1h, output `{side}-p{pair_id}` = 6h (`scripts/warmup.sh`) — done 2026-07-11
 - [x] Speed up topic creation: parallelized `create_topic` calls in `scripts/warmup.sh` via `xargs -P` — done 2026-07-11, **reverted same day** (commit `81c18de`), script is sequential again
 - [x] Bind each topic to its Avro schema: `scripts/warmup.sh` now registers `<topic>-value` (TopicNameStrategy) for every created topic — input topics → `price_level_event.avsc`, output topics → `consolidated_order_book_event.avsc` — so kafka-ui defaults its Produce-Message serde to AVRO per topic instead of String/Bytes — done 2026-07-12
+- [x] Topic naming segment-order rename: input `{side}-p{pair_id}-ex{exchange_id}` → `ex{exchange_id}-p{pair_id}-{side}`, output `{side}-p{pair_id}` → `p{pair_id}-{side}` — updated `scripts/warmup.sh`, `flink/orderbook-consolidator` (`PriceLevelSourceFactory` regex, `ConsolidatedOrderBookSinkFactory` topic selector, doc comments), `docker-compose-orderbook-consolidator.yml` kafka-ui serde `TOPICVALUESPATTERN`s, and `memory/project_kafka_topic_strategy.md` — done 2026-07-12, 25/25 consolidator tests still green. `web/`, `flink/orderbook-job/`, and `fake-data-generator/` deliberately NOT updated (out of scope for this pass, see [[kafka-topic-strategy]])
 
 ## Phase 1 — Flink JSON pipeline (source: `flink/orderbook-job/`)
 

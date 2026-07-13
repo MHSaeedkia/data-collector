@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Tests {@link ConsolidatedOrderBookSerializer#toGenericRecord(ConsolidatedOrderBook, Schema)}
  * against the output wire contract: the Avro record it builds is exactly what
- * schemas/consolidated_order_book_event.avsc describes and what the {side}-p{pair_id} topic
+ * schemas/consolidated_order_book_event.avsc describes and what the p{pair_id}-{side} topic
  * carries. The Confluent registry encode itself (GenericRecord -> bytes) is Flink/Confluent
  * library code, not asserted here — only our mapping onto the GenericRecord.
  */

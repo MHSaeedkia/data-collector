@@ -119,12 +119,12 @@ services:
             # topic (see scripts/warmup.sh — only 3 canonical subjects are meant to exist).
             KAFKA_CLUSTERS_0_SERDE_0_NAME: PriceLevelEventAvro
             KAFKA_CLUSTERS_0_SERDE_0_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-            KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^(asks|bids)-p[0-9]+-ex[0-9]+$
+            KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^ex[0-9]+-p[0-9]+-(asks|bids)$
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_URL: http://schema-registry:8082
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: price-level-event
             KAFKA_CLUSTERS_0_SERDE_1_NAME: ConsolidatedOrderBookEventAvro
             KAFKA_CLUSTERS_0_SERDE_1_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-            KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^(asks|bids)-p[0-9]+$
+            KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
             KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_URL: http://schema-registry:8082
             KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_SCHEMANAMETEMPLATE: consolidated-order-book-event
         networks:
