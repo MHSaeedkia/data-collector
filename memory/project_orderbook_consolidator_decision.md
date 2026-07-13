@@ -28,14 +28,14 @@ A Flink streaming job that produces a live, consolidated cryptocurrency order bo
   is built.
 
 **Output:** one consolidated book snapshot per `(pair, side)`, published to Kafka topic
-`{side}-p{pair_id}`, in a fixed shape (`pair_id`, `side`, `event_time`, `levels[]` with
+`p{pair_id}-{side}`, in a fixed shape (`pair_id`, `side`, `event_time`, `levels[]` with
 `exchange_id`/`price`/`quantity` per entry) that a downstream consumer already depends on and
 cannot change.
 
 **Clarification ratified by user (2026-07-04):** re-reviewed the required behaviour against the
 running implementation — it matches. Two points confirmed explicitly:
-- **Topic separator stays hyphen** (`asks-p2-ex1` → `asks-p2`). The user's underscore notation
-  (`asks_p2`) was informal; hyphen is the live convention across web/orderbook-job/warmup ([[kafka-topic-strategy]]).
+- **Topic separator stays hyphen** (`ex1-p2-asks` → `p2-asks`). The user's underscore notation
+  was informal; hyphen is the live convention ([[kafka-topic-strategy]]).
 - **Output level price is the CANONICAL stripped form**, not the raw wire string — e.g. input
   `"97240.50"` is emitted as `"97240.5"` (stage-1 keys/emits `stripTrailingZeros().toPlainString()`).
   This was previously only a noted side-effect; it is now a ratified requirement. **Do NOT "fix" the
@@ -69,11 +69,8 @@ Display-only fields (`exchange_name`, `base`, `quote`) are not part of this wire
 ignored by the job's logic and, if needed for display purposes downstream, should be resolved from
 `exchange_id`/`pair_id` via a lookup rather than carried on every message.
 
-Both an **Avro** schema (Confluent Schema Registry, the production transport) and a matching
-**JSON** example must be created for this shape under `schemas/` — e.g.
-`schemas/price_level_event.avsc` + `schemas/price_level_event_example.json` — mirroring the
-existing `orderbook_event.avsc` conventions but flat (drop `type`, `sequence_id`, `sequence_jump`,
-`levels[]`; add scalar `price`/`quantity` strings, and omit display-only fields).
+This shape exists as `schemas/price_level_event.avsc` + `schemas/price_level_event_example.json`
+(registry subject `price-level-event`) — see [[avro-schema-orderbook]].
 
 ## Requirements and how Java satisfies each one
 
@@ -138,11 +135,37 @@ quantity first; all arithmetic on exact decimals, never floating point.
 
 ### R6 — Output to many topics
 
-**Requirement:** publish to Kafka topic `{side}-p{pair_id}` per `(pair, side)`, in a fixed shape
+**Requirement:** publish to Kafka topic `p{pair_id}-{side}` per `(pair, side)`, in a fixed shape
 that must not change.
 
 **Mechanism:** a single `KafkaSink` whose serialization schema selects the target topic per
 record — native dynamic topic routing from one operator, no per-pair job templating needed.
+
+## Implementation status & non-obvious decisions (built, tested)
+
+The job is fully built in `flink/orderbook-consolidator/` (base package
+`io.tibobit.consolidator`, main class `OrderBookConsolidatorJob`, 25/25 spec-based tests green —
+[[tdd-workflow]]). Decisions a future session would otherwise re-derive:
+
+- **Each flink project is fully self-contained** — `flink/orderbook-job/` and
+  `flink/orderbook-consolidator/` each hold their own `run-job.sh`/`Makefile`/`Dockerfile`/
+  `confluent-deps-pom.xml`; the repo root has one compose file per stack
+  (`docker-compose-orderbook-job.yml` / `docker-compose-orderbook-consolidator.yml`). **Run ONE
+  stack at a time** — they use identical container_names/ports.
+- **Single Kafka source over ALL input topics** via pattern `ex[0-9]+-p[0-9]+-(asks|bids)` @
+  latest offsets; route by the event's own pair/exchange/side through `keyBy`. No per-pair
+  sources, no PairsLoader/Postgres dependency — new pairs/exchanges are picked up automatically.
+  The leading `ex` segment is what excludes the output topics (no feedback loop).
+- **Stage-1 price MapState key is CANONICALIZED** —
+  `new BigDecimal(price).stripTrailingZeros().toPlainString()` — because Flink MapState is
+  hash-based and won't collapse scale like orderbook-job's `TreeMap` did ([[bigdecimal-rules]]).
+- **Stage-2 sort direction is chosen per-record from `book.getSide()`** (both comparators built
+  in `open()`), not per-operator-instance — one operator serves both sides in the unified topology.
+- **Both `keyBy`s use anonymous `KeySelector` classes, NOT lambdas** — Flink can't infer the
+  String key type from a concat lambda.
+- Stage-1 drops stale events (`event_time < stored`) without emitting; qty=0 on an absent price
+  is also a no-emit; an emitted `ExchangeBook`'s `event_time` = max over its levels (or the
+  trigger event's time when the book empties).
 
 ## Postponed — R3, stale-level expiry (`stale_time`)
 
@@ -175,7 +198,7 @@ Flink SQL is more concise for R1, R2, R4, and R5 — deduplication, `WHERE quant
 those requirements. For the requirements being built now, the deciding factor is R6:
 
 - **R6 (many output topics) — the deciding requirement for now.** A SQL Kafka sink writes to one
-  topic; the connector has no per-row topic routing. Emitting all `{side}-p{pair_id}` topics in
+  topic; the connector has no per-row topic routing. Emitting all `p{pair_id}-{side}` topics in
   SQL would require generating one `INSERT` statement per `(pair, side)` at startup and bundling
   them into a single `StatementSet` — workable, but the job becomes many templated inserts rather
   than one query, and needs the active-pairs catalog to be known at startup. Java's `KafkaSink`
@@ -207,148 +230,67 @@ independently-configurable expiry duration with a guaranteed removal signal. For
 Book Consolidator should be built in Java on the Flink DataStream API, covering R1, R2, R4, R5,
 and R6.
 
-## Deployment: docker-compose volumes (2026-07-08)
+## Deployment: docker-compose volumes & restart policy
 
-`docker-compose-orderbook-consolidator.yml` `jobmanager`/`taskmanager` now mount named volumes at
-`/opt/flink/log` (`data-collector-jobmanager-logs`, `data-collector-taskmanager-logs`) so Flink
-logs survive container recreation. `schema-registry`/`kafka-ui`/`web` were deliberately left
-without volumes — they hold no local persisted state (schema-registry's state lives in the Kafka
-`_schemas` topic; kafka-ui and web are stateless and log to stdout), so an empty bind mount there
-would be a no-op. No checkpoint/savepoint volume was added because checkpointing is not enabled in
-the job (`DeliveryGuarantee.NONE`, fire-and-forget sink — see source comments in
-`ConsolidatedOrderBookSinkFactory`); add one if checkpointing is ever turned on.
+`docker-compose-orderbook-consolidator.yml`:
 
-**Anonymous volumes eliminated (2026-07-08):** SSH'd into the deploy server (`tibobit-data-collector`,
-requires `sudo docker ...` — [[server-build-env]]) and found 9 anonymous volumes, all coming from
-`VOLUME` instructions baked into base images, not from the compose file: `nifi` had 6
-(`python_extensions`, `database_repository`, `nar_extensions`, `provenance_repository`,
-`content_repository`, `flowfile_repository`), `schema-registry` had 1 (`/etc/schema-registry/secrets`),
-`postgres` had 1 (`/var/lib/postgresql` — the parent dir; distinct from the already-named
-`/var/lib/postgresql/18/docker`), `kafka` had 1 (`/etc/kafka/secrets`). Added explicit named volumes
-for all 9 mount points in `docker-compose-orderbook-consolidator.yml` (`data-collector-nifi-*`,
-`data-collector-schema-registry-secrets`, `data-collector-postgres-lib`, `data-collector-kafka-secrets`),
-following the existing `data-collector-<service>-<purpose>` naming convention. `kafka-ui`/`web`
-confirmed still volume-free (stateless, consistent with the note above). **Deliberately did NOT
-touch the existing anonymous volumes on the server** (user wants to decide separately whether/how
-to migrate any data from them) — this change only affects what happens on future container
-recreation; a `docker compose up` on the current containers won't retroactively adopt the new named
-volumes for already-running containers.
+- `jobmanager`/`taskmanager` mount named log volumes at `/opt/flink/log`
+  (`data-collector-jobmanager-logs`/`-taskmanager-logs`). `kafka-ui`/`web` are deliberately
+  volume-free (stateless; schema-registry's state lives in the Kafka `_schemas` topic). No
+  checkpoint/savepoint volume because checkpointing is not enabled (`DeliveryGuarantee.NONE`,
+  fire-and-forget sink) — add one if checkpointing is ever turned on.
+- All 9 base-image `VOLUME` mount points (nifi ×6, schema-registry secrets, postgres
+  `/var/lib/postgresql` parent dir, kafka secrets) are explicitly named
+  (`data-collector-<service>-<purpose>` convention) so future container recreation doesn't spawn
+  anonymous volumes. **The pre-existing anonymous volumes on the deploy server were deliberately
+  NOT touched** — user wants to decide separately whether/how to migrate their data.
+- **`restart: on-failure` on every service** (commit `1d08353`). Reason: schema-registry crashed
+  on a cold start while kafka was `healthy` — kafka's healthcheck (`kafka-topics --list`) only
+  proves the broker responds, not that the freshly auto-created `_schemas` topic has an elected
+  leader; schema-registry's one-shot init write hit `NotLeaderOrFollowerException` and the
+  Confluent image treats that as fatal (no internal retry). This "dependency reports healthy but
+  isn't fully ready" race can hit any service on cold start. **Not yet deployed to the server** —
+  user will `git pull` + recreate there themselves when ready.
 
-**schema-registry startup race + `restart: on-failure` (2026-07-08):** on a fresh `docker compose up`
-on the server (after the volume changes above), `schema-registry` exited (1) while `kafka` was
-`healthy`. Root cause confirmed via `docker logs schema-registry`: Kafka's healthcheck
-(`kafka-topics --list`) only proves the broker responds — it doesn't guarantee the freshly
-auto-created `_schemas` topic already has an elected partition leader. schema-registry's one-shot
-init write (`Noop` record) hit `NotLeaderOrFollowerException` and the Confluent image treats this
-as fatal (no internal retry) rather than backing off. Confirmed unrelated to the volume changes
-(`_schemas` had a healthy leader moments later; `/etc/kafka/secrets` / `/etc/schema-registry/secrets`
-played no part). Fixed live via `docker start schema-registry` (came up healthy on retry), and
-**added `restart: on-failure` to every service** in `docker-compose-orderbook-consolidator.yml`
-(not just schema-registry) since this class of "dependency reports healthy but isn't fully ready"
-race can in principle hit any service here on a cold start — commit `1d08353`. **Not yet deployed
-to the server** — user will `git pull` + recreate there themselves when ready.
+## Wire format: true Confluent Avro, schema from the registry ONLY
 
-## Wire format: JSON → true Confluent Avro (2026-07-11)
+The module speaks real Confluent Schema Registry Avro binary (magic byte + schema id + payload)
+on both source and sink — no Jackson/JSON anywhere in it (the old `flink/orderbook-job` is the
+one still on JSON — [[avro-schema-orderbook]]).
 
-`flink/orderbook-consolidator/` refactored end-to-end from Jackson JSON to real Confluent
-Schema Registry Avro binary encoding, on both source and sink. This supersedes the
-[[avro-schema]] note that `.avsc` registration was "documentation only" — that is now **only
-still true for `orderbook_event.avsc`/`orderbook-job`**, which was NOT touched. For this module:
+**User rule: every event MUST be validated using the schema in the Schema Registry, and nowhere
+else.** Current state honors it:
 
 - **Deserializer** (`PriceLevelEventDeserializer`): wraps
   `ConfluentRegistryAvroDeserializationSchema.forGeneric(schema, schemaRegistryUrl)`, maps the
-  resulting `GenericRecord` onto the existing `PriceLevelEvent` POJO via a package-private static
-  `toPriceLevelEvent(GenericRecord)` (kept pure/testable without a live registry).
+  `GenericRecord` onto `PriceLevelEvent` via a package-private static
+  `toPriceLevelEvent(GenericRecord)` (pure/testable without a live registry).
 - **Serializer** (`ConsolidatedOrderBookSerializer`): wraps
   `ConfluentRegistryAvroSerializationSchema.forGeneric(subject, schema, schemaRegistryUrl)`,
-  subject `consolidated-order-book-event` (matches `warmup.sh`); builds the `GenericRecord` from
-  `ConsolidatedOrderBook` via a package-private static `toGenericRecord(book, schema)`.
-- **Schema source of truth stays `schemas/*.avsc`** — no duplication. A `maven-resources-plugin`
-  `copy-resources` execution (bound to `generate-resources`) copies
-  `price_level_event.avsc`/`consolidated_order_book_event.avsc` from the repo-root `schemas/`
-  dir into `target/classes/avro/`, so they end up bundled in the shaded jar at `avro/*.avsc` —
-  required because only the jar (not the repo) exists in the Flink containers at runtime. Loaded
-  via `io.tibobit.consolidator.avro.AvroSchemaLoader.load("/avro/...")`, a tiny
-  `Schema.Parser().parse(classpath-resource)` wrapper.
-- **`SCHEMA_REGISTRY_URL` env var added** to `OrderBookConsolidatorJob`, default
-  `http://schema-registry:8082` (in-network hostname:port from `docker-compose-orderbook-consolidator.yml`,
-  same pattern as the existing `KAFKA_BOOTSTRAP_SERVERS` default) — not set explicitly in the
-  compose file, matching how bootstrap-servers is handled too.
-- **pom.xml**: added `provided`-scope `avro`, `flink-avro`, `flink-avro-confluent-registry`,
-  `kafka-schema-registry-client` (+ confluent maven repo) — versions match what the Dockerfile
-  already `wget`s into `/opt/flink/lib/` (this infra was pre-staged in the Docker image before
-  this refactor but unused — see the Dockerfile's "Avro format + Confluent Schema Registry
-  support" block, present since the image was first built). Removed the `jackson-databind`
-  dependency entirely — nothing in this module uses Jackson anymore.
-- **Jackson annotations removed** (`@JsonProperty`, `@JsonIgnoreProperties`) from the model POJOs
-  (`PriceLevelEvent`, `ConsolidatedLevel`, `ConsolidatedOrderBook`) — they did nothing once Jackson
-  left the wire path. `ExchangeBook`/`StoredLevel` were untouched (never had Jackson annotations —
-  they're inter-operator/state records, never touch Kafka).
-- Tests rewritten to build `GenericRecord`s via `GenericRecordBuilder` and assert on the
-  `toPriceLevelEvent`/`toGenericRecord` pure-mapping functions directly, rather than feeding raw
-  JSON strings — the Confluent registry encode/decode itself is Flink/Confluent library code, not
-  re-tested here. 25/25 tests green (`mvn -o test`); shaded jar verified to contain
-  `avro/price_level_event.avsc` + `avro/consolidated_order_book_event.avsc` (`jar tf`).
+  subject `consolidated-order-book-event`; builds the `GenericRecord` via a package-private
+  static `toGenericRecord(book, schema)`.
+- **Schema objects are fetched live from the registry at runtime** —
+  `AvroSchemaLoader.loadLatest(schemaRegistryUrl, subject)` via `CachedSchemaRegistryClient
+  .getLatestSchemaMetadata(subject)`, lazily on first use, subjects `price-level-event` /
+  `consolidated-order-book-event`. The shaded jar contains **no `.avsc` files** (an earlier
+  iteration bundled classpath copies via maven-resources-plugin — rejected as violating the rule;
+  drift risk vs what `warmup.sh` registered). `AvroSchemaLoader.load(classpathResource)` survives
+  **test-only**: the `copy-avro-schemas` pom execution copies the canonical `schemas/*.avsc` onto
+  the **test** classpath so unit tests can build fixture `GenericRecord`s without a registry.
+- **Consequence:** hard runtime dependency on the registry being reachable with both subjects
+  registered *before* the job starts (true today — `warmup.sh` runs first in the deploy flow).
+  Registry down / subject missing → `IllegalStateException` on first (de)serialize — correct
+  fail-fast for the rule, not a regression.
+- `warmup.sh` is exempt from the rule — it's the schema *deployment* tool (the only place the
+  repo-root `schemas/*.avsc` files feed into the registry for this module).
+- **`SCHEMA_REGISTRY_URL` env var** on `OrderBookConsolidatorJob`, default
+  `http://schema-registry:8082` (same pattern as `KAFKA_BOOTSTRAP_SERVERS`).
+- Tests build `GenericRecord`s via `GenericRecordBuilder` and assert on the pure mapping
+  functions — the Confluent encode/decode itself is library code, not re-tested.
 
-**⚠️ Known blast radius (deliberately out of scope for this refactor — user asked only to
-refactor this module):**
-
-1. **RESOLVED 2026-07-13 — `web/` now decodes Avro, not JSON.** `web/internal/ingest/ingest.go`
-   used to do `json.Unmarshal(value, &rb)` on the raw `p{pair_id}-{side}` output-topic bytes,
-   which would have silently dropped every message once the sink switched to Confluent-wire-format
-   Avro. Fixed: new `web/internal/schema` package (`hamba/avro/v2`) parses the wire header (magic
-   byte + big-endian 4-byte schema id), resolves the writer schema from the registry by id
-   (`GET {SCHEMA_REGISTRY_URL}/schemas/ids/{id}`, cached forever per id since registry ids are
-   immutable), and decodes into `domain.RawBook`. `ingest.HandleRecord` gained a `decoder`
-   1-method interface (first param) so this stays unit-testable with a fake, same pattern as
-   `enricher`/`publisher`. New config `SCHEMA_REGISTRY_URL` (default `http://localhost:8082`
-   dev / `http://schema-registry:8082` in compose, same pattern as `KAFKA_BROKER`). See
-   [[orderbook-web]] for the full file-by-file breakdown.
-2. **NiFi's producer format for the input topics (`ex{exchange_id}-p{pair_id}-{side}`) is
-   unknown/unverified** — NiFi is owned by a separate team and not implemented in this repo (see
-   [[avro-schema]]). If NiFi is still publishing plain JSON (as `price_level_event.avsc`'s prior
-   "documentation only" status implied it might be), `PriceLevelEventDeserializer` will now fail
-   to decode every incoming message (`ConfluentRegistryAvroDeserializationSchema` expects the
-   Confluent magic-byte-prefixed wire format, not raw JSON). **This must be confirmed with the
-   NiFi team before deploying this refactor**, or the consolidator will receive nothing but decode
-   errors on its input side. **Still open** — this is the only remaining deploy-blocking risk from
-   the 2026-07-11 Avro refactor.
-
-## Schema source of truth: registry-only at runtime, not the bundled jar copy (2026-07-12)
-
-User rule: every event to producers/consumers **MUST be validated using the schema in the Schema
-Registry, and nowhere else**. The 2026-07-11 refactor above technically violated this — both
-(de)serializers loaded their Avro `Schema` object from a classpath resource
-(`avro/price_level_event.avsc`/`avro/consolidated_order_book_event.avsc`) bundled into the shaded
-jar at build time. That local copy, not the registry, was the actual source of the schema shape:
-on serialize it was pushed to the registry (drift risk if the jar was stale vs. what `warmup.sh`
-had registered); on deserialize it was used as the Avro *reader* schema for projection. Fixed:
-
-- **`AvroSchemaLoader.loadLatest(schemaRegistryUrl, subject)`** (new method) fetches the schema
-  live via `io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient
-  .getLatestSchemaMetadata(subject).getSchema()`, parsed with `Schema.Parser().parse(...)`. Both
-  `PriceLevelEventDeserializer` and `ConsolidatedOrderBookSerializer` now call this (lazily, same
-  transient-field-on-first-use pattern as before) instead of `AvroSchemaLoader.load(classpathResource)`.
-  Subjects used are the existing fixed ones `price-level-event` / `consolidated-order-book-event`
-  (unchanged, already registered by `warmup.sh` — see [[kafka-topic-strategy]]), **not** the
-  per-topic `<topic>-value` subjects added there on 2026-07-12 — those exist only so kafka-ui
-  auto-defaults to AVRO serde per topic; the Flink job itself always reads/writes via the one
-  fixed logical subject per event type, same content, same global schema ID either way.
-- **`AvroSchemaLoader.load(classpathResource)` kept, but test-only now.** Production code no
-  longer calls it. `pom.xml`'s `copy-avro-schemas` `maven-resources-plugin` execution was
-  retargeted from `generate-resources`/`${project.build.outputDirectory}/avro` to
-  `generate-test-resources`/`${project.build.testOutputDirectory}/avro` — the canonical
-  `schemas/*.avsc` files now land only on the **test** classpath (so unit tests can build fixture
-  `GenericRecord`s without a live registry), never in `target/classes` or the shaded jar. Verified
-  via `jar tf target/orderbook-consolidator-1.0-SNAPSHOT.jar | grep avro/` → only
-  `AvroSchemaLoader.class`, no `.avsc` files. 25/25 tests still green (`mvn -o test`).
-- **Consequence:** the Flink job now has a hard runtime dependency on the Schema Registry being
-  reachable and already having both subjects registered *before* the job starts consuming/producing
-  (true today since `warmup.sh` runs before the job in the deploy flow) — if the registry is down
-  or the subject is missing, the first `deserialize`/`serialize` call throws
-  `IllegalStateException` (lazy-init failure), which is the correct fail-fast behavior for "schema
-  must come from the registry and nowhere else," not a regression.
-- `warmup.sh` was **not** changed for this rule — it's the schema *deployment* tool (pushes the
-  canonical `.avsc` files into the registry in the first place); it doesn't validate/encode/decode
-  business events itself, so the rule doesn't apply to it. It remains the only place the
-  repo-root `schemas/*.avsc` files feed into the registry for this module.
+**⚠️ Open deploy-blocking risk:** NiFi's producer format for the input topics
+(`ex{exchange_id}-p{pair_id}-{side}`) is unknown/unverified — NiFi is owned by a separate team.
+If NiFi publishes plain JSON, `PriceLevelEventDeserializer` fails on every message. Must be
+confirmed before deploying — though the whole NiFi-normalizes path is slated for replacement by
+[[raw-pipeline-decision]], which makes this moot after cutover. (`web/` was already matched to
+Avro — see [[orderbook-web]].)

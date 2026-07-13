@@ -54,16 +54,17 @@ integration test, not a unit test — don't write the worthless non-null test.
   classpath, but `flink-test-utils` (and the `flink-runtime`/`flink-streaming-java` test-jars
   it pulls) must be added at `test` scope for the harness.
 
-## Coverage for `flink/orderbook-consolidator` (2026-07-04)
+## Coverage for `flink/orderbook-consolidator`
 
-Step 9 done: 24 spec-based tests, all green. Same infra (JUnit5 + AssertJ +
-`KeyedOneInputStreamOperatorTestHarness` + JaCoCo) — it was already in the consolidator pom from
-Step 1, no changes needed.
-- `PerExchangeBookBuilderTest` (9) — stage 1 R1/R2, per-exchange `event_time`=max, canonical
+25 spec-based tests, all green (`mvn -o test`). Same infra (JUnit5 + AssertJ +
+`KeyedOneInputStreamOperatorTestHarness` + JaCoCo).
+- `PerExchangeBookBuilderTest` — stage 1 R1/R2, per-exchange `event_time`=max, canonical
   price-key collapse. Keyed `(pair, exchange, side)`.
-- `CrossExchangeConsolidatorTest` (9) — stage 2 R4 union-not-summed, R5 sort/tie-break/BigDecimal,
+- `CrossExchangeConsolidatorTest` — stage 2 R4 union-not-summed, R5 sort/tie-break/BigDecimal,
   per-exchange replacement, `event_time`=max, R6 routing fields. Keyed `(pair, side)`.
-- `PriceLevelEventDeserializerTest` (6) — wire mapping / ignoreUnknown / lazy mapper / produced type.
+- Serde tests build `GenericRecord`s via `GenericRecordBuilder` and assert on the pure mapping
+  functions (`toPriceLevelEvent`/`toGenericRecord`) — the Confluent registry encode/decode itself
+  is library code, not re-tested ([[orderbook-consolidator-decision]]).
 - Intentionally uncovered: `CrossExchangeConsolidator`'s `getLevels()!=null` false-branch —
   defensive, unreachable (stage-1 always emits a list). Same stance as orderbook-job's untested
   serializer `catch`.

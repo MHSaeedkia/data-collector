@@ -1,3 +1,10 @@
+---
+name: raw-pipeline-decision
+description: FINAL decision (2026-07-13) — NiFi publishes verbatim raw exchange payloads; 6 chained Flink jobs in one Maven multi-module project normalize them into the consolidator's price_level_event input stream
+metadata:
+  type: project
+---
+
 # Raw Data Normalization Pipeline — FINAL Decision (2026-07-13)
 
 ## Context
@@ -5,7 +12,7 @@
 NiFi stops normalizing exchange data. It will publish **verbatim raw exchange payloads** to Kafka
 (one topic per exchange), and a new Flink pipeline reproduces the normalization, ending in the
 exact `price_level_event` stream on `ex{exchange_id}-p{pair_id}-{side}` topics that
-`flink/orderbook-consolidator` already consumes ([[kafka-topic-strategy]], [[avro-schema]]).
+`flink/orderbook-consolidator` already consumes ([[kafka-topic-strategy]], [[avro-schema-orderbook]]).
 The consolidator and `web/` stay untouched.
 
 ## Structure decisions (FINAL, 2026-07-13)

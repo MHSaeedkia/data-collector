@@ -1,198 +1,89 @@
 ---
 name: orderbook-aggregation
-description: Requirement to generate consolidated order books per pair+side by merging all exchanges into one stream in Flink
+description: Business rules for the consolidated order book per pair+side (union semantics, snapshot/update handling, sequence-gap rules) — and the status of the two Flink jobs implementing them
 metadata:
   type: project
 ---
 
 ## Requirement: consolidated order book per pair+side
 
-For each `{pair}-{side}` we must **generate a consolidated order book** that merges
-the order book data of all exchanges for that pair+side into a single stream.
+For each `(pair, side)` we **generate a consolidated order book** that merges the order book
+data of all exchanges for that pair+side into a single stream, published to topic
+`p{pair_id}-{side}` (e.g. `p2-asks`, `p2-bids` — [[kafka-topic-strategy]]).
 
-Desired output streams (one per pair+side, exchanges merged in) — topic `{side}-p{pair_id}`:
-
-```
-asks-p2    # BTC-USDT asks
-bids-p2    # BTC-USDT bids
-asks-p7    # another pair
-bids-p7
-...
-```
-
-## Two layers of "merge"
-
-1. **Transport merge (done)** — the Kafka source already pulls all exchange topics
-   for a pair+side into one DataStream via regex `{side}-p{pair_id}-ex.*`. See
-   [[kafka-topic-strategy]].
-2. **Stateful generation (this requirement)** — on top of that merged stream, build
-   and emit a consolidated order book. Plan: `keyBy(pairId)` → keep latest snapshot
-   per exchange in keyed state → merge into one book on each event → emit
-   `{side}-p{pair_id}` stream.
-
-## Resolved: merge semantics (UNION, do NOT combine quantities)
+## Merge semantics (UNION, do NOT combine quantities)
 
 Union all exchanges' levels and sort by price; do **not** sum quantities at equal price.
 Each output level keeps its own exchange. Equal-price levels from different exchanges
 appear as separate, adjacent entries.
 
-Example — BTC-USDT asks:
-- nobitex: qty 10 @ 100000
-- wallex:  qty 4  @ 100000
-
-Output is NOT `qty 14 @ 100000`; it is two adjacent entries:
-- `{ exchange: nobitex, qty: 10, price: 100000 }`
-- `{ exchange: wallex,  qty: 4,  price: 100000 }`
+Example — BTC-USDT asks: nobitex qty 10 @ 100000, wallex qty 4 @ 100000 → output is NOT
+`qty 14 @ 100000`; it is two adjacent entries `{exchange_id:1, qty:10, price:100000}` and
+`{exchange_id:3, qty:4, price:100000}`.
 
 Rules:
 - Asks sorted ascending by price; bids descending (highest first).
 - Tie-break at equal price (different exchanges): larger quantity first.
-- Price and quantity compared as `BigDecimal` (decimal strings; avoid float error).
-- Output model: new `ConsolidatedOrderBook { pair_id, side, levels }` where each level is
-  `{ exchange_id, price, quantity }` (`exchange_id` is the int DB id, not the name).
-  `OrderBookEvent`/`PriceLevel` can't be reused as-is because the exchange must live on each level,
-  not the envelope.
+- Price and quantity compared as `BigDecimal` built from the wire string ([[bigdecimal-rules]]).
+- Output shape: `ConsolidatedOrderBook { pair_id, side, event_time, levels }`, each level
+  `{ exchange_id, price, quantity }` (`exchange_id` = int DB id, not the name) —
+  frozen wire contract, see [[avro-schema-orderbook]].
 
-**Why:** This is the core business value of the pipeline — a single normalized,
-cross-exchange order book view per trading pair and side, rather than fragmented
-per-exchange snapshots.
-**How to apply:** Implement as a keyed stateful operator (`KeyedProcessFunction<Integer,…>` keyed by
-`pairId`, `MapState<Integer, ExchangeBook>` keyed by `exchange_id` holding a maintained running book
-per exchange — see the Phase 3 section for the state shape and snapshot/update handling) between the
-Kafka sources and the sink in `OrderBookJob`. On each event, apply it to that exchange's book,
-rebuild the union, sort by price, and emit a `ConsolidatedOrderBook`.
+Implementation rule of thumb for the whole pipeline: **imperative / stateful / array-shaped →
+DataStream (Java); declarative / windowed / analytical → Flink SQL** (as separate jobs, e.g.
+future OHLC/VWAP analytics). Full Java-vs-SQL rationale lives in
+[[orderbook-consolidator-decision]].
 
-## Decision: DataStream (Java), not Flink SQL
+## Snapshot + update event semantics (`type` field, [[avro-schema-orderbook]])
 
-**Q:** Why is `OrderBookMerger` implemented in pure Java (DataStream API) instead of Flink SQL?
-
-**A:** The merge produces, per `(pair, side)`, a single row holding a **nested array of
-`{exchange, price, quantity}` levels sorted by a custom comparator**, recomputed on every
-update. That is three things Flink SQL handles poorly on a streaming changelog:
-
-1. **Nested array output** — you'd `UNNEST` each exchange's `levels`, then re-collect into one
-   sorted array per group; Flink SQL has no clean "sorted `ARRAY_AGG`" for continuous streams.
-2. **Custom sort** — price asc/desc by side + tie-break by quantity desc, as `BigDecimal`;
-   expressible row-wise but not as "sort the array inside the row".
-3. **Latest-per-exchange state** — SQL *can* do this (`ROW_NUMBER() … PARTITION BY exchange`
-   + dedup), but it's the easy part.
-
-The `KeyedProcessFunction` does all three in ~30 lines with explicit state and a `Comparator`.
-SQL would be more code, less readable, and hit engine limits — the opposite of what SQL buys you.
-
-Precision on "can't": it's "can't *cleanly/efficiently* on a streaming changelog," not a hard
-impossibility. A custom UDAF (`AggregateFunction` returning a sorted array) could force it — but
-that re-implements the same Java logic wrapped in SQL, so the DataStream operator is strictly simpler.
-The blocker is specifically the **sorted-array-inside-one-row** shape: streaming `ARRAY_AGG` takes no
-per-group `ORDER BY`, and SQL `ORDER BY` sorts rows, not elements within an aggregated array.
-
-Rule of thumb for the whole pipeline: **imperative / stateful / array-shaped → DataStream;
-declarative / windowed / analytical → SQL.** Flink SQL would earn its place later for analytics
-(OHLC/candles, VWAP, windowed depth/liquidity, top-N) as *separate* jobs, not for this merge.
-
-## Implemented (Phase 1)
-
-- `model/ConsolidatedLevel.java` — `{ exchange_id, price, quantity }` (`exchange_id` int, serialized as `exchange_id`)
-- `model/ConsolidatedOrderBook.java` — `{ pair_id, side, levels, eventTime }` (eventTime = max of contributing snapshots)
-- `aggregation/OrderBookMerger.java` — `KeyedProcessFunction<Integer,…>` (keyed by pairId); `MapState<Integer, OrderBookEvent>` (keyed by exchange_id) — **note: in Phase 3 this state value changed to `ExchangeBook`, see the Phase 3 section below**;
-  comparator = price (asc asks / desc bids) then quantity desc, both `BigDecimal`
-- `OrderBookJob.addStream` wires `source → keyBy(pairId) → OrderBookMerger(side)` then fans out to
-  TWO sinks: a Kafka sink to topic `{side}-p{pair_id}` (e.g. `asks-p2`) AND `print(name)` to stdout
-  (operator/print/topic names all use `{side}-p{pair_id}`)
-- `serializer/ConsolidatedOrderBookSerializer.java` — Jackson `SerializationSchema`, transient ObjectMapper
-- `sink/OrderBookSinkFactory.java` — `KafkaSink<ConsolidatedOrderBook>`; builder default `DeliveryGuarantee.NONE`
-  (we don't reference `DeliveryGuarantee` directly — `flink-connector-base` isn't on the compile classpath)
-- No feedback loop: output topic `{side}-p{pair_id}` does NOT match source pattern `{side}-p{pair_id}-ex.*`
-  (the `-ex` segment is required), so the job won't re-consume its own output
-- `ConsolidatedOrderBook.eventTime` serializes as `event_time` (matches `OrderBookEvent` snake_case convention)
-- Flink 2.x note: operator uses `open(OpenContext)` (the 1.x `open(Configuration)` was removed in Flink 2.0)
-- Functional test: `scripts/produce-test-data.sh` STREAMS randomized snapshots (random
-  pair/side/exchange each tick, prices drifting around a mid via awk, pauses on some steps)
-  for `DURATION_SECONDS` (default 600) to show live UI updates — not a fixed batch
-- Flink source is now fully commented (2026-06-29): every class has a Javadoc role
-  line; the end-to-end pipeline overview lives in `OrderBookJob`'s class doc. Key
-  rationales captured inline — no watermarks (event-driven, not windowed), rebuild
-  book from scratch each event, state+comparator built in `open()` not the
-  constructor (MapState is per-key, Comparator isn't Serializable), latest offsets
-  (live book not replay), and the `-ex` regex segment is what blocks the feedback loop.
-- `scripts/warmup.sh` provisions BOTH input topics (`{side}-p{pair_id}-ex{exchange_id}`, per subscribed
-  exchange) AND output topics (`{side}-p{pair_id}`, one per distinct subscribed pair) — single partition each.
-  (both warmup.sh and the Flink job use the ID-based scheme as of 2026-06-28 — see [[kafka-topic-strategy]])
-
-## Implemented: snapshot + update event support (Phase 3 — 2026-06-29)
-
-The merger now honours the `type` field instead of treating every event as a full snapshot
-(see [[avro-schema-orderbook]]).
-
-**Decided semantics (NiFi guarantees these):**
+Within one exchange's stream (NiFi guarantees these):
 - `snapshot` → replace that exchange's book wholesale.
-- `update`   → apply on top of existing book, per level: `quantity > 0` → insert-or-overwrite that
-  price level; `quantity == 0` → delete it. Compare zero via `BigDecimal.compareTo(ZERO)`, never string `"0"`.
+- `update`   → apply on top of the existing book, per level: `quantity > 0` → insert-or-overwrite
+  that price level; `quantity == 0` → delete it. Compare zero via `BigDecimal.compareTo(ZERO)`,
+  never string `"0"`.
 
-This is *within* one exchange's stream; the cross-exchange union/sort/no-summing logic is unchanged.
+Price levels must never be keyed by raw wire string (NiFi gives no formatting guarantee —
+`"97240.50"` vs `"97240.5"`); see the equality caveat in [[bigdecimal-rules]] for the two
+accepted keying patterns.
 
-**Merger state (implemented):** `MapState<Integer, OrderBookEvent>` → `MapState<Integer, ExchangeBook>`
-where new `model/ExchangeBook.java` is a Flink POJO `{ NavigableMap<BigDecimal price, String qty> levels,
-long eventTime, long lastSeq }`. `processElement`: look up the exchange's book; drop stale/dup
-(`book != null && seq <= lastSeq` — first event per exchange always accepted); branch on `type`
-(`SNAPSHOT` → fresh book, put all levels; else → mutate book, `BigDecimal.ZERO.compareTo(qty)==0`
-removes the price key, else upsert; empty book created if none yet); set eventTime/lastSeq; put back.
-Then rebuild-union-sort-emit exactly as before, but iterating `booksByExchange.entries()` and the
-per-book map (exchange_id comes from the outer map key; output price = `key.toPlainString()`;
-maxEventTime over stored books).
+## Sequence-id gap handling (strict contract)
 
-`ExchangeBook.levels` is keyed by **`BigDecimal` price, and MUST be a `TreeMap`** (2026-06-29): TreeMap
-keys by `BigDecimal.compareTo`, so `"97240.50"` and `"97240.5"` collapse to one level. NiFi gives **no
-guarantee** that snapshot and update use the same string formatting for a price, so we can't key by the
-raw string. A `HashMap<BigDecimal,…>` would be wrong — `BigDecimal.equals`/`hashCode` are scale-sensitive.
-Output price is normalized via `toPlainString()` (so display drops trailing zeros, e.g. `97240.50`→`97240.5`,
-`600.00`→`600`). Compiles clean (`mvn -q compile`).
+Events carry `sequence_id` (monotonic per `(pair_id, exchange_id)` stream) and `sequence_jump`
+(the expected delta from the previous message — increments are NOT +1, some exchanges jump ~300).
+Per-exchange continuity rules:
 
-**Sequence id (mandatory, done):** `sequence_id` (`long`, required) added to `schemas/orderbook_event.avsc`,
-example JSON, and `OrderBookEvent.sequenceId`; NiFi must populate it. Used now only for stale/duplicate drop.
-
-**Sequence jump (field added 2026-06-29):** `sequence_jump` (`long`, required) added to
-`schemas/orderbook_event.avsc`, example JSON, and `OrderBookEvent.sequenceJump`. NiFi now populates it.
-Resolves the old "is `sequence_id` contiguous +1?" question below: **NO — increments are not +1**; some
-exchanges jump by ~300 between consecutive updates, so `sequence_jump` carries the expected per-message
-increment (delta from the previous message for that exchange). Gap-detection logic is now implemented —
-see the gap-handling section below. Confirmed semantic: an update is in order iff
-`seq == lastSeq + sequence_jump`.
-
-### DEFERRED — cold start (revisit later)
-**Verified 2026-06-29: NO Flink checkpointing/state backend is configured** — `docker-compose.yml`
-only sets `jobmanager.rpc.address` + `taskmanager.numberOfTaskSlots`. So keyed state is in-memory and
-lost on every restart. Fine for snapshot-only (next snapshot rebuilds), but with deltas a restart leaves
-the book empty until the next snapshot. **Current assumption to unblock Phase 3:** the first event per
-exchange from Kafka is a `snapshot`, so a base book always exists before any `update`; no gating yet.
-Fix options for later: (A) Flink checkpoints+savepoints with a durable state backend [recommended,
-idiomatic, no merger code]; (B) log-compact output topic `{side}-p{pair_id}` (key = topic name) + reseed
-on startup — also gives downstream consumers (web UI) the current book instantly; (C) both. Also deferred:
-the "ignore updates until first snapshot per exchange" gate (for a truly empty / brand-new deploy).
-
-### DONE — sequence-id gap handling (2026-06-29)
-Increments are NOT +1 — exchanges can jump (~300) — so each event carries `sequence_jump` (the expected
-delta from the previous message). `OrderBookMerger.processElement` now validates per-exchange continuity:
-
-- **snapshot** → accepted unconditionally (NO seq check — it IS the baseline); replaces the book, stores
-  `lastSeq = sequence_id`, and clears `awaitingSnapshot`. This is also the only way to recover from a gap
-  and the only way an exchange's book is first created (so cold-start "first event is a snapshot" is now
-  enforced, not just assumed — a leading `update` is ignored).
-- **update** → must validate against a trusted baseline:
-  - `book == null` or `book.awaitingSnapshot` → ignore (no baseline yet / waiting to resync).
+- **snapshot** → accepted unconditionally (NO seq check — it IS the baseline); replaces the book,
+  stores `lastSeq`, clears `awaitingSnapshot`. The only way to recover from a gap and the only way
+  a book is first created (a leading `update` is ignored).
+- **update** → requires a trusted baseline:
+  - no book yet or `awaitingSnapshot` → ignore.
   - `seq <= lastSeq` → stale/duplicate, drop.
-  - `seq > lastSeq + sequence_jump` → **real gap (missed messages)**: clear the book's levels + set
-    `awaitingSnapshot = true`, then re-emit (that exchange drops out of the consolidated book) and wait
-    for the next snapshot. Chosen action: **drop-book-and-resync** (user decision; safe/standard — never
-    serve a drifted book), not apply-anyway.
-  - else (`seq == lastSeq + sequence_jump`) → in order: apply deltas (qty>0 upsert / qty==0 delete),
-    advance `eventTime`/`lastSeq`.
+  - `seq != lastSeq + sequence_jump` (strict — any other forward value, gap or unexpected
+    intermediate) → **resync**: clear the book's levels + set `awaitingSnapshot`, re-emit (that
+    exchange drops out of the consolidated book), wait for the next snapshot. Chosen action is
+    drop-book-and-resync (user decision — never serve a drifted book), not apply-anyway.
+  - `seq == lastSeq + sequence_jump` → in order: apply deltas, advance `eventTime`/`lastSeq`.
 
-New state: `ExchangeBook.awaitingSnapshot` (boolean) gates updates after a gap until a snapshot resets it.
-Generator (`fake-data-generator/mian.go`) sends ONLY snapshots with `sequence_jump = 0`, so the update/gap
-path is exercised by real NiFi data, not the dev generator. Compiles clean (`mvn -q compile`).
-NOTE: cold-start on a *restart* is still unprotected — no Flink checkpointing (see cold-start section);
-in-memory state is lost on restart and only rebuilds once each exchange sends a fresh snapshot.
+The strictness (`!=`, not a band) was pinned by TDD — see [[tdd-workflow]].
 
-Status: plan agreed; schema edit (`sequence_id`) pending because it's a shared contract with the NiFi
-team. Tracked in `todo.md` Phase 3.
+These semantics are reused by job 2 (type validation) of [[raw-pipeline-decision]].
+
+## Where this is implemented
+
+- **`flink/orderbook-job/`** — the original job: consumes batched `OrderBookEvent`s (JSON),
+  `OrderBookMerger` (`KeyedProcessFunction` keyed by pairId, `MapState<exchange_id, ExchangeBook>`,
+  `TreeMap<BigDecimal,…>` levels) implements all of the above including snapshot/update + gap
+  handling. **Superseded by the consolidator and still on the OLD side-first topic naming**
+  ([[kafka-topic-strategy]]); may be retired after [[raw-pipeline-decision]] cutover.
+- **`flink/orderbook-consolidator/`** — the current job: consumes flat per-level
+  `PriceLevelEvent`s (no `type`/`sequence_*` — upstream is trusted to have applied them),
+  implements the union/sort/no-summing rules — see [[orderbook-consolidator-decision]].
+
+## Deferred: cold start / checkpointing
+
+**No Flink checkpointing/state backend is configured** (compose files only set
+`jobmanager.rpc.address` + `taskmanager.numberOfTaskSlots`), so keyed state is in-memory and lost
+on every restart; books only rebuild once each exchange sends a fresh snapshot / fresh levels.
+Fix options for later: (A) Flink checkpoints + durable state backend (recommended, idiomatic);
+(B) log-compacted output topics + reseed on startup (also gives downstream consumers the current
+book instantly); (C) both.
