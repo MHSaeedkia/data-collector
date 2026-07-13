@@ -16,6 +16,7 @@ import (
 	"orderbook-web/internal/kafka"
 	"orderbook-web/internal/postgres"
 	"orderbook-web/internal/registry"
+	"orderbook-web/internal/schema"
 )
 
 // The UI is baked into the binary so it ships as a single self-contained executable.
@@ -45,6 +46,7 @@ func main() {
 	}()
 
 	h := hub.New()
+	dec := schema.NewDecoder(cfg.SchemaRegistryURL)
 
 	publicFS, err := fs.Sub(staticFiles, "public")
 	if err != nil {
@@ -62,13 +64,14 @@ func main() {
 			return
 		}
 		consumer.Run(ctx, func(topic string, value []byte) {
-			ingest.HandleRecord(reg, h, topic, value)
+			ingest.HandleRecord(dec, reg, h, topic, value)
 		})
 	}()
 
 	// Serve the UI immediately so the page loads even before (or without) Kafka.
 	log.Printf("Order book UI:    http://localhost:%s", cfg.Port)
 	log.Printf("Kafka broker:     %s", cfg.KafkaBroker)
+	log.Printf("Schema registry:  %s", cfg.SchemaRegistryURL)
 	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
 		log.Fatal(err)
 	}

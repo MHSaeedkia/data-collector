@@ -290,28 +290,29 @@ still true for `orderbook_event.avsc`/`orderbook-job`**, which was NOT touched. 
   re-tested here. 25/25 tests green (`mvn -o test`); shaded jar verified to contain
   `avro/price_level_event.avsc` + `avro/consolidated_order_book_event.avsc` (`jar tf`).
 
-**⚠️ Known blast radius NOT yet addressed (deliberately out of scope for this refactor — user
-asked only to refactor this module):**
+**⚠️ Known blast radius (deliberately out of scope for this refactor — user asked only to
+refactor this module):**
 
-1. **`web/internal/ingest/ingest.go` (`HandleRecord`) still does `json.Unmarshal(value, &rb)`** on
-   the raw Kafka record bytes from the `{side}-p{pair_id}` output topics. Now that
-   `ConsolidatedOrderBookSerializer` emits Confluent-wire-format Avro binary (magic byte + 4-byte
-   schema id + Avro payload) instead of JSON, every message will fail `json.Unmarshal` and get
-   silently dropped (`"Skipping bad message on %s: %v"`) — **the web UI will stop receiving any
-   live order book updates** until `web/` is updated to decode Avro via the schema registry (e.g.
-   `hamba/avro` + a schema-registry-aware wire-format reader) instead of `encoding/json`. See
-   [[orderbook-web]].
-2. **NiFi's producer format for the input topics (`{side}-p{pair_id}-ex{exchange_id}`) is
+1. **RESOLVED 2026-07-13 — `web/` now decodes Avro, not JSON.** `web/internal/ingest/ingest.go`
+   used to do `json.Unmarshal(value, &rb)` on the raw `p{pair_id}-{side}` output-topic bytes,
+   which would have silently dropped every message once the sink switched to Confluent-wire-format
+   Avro. Fixed: new `web/internal/schema` package (`hamba/avro/v2`) parses the wire header (magic
+   byte + big-endian 4-byte schema id), resolves the writer schema from the registry by id
+   (`GET {SCHEMA_REGISTRY_URL}/schemas/ids/{id}`, cached forever per id since registry ids are
+   immutable), and decodes into `domain.RawBook`. `ingest.HandleRecord` gained a `decoder`
+   1-method interface (first param) so this stays unit-testable with a fake, same pattern as
+   `enricher`/`publisher`. New config `SCHEMA_REGISTRY_URL` (default `http://localhost:8082`
+   dev / `http://schema-registry:8082` in compose, same pattern as `KAFKA_BROKER`). See
+   [[orderbook-web]] for the full file-by-file breakdown.
+2. **NiFi's producer format for the input topics (`ex{exchange_id}-p{pair_id}-{side}`) is
    unknown/unverified** — NiFi is owned by a separate team and not implemented in this repo (see
    [[avro-schema]]). If NiFi is still publishing plain JSON (as `price_level_event.avsc`'s prior
    "documentation only" status implied it might be), `PriceLevelEventDeserializer` will now fail
    to decode every incoming message (`ConfluentRegistryAvroDeserializationSchema` expects the
    Confluent magic-byte-prefixed wire format, not raw JSON). **This must be confirmed with the
    NiFi team before deploying this refactor**, or the consolidator will receive nothing but decode
-   errors on its input side.
-
-Both are real, deploy-blocking risks, not just cleanup items — flagged here rather than silently
-left for a future session to rediscover the hard way.
+   errors on its input side. **Still open** — this is the only remaining deploy-blocking risk from
+   the 2026-07-11 Avro refactor.
 
 ## Schema source of truth: registry-only at runtime, not the bundled jar copy (2026-07-12)
 

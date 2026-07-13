@@ -90,9 +90,10 @@ was refactored to real Confluent Avro binary on both source and sink —
 `ConsolidatedOrderBookSerializer` now emits Confluent-wire-format bytes (magic byte + schema id +
 Avro payload) via `ConfluentRegistryAvroSerializationSchema`, and `PriceLevelEventDeserializer`
 decodes the same way via `ConfluentRegistryAvroDeserializationSchema`. All Jackson/JSON code and
-`@JsonProperty`/`@JsonIgnoreProperties` annotations were removed from that module. Full details,
-including two **known deploy-blocking downstream risks** (`web/` still expects JSON;
-NiFi's actual producer format on the input topics is unverified), are in
-[[orderbook-consolidator-decision]] under "Wire format: JSON → true Confluent Avro (2026-07-11)".
+`@JsonProperty`/`@JsonIgnoreProperties` annotations were removed from that module. **`web/` was
+updated to match on 2026-07-13** (decodes this wire format via `hamba/avro/v2` + the schema
+registry, see [[orderbook-web]]) — the only remaining known risk is NiFi's actual producer format
+on the input topics being unverified. Full details in [[orderbook-consolidator-decision]] under
+"Wire format: JSON → true Confluent Avro (2026-07-11)".
 
 [[kafka-topic-strategy]]

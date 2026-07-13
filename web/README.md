@@ -33,8 +33,8 @@ docker compose up -d --build web
 ```
 
 It reaches the other services over the compose network (`KAFKA_BROKER=kafka:29092`,
-`DATABASE_URL=postgres://postgres:postgres@postgres:5432/markets`) and is exposed on
-http://localhost:3000.
+`DATABASE_URL=postgres://postgres:postgres@postgres:5432/markets`,
+`SCHEMA_REGISTRY_URL=http://schema-registry:8082`) and is exposed on http://localhost:3000.
 
 The image is a multi-stage build (golang-alpine → distroless static). Dependencies are
 **vendored** (`web/vendor/`, committed) so the image builds fully offline without the Go
@@ -45,6 +45,8 @@ module proxy; run `go mod vendor` after changing dependencies.
 - `PORT` — HTTP port (default `3000`)
 - `KAFKA_BROKER` — broker address (default `localhost:9092`, the host-exposed listener)
 - `DATABASE_URL` — postgres DSN (default `postgres://postgres:postgres@localhost:5432/markets`)
+- `SCHEMA_REGISTRY_URL` — Confluent Schema Registry URL (default `http://localhost:8082`, the
+  host-exposed listener), used to resolve each record's Avro writer schema by id
 
 ## Notes
 
@@ -52,6 +54,11 @@ module proxy; run `go mod vendor` after changing dependencies.
   `quote`, or `exchange_name`. The server resolves them for display by loading the `markets`
   and `exchanges` tables from postgres (refreshed every 10s), then enriches each book before
   pushing it to the browser. Unknown ids fall back to placeholders.
+- Record values are Confluent-wire-format Avro (magic byte + schema-registry id + Avro binary),
+  matching `flink/orderbook-consolidator`'s sink — **not JSON**. `internal/schema.Decoder`
+  resolves each record's writer schema from the registry by id (schema-registry ids are
+  immutable, so schemas are cached forever once fetched) and decodes into the internal
+  `domain.RawBook` shape. Malformed/undecodable records are logged and skipped, same as before.
 - Subscribes via regex `^p\d+-(asks|bids)$`, so it reads only the consolidated **output**
   topics — input topics (`ex{exchange_id}-p{pair_id}-{side}`) carry a leading `ex…-` and
   don't match.
@@ -67,4 +74,6 @@ module proxy; run `go mod vendor` after changing dependencies.
 - `net/http` + `embed` — HTTP server serving the UI baked into the binary (`go:embed public`)
 - [`github.com/gorilla/websocket`](https://github.com/gorilla/websocket) — browser push
 - [`github.com/twmb/franz-go`](https://github.com/twmb/franz-go) — Kafka consumer (regex topics)
+- [`github.com/hamba/avro/v2`](https://github.com/hamba/avro) — Avro decoding (schema fetched
+  from the registry per record, Confluent wire format)
 - [`github.com/jackc/pgx/v5`](https://github.com/jackc/pgx) — postgres lookups

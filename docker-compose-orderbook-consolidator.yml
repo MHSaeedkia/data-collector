@@ -208,6 +208,7 @@ services:
             PORT: 3000
             KAFKA_BROKER: kafka:29092
             DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
+            SCHEMA_REGISTRY_URL: http://schema-registry:8082
         networks:
             - data-collector-net
 

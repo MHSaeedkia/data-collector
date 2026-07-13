@@ -11,6 +11,7 @@
 - [x] Bind each topic to its Avro schema: `scripts/warmup.sh` now registers `<topic>-value` (TopicNameStrategy) for every created topic — input topics → `price_level_event.avsc`, output topics → `consolidated_order_book_event.avsc` — so kafka-ui defaults its Produce-Message serde to AVRO per topic instead of String/Bytes — done 2026-07-12
 - [x] Topic naming segment-order rename: input `{side}-p{pair_id}-ex{exchange_id}` → `ex{exchange_id}-p{pair_id}-{side}`, output `{side}-p{pair_id}` → `p{pair_id}-{side}` — updated `scripts/warmup.sh`, `flink/orderbook-consolidator` (`PriceLevelSourceFactory` regex, `ConsolidatedOrderBookSinkFactory` topic selector, doc comments), `docker-compose-orderbook-consolidator.yml` kafka-ui serde `TOPICVALUESPATTERN`s, and `memory/project_kafka_topic_strategy.md` — done 2026-07-12, 25/25 consolidator tests still green. `web/`, `flink/orderbook-job/`, and `fake-data-generator/` deliberately NOT updated (out of scope for this pass, see [[kafka-topic-strategy]])
 - [x] Topic naming rename, web part: `web/internal/kafka/consumer.go` subscribe regex `^(asks|bids)-p\d+$` → `^p[0-9]+-(asks|bids)$`, plus example topic strings in `hub_test.go`/`ingest_test.go` and `web/README.md` — done 2026-07-13, `go build ./... && go test ./...` all green. `flink/orderbook-job/` and `fake-data-generator/` still deliberately NOT updated
+- [x] Web part Avro decode: `web/` was still `json.Unmarshal`-ing the consolidator's output topics after the 2026-07-11 JSON→Avro refactor (flagged as a deploy blocker in `memory/project_orderbook_consolidator_decision.md`) — fixed 2026-07-13. New `web/internal/schema.Decoder` (`hamba/avro/v2`) resolves each record's writer schema from the registry by id (Confluent wire format: magic byte + schema id) and decodes into `domain.RawBook`; `ingest.HandleRecord` takes a `decoder` interface as its new first param; new config `SCHEMA_REGISTRY_URL`. New tests in `web/internal/schema/decoder_test.go` (real Avro round-trip via `httptest.Server`) + updated `ingest_test.go` (`fakeDecoder`). `go build ./... && go vet ./... && go test ./...` all green. Remaining known risk: NiFi's producer format on input topics is still unverified (see [[kafka-topic-strategy]] / [[orderbook-consolidator-decision]])
 
 ## Phase 1 — Flink JSON pipeline (source: `flink/orderbook-job/`)
 
@@ -400,14 +401,13 @@ Stage 1 is keyed `(pair_id, exchange_id, side)` so it sees one exchange only; st
       raw JSON strings. `mvn -o test` → 25/25 green. `jar tf` on the packaged shaded jar confirmed
       `avro/price_level_event.avsc` + `avro/consolidated_order_book_event.avsc` were bundled.
       **Superseded 2026-07-12 — see Step 11: shaded jar no longer bundles any `.avsc` file.**
-- [ ] **NOT done — deploy blockers, out of this refactor's scope:**
-  - `web/internal/ingest/ingest.go` `HandleRecord` still does `json.Unmarshal` on the consolidated
-    book bytes; will silently drop every message once this ships (the sink now writes Avro binary,
-    not JSON). Needs an Avro-aware Go decoder (e.g. `hamba/avro` + Confluent wire-format framing)
-    before this can go live. See [[orderbook-web]].
-  - NiFi's actual producer format on the input topics (`{side}-p{pair_id}-ex{exchange_id}`) is
+- Deploy blockers flagged at the time this refactor shipped:
+  - [x] `web/internal/ingest/ingest.go` `HandleRecord` did `json.Unmarshal` on the consolidated
+    book bytes, which would silently drop every message once the sink writes Avro binary — fixed
+    2026-07-13, see the "Web part Avro decode" Done entry above and [[orderbook-web]].
+  - [ ] NiFi's actual producer format on the input topics (`ex{exchange_id}-p{pair_id}-{side}`) is
     unverified — if NiFi still writes JSON, `PriceLevelEventDeserializer` will fail to decode
-    everything it receives. Must confirm with the NiFi team before deploying.
+    everything it receives. Must confirm with the NiFi team before deploying. **Still open.**
   - Full detail in `memory/project_orderbook_consolidator_decision.md` under "Wire format: JSON →
     true Confluent Avro (2026-07-11)".
 

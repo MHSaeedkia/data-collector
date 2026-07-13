@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,6 +9,15 @@ import (
 
 	"orderbook-web/internal/domain"
 )
+
+type fakeDecoder struct {
+	toReturn domain.RawBook
+	err      error
+}
+
+func (f *fakeDecoder) Decode(value []byte) (domain.RawBook, error) {
+	return f.toReturn, f.err
+}
 
 type fakeEnricher struct {
 	received domain.RawBook
@@ -32,11 +42,16 @@ func (f *fakePublisher) Publish(topic string, b domain.Book) {
 }
 
 func TestHandleRecord_ValidMessageEnrichesAndPublishes(t *testing.T) {
+	dec := &fakeDecoder{toReturn: domain.RawBook{
+		PairID:    1,
+		Side:      "asks",
+		EventTime: 123,
+		Levels:    []domain.RawLevel{{ExchangeID: 2, Price: "1", Quantity: "2"}},
+	}}
 	enricher := &fakeEnricher{toReturn: domain.Book{PairID: 1, Base: "BTC"}}
 	pub := &fakePublisher{}
-	value := []byte(`{"pair_id":1,"side":"asks","event_time":123,"levels":[{"exchange_id":2,"price":"1","quantity":"2"}]}`)
 
-	HandleRecord(enricher, pub, "p1-asks", value)
+	HandleRecord(dec, enricher, pub, "p1-asks", []byte(`irrelevant, decoder is faked`))
 
 	assert.Equal(t, 1, enricher.received.PairID)
 	assert.Equal(t, "asks", enricher.received.Side)
@@ -45,11 +60,12 @@ func TestHandleRecord_ValidMessageEnrichesAndPublishes(t *testing.T) {
 	assert.Equal(t, "BTC", pub.book.Base)
 }
 
-func TestHandleRecord_MalformedJSONIsSkipped(t *testing.T) {
+func TestHandleRecord_DecodeErrorIsSkipped(t *testing.T) {
+	dec := &fakeDecoder{err: errors.New("boom")}
 	enricher := &fakeEnricher{}
 	pub := &fakePublisher{}
 
-	HandleRecord(enricher, pub, "p1-asks", []byte(`not json`))
+	HandleRecord(dec, enricher, pub, "p1-asks", []byte(`not avro`))
 
-	assert.Equal(t, 0, pub.calls, "publish must not be called for a malformed message")
+	assert.Equal(t, 0, pub.calls, "publish must not be called when decode fails")
 }
