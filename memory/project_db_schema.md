@@ -5,16 +5,17 @@ metadata:
   type: project
 ---
 
-## Postgres schema (`postgres/init.sql`, db = `markets`)
+## Postgres schema (`postgres/01_schema.sql` + `postgres/02_seed.sql`, db = `markets`)
 
+(File split from the old single `postgres/init.sql` — noticed stale 2026-07-13.)
 Normalized on 2026-06-29 (commit e240fe3): a `currencies` lookup table was added and
 `markets.base`/`quote` (VARCHAR) were replaced by FKs `base_id`/`quote_id`.
 
 ### Tables
 - `currencies(id BIGSERIAL pk, name VARCHAR(20) UNIQUE)` — asset symbols (BTC, USDT, IRT, …). **New.**
-- `markets(id, base_id BIGINT → currencies, quote_id BIGINT → currencies, price_precision, quantity_precision, UNIQUE(base_id, quote_id))`. Was `base`/`quote` VARCHAR before; **a pair's display symbols now require joining `currencies` twice** (base + quote).
+- `markets(id, base_id BIGINT → currencies, quote_id BIGINT → currencies, price_precision, quantity_precision, display_price_precision, display_quantity_precision, UNIQUE(base_id, quote_id))`. All four precision columns nullable INTEGER with `>= 0` CHECKs. Was `base`/`quote` VARCHAR before; **a pair's display symbols now require joining `currencies` twice** (base + quote).
 - `exchanges(id, name VARCHAR(20) UNIQUE, label VARCHAR(20))`.
-- `exchange_markets(id, exchange_id → exchanges, market VARCHAR(100), market_id → markets, status subscription_status DEFAULT 'unsubscribe', UNIQUE(exchange_id, market))`. `market` is the exchange-specific symbol string (e.g. `BTCUSDT`, `BTC_USDT`, `BTCTMN`).
+- `exchange_markets(id, exchange_id → exchanges, market VARCHAR(100), market_id → markets, status subscription_status DEFAULT 'unsubscribe', price_amount_rebase INT NOT NULL DEFAULT 0, volume_amount_rebase INT NOT NULL DEFAULT 0, UNIQUE(exchange_id, market))`. `market` is the exchange-specific symbol string (e.g. `BTCUSDT`, `BTC_USDT`, `BTCTMN`). The two `*_rebase` columns drive job 3 of [[raw-pipeline-decision]] — exact rebase formula not confirmed yet (likely 10^n exponent, verify before use).
 - enum `subscription_status` = `subscribe | unsubscribe | pending-subscribe | pending-unsubscribe`.
 
 ### Seed data (as of 2026-06-29)
