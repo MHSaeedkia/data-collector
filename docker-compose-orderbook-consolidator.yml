@@ -179,6 +179,40 @@ services:
             interval: 10s
             retries: 5
 
+    redis:
+        image: redis:7-alpine
+        container_name: redis
+        hostname: redis
+        restart: on-failure
+        command: [ "redis-server", "--appendonly", "yes" ]
+        ports:
+            - "6379:6379"
+        volumes:
+            - data-collector-redis-data:/data
+        networks:
+            - data-collector-net
+        healthcheck:
+            test: [ "CMD", "redis-cli", "ping" ]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+
+    redis-exporter:
+        image: oliver006/redis_exporter:latest
+        container_name: redis-exporter
+        hostname: redis-exporter
+        restart: on-failure
+        depends_on:
+            redis:
+                condition: service_healthy
+        environment:
+            REDIS_ADDR: "redis://redis:6379"
+        ports:
+            - "9121:9121"
+        networks:
+            - data-collector-net
+
     web:
         build: ./web
         container_name: orderbook-web
@@ -215,6 +249,7 @@ volumes:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
     data-collector-taskmanager-logs:
+    data-collector-redis-data:
 
 networks:
     data-collector-net:
