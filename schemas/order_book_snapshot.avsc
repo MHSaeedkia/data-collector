@@ -1,0 +1,45 @@
+{
+	"type": "record",
+	"name": "OrderBookSnapshot",
+	"namespace": "io.tibobit.orderbook",
+	"fields": [
+		{
+			"name": "exchange_id",
+			"type": "int"
+		},
+		{
+			"name": "pair_id",
+			"type": "int"
+		},
+		{
+			"name": "event_time",
+			"type": {
+				"type": "long",
+				"logicalType": "timestamp-millis"
+			}
+		},
+		{
+			"name": "last_sequence_id",
+			"type": ["null", "long"],
+			"default": null
+		},
+		{
+			"name": "asks",
+			"type": {
+				"type": "array",
+				"items": {
+					"type": "record",
+					"name": "PriceLevel",
+					"fields": [
+						{ "name": "price", "type": "string" },
+						{ "name": "quantity", "type": "string" }
+					]
+				}
+			}
+		},
+		{
+			"name": "bids",
+			"type": { "type": "array", "items": "PriceLevel" }
+		}
+	]
+}

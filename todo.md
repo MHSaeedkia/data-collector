@@ -99,21 +99,23 @@ the R3-postponed block lives on in `memory/project_orderbook_consolidator_decisi
             OUT-OF-ORDER check instead — drop any snapshot whose ordering field is not
             greater than the last seen (ex1/2/4 `pub.offset`, ex5 `seq`; ex3 has no field
             → no protection possible).**
-- [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange,
-      who creates the raw topics, retention. → verify: written agreement in
-      `memory/project_raw_pipeline_decision.md`
-- [ ] Design `schemas/raw_order_book_event.avsc` + example JSON — the ONE structured event for
-      job 1–4 topics. Proposed fields: `exchange_id:int`, `pair_id:int`,
-      `type:enum(snapshot,update)`, `sequence_id:long`, `sequence_jump:long`,
-      `event_time:long timestamp-millis`, `asks`/`bids`: arrays of `{price:string,
-      quantity:string}` (both sides in one event — intermediate topics have no side segment;
-      split happens in job 6). Mirror `price_level_event.avsc` conventions
-- [ ] `schemas/order_book_snapshot.avsc` + example — job-5 output: full maintained book
-      (`exchange_id`, `pair_id`, `event_time`, `last_sequence_id`, `asks[]`, `bids[]`)
-- [ ] `schemas/rejected_order_book_event.avsc` + example — dead-letter envelope: the rejected
-      event + `reject_reason:string` (+ `rejected_at`)
-- [ ] Register the 3 new subjects in `scripts/warmup.sh` (canonical fixed-name subjects only —
-      NO per-topic `<topic>-value` subjects, see `memory/project_kafka_topic_strategy.md`)
+- [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange.
+      → verify: written agreement in `memory/project_raw_pipeline_decision.md`
+      (topic creation + retention SETTLED 2026-07-14: `warmup.sh` creates `ex{id}-raw` per
+      subscribed exchange, retention 7 days for now)
+- [x] Design `schemas/raw_order_book_event.avsc` + example JSON — DONE 2026-07-14. Fields as
+      proposed, with three refinements driven by the captured wire formats (rationale in
+      `memory/project_avro_schema.md`): `asks`/`bids` are NULLABLE (null = side absent — ex3
+      per-side snapshots; empty array = exchange reported the side empty); `sequence_id` is
+      NULLABLE (null = feed has no ordering field — ex3); `sequence_jump` 0 = snapshot feed
+      (out-of-order check only), >0 = delta-feed gap rule (ex6=1, ex8=300)
+- [x] `schemas/order_book_snapshot.avsc` + example — DONE 2026-07-14 (`exchange_id`, `pair_id`,
+      `event_time`, `last_sequence_id` nullable, `asks[]`/`bids[]` required — full book)
+- [x] `schemas/rejected_order_book_event.avsc` + example — DONE 2026-07-14 (inlined
+      `RawOrderBookEvent` under `event` + `reject_reason:string` + `rejected_at`)
+- [x] Register the 3 new subjects in `scripts/warmup.sh` — DONE 2026-07-14: subjects
+      `raw-order-book-event` / `order-book-snapshot` / `rejected-order-book-event` (canonical
+      fixed names, NO per-topic subjects); verified against the local registry (ids 4/5/6)
 
 ## Milestone 1 — Scaffold `flink/normalizer/`
 
@@ -233,10 +235,11 @@ TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Mi
 
 ## Milestone 8 — Infra, provisioning, cutover
 
-- [ ] Extend `scripts/warmup.sh`: create `ex{id}-raw` + the 5 per-pair intermediate/dead-letter
-      topic families for subscribed exchange_markets; decide retention per family (raw + audit
-      topics probably longer than 1h — pick values); sequential creation (parallel xargs was
-      reverted before, don't retry)
+- [ ] Extend `scripts/warmup.sh`: `ex{id}-raw` DONE 2026-07-14 (per subscribed exchange,
+      7-day retention); still to add: the 5 per-pair intermediate/dead-letter topic families
+      for subscribed exchange_markets; decide retention per family (audit topics probably
+      longer than 1h — pick values); sequential creation (parallel xargs was reverted before,
+      don't retry)
 - [ ] kafka-ui serde config in `docker-compose-normalizer.yml`: `topicValuesPattern` +
       `schemaNameTemplate` per new topic family → the 3 new canonical subjects (pattern from
       `memory/project_kafka_topic_strategy.md`; registry stays clutter-free)

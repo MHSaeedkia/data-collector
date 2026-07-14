@@ -1,0 +1,82 @@
+{
+	"type": "record",
+	"name": "RejectedOrderBookEvent",
+	"namespace": "io.tibobit.orderbook",
+	"fields": [
+		{
+			"name": "event",
+			"type": {
+				"type": "record",
+				"name": "RawOrderBookEvent",
+				"fields": [
+					{
+						"name": "exchange_id",
+						"type": "int"
+					},
+					{
+						"name": "pair_id",
+						"type": "int"
+					},
+					{
+						"name": "type",
+						"type": {
+							"type": "enum",
+							"name": "Type",
+							"symbols": ["snapshot", "update"]
+						}
+					},
+					{
+						"name": "sequence_id",
+						"type": ["null", "long"],
+						"default": null
+					},
+					{
+						"name": "sequence_jump",
+						"type": "long"
+					},
+					{
+						"name": "event_time",
+						"type": {
+							"type": "long",
+							"logicalType": "timestamp-millis"
+						}
+					},
+					{
+						"name": "asks",
+						"type": [
+							"null",
+							{
+								"type": "array",
+								"items": {
+									"type": "record",
+									"name": "PriceLevel",
+									"fields": [
+										{ "name": "price", "type": "string" },
+										{ "name": "quantity", "type": "string" }
+									]
+								}
+							}
+						],
+						"default": null
+					},
+					{
+						"name": "bids",
+						"type": ["null", { "type": "array", "items": "PriceLevel" }],
+						"default": null
+					}
+				]
+			}
+		},
+		{
+			"name": "reject_reason",
+			"type": "string"
+		},
+		{
+			"name": "rejected_at",
+			"type": {
+				"type": "long",
+				"logicalType": "timestamp-millis"
+			}
+		}
+	]
+}

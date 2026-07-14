@@ -152,7 +152,11 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
   that's acceptable or needs a floor. Flag at job-4 implementation time.
 - Avro schemas + registry subjects for every intermediate topic (raw topic is schema-less
   verbatim bytes by definition).
-- Topic provisioning/retention for the new topics (`scripts/warmup.sh` extension?).
+- Topic provisioning/retention: `ex{id}-raw` SETTLED 2026-07-14 — `scripts/warmup.sh` creates
+  one per subscribed exchange (distinct exchange_ids from the same exchange_markets query,
+  1 partition), retention 7 days "for now" (user). Note this is DB-driven, so a subscribed
+  ex7 would get a topic too — harmless while ex7 is postponed. Intermediate/dead-letter
+  topic families + their retention still open (M8).
 - Pipeline/project directory name under `flink/` — PROPOSED `flink/normalizer/`, not confirmed.
 - Deploy story — PROPOSED: one parameterized `run-job.sh`/`Dockerfile` at the pipeline root
   taking the module name (all modules share the same Flink base), not per-module copies.

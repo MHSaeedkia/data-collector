@@ -93,6 +93,47 @@ mirror of it, not a driver of it.
 | `event_time` | long timestamp-millis (required)    | Max `event_time` across contributing exchange books  |
 | `levels`     | array of record (required)          | Each: `exchange_id:int`, `price:string`, `quantity:string` — union across exchanges, never summed; equal prices from different exchanges stay as separate adjacent entries |
 
+## Raw-pipeline schemas (added 2026-07-14, M0 of [[raw-pipeline-decision]])
+
+Three schemas for the new raw pipeline, namespace `io.tibobit.orderbook`, each with an
+`_example.json`, registered by `scripts/warmup.sh` as canonical fixed-name subjects (no
+per-topic subjects). Intended as TRUE Confluent Avro wire format once the jobs exist.
+
+**`raw_order_book_event.avsc`** — record `RawOrderBookEvent`, subject `raw-order-book-event`.
+The ONE shared event on all job 1–4 topics (`ex{id}-p{id}-raw-flink` etc. — no side segment;
+side split happens in job 6). Fields: `exchange_id:int`, `pair_id:int`,
+`type:enum Type(snapshot|update)`, `sequence_id:["null","long"]`, `sequence_jump:long`,
+`event_time:timestamp-millis`, `asks`/`bids`: nullable arrays of `PriceLevel{price:string,
+quantity:string}`. Design decisions (mine, 2026-07-14 — driven by the captured wire formats
+in `sample-raw-data.md`):
+
+- **`asks`/`bids` nullable, default null**: null = "this side is not part of this event" —
+  required for ex3 wallex per-SIDE snapshots. An EMPTY array is different: the exchange
+  reported that side empty (for a snapshot: clear the side). Never conflate the two.
+- **`sequence_id` nullable**: null = the feed has no ordering field at all (only ex3) —
+  job 2 must pass such events through unchecked. For everyone else job 1 fills it from the
+  per-exchange ordering field (ex1/2/4 `pub.offset`, ex5 `seq`, ex6 `u`, ex8 `ts` as long).
+- **`sequence_jump` semantics**: >0 = delta feed, job-2 gap rule `seq == last + jump`
+  (ex6=1, ex8=300); **0 = snapshot feed** — no gap rule, only the out-of-order check
+  (drop if not strictly greater than last seen). Differs from the old `orderbook_event.avsc`
+  where jump was always a real increment.
+- **`event_time` required**: exchange-reported ms where available; **ex3 has no timestamp on
+  the wire, so job 1 stamps processing time there** (judgment call — flag at job-1 impl).
+
+**`order_book_snapshot.avsc`** — record `OrderBookSnapshot`, subject `order-book-snapshot`.
+Job-5 output (full maintained book per (exchange, pair)): `exchange_id`, `pair_id`,
+`event_time`, `last_sequence_id:["null","long"]` (null for ex3), required `asks[]`/`bids[]`
+of `PriceLevel`.
+
+**`rejected_order_book_event.avsc`** — record `RejectedOrderBookEvent`, subject
+`rejected-order-book-event`. Dead-letter envelope: `event:RawOrderBookEvent` (full inline
+definition — kept field-for-field identical to `raw_order_book_event.avsc`; update BOTH if
+one changes), `reject_reason:string` (human-readable, e.g. "sequence gap: expected X, got Y"),
+`rejected_at:timestamp-millis` (job-2 processing time).
+
+`PriceLevel`/`Type` are duplicated across these files with IDENTICAL definitions on purpose
+(Avro codegen tolerates identical redefinitions; divergent ones break the build).
+
 ## Which schemas are real wire encoding vs documentation-only
 
 `price_level_event.avsc` and `consolidated_order_book_event.avsc` are **TRUE Confluent Avro wire
