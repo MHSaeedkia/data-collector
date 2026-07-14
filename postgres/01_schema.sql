@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS currencies (
 -- create table
 CREATE TABLE IF NOT EXISTS markets (
     id BIGSERIAL PRIMARY KEY,
-    base_id BIGINT NOT NULL REFERENCES currencies(id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    quote_id BIGINT NOT NULL REFERENCES currencies(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    base_id BIGINT NOT NULL REFERENCES currencies(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    quote_id BIGINT NOT NULL REFERENCES currencies(id) ON DELETE CASCADE ON UPDATE CASCADE,
     price_precision INTEGER,
     quantity_precision INTEGER,
     display_price_precision INTEGER,

@@ -48,17 +48,57 @@ the R3-postponed block lives on in `memory/project_orderbook_consolidator_decisi
 
 ## Milestone 0 — Contracts & prerequisites (blocks everything)
 
-- [x] Collect REAL sample raw payloads per exchange — DONE 2026-07-13, see `sample-raw-data.md`
-      (fetched from live `ex{id}-raw` topics via kafka-ui). Found **7 live exchanges**, not 3:
-      nobitex, bitpin, wallex, ramzinex, bitget, bybit, ompfinex (okx in DB, no topic yet).
-      Three regimes: full-snapshot-per-msg (ex1/2/4), per-SIDE snapshot no-seq (ex3),
-      delta-with-seq (ex5/6/7). Remaining gaps for fixtures:
-      - [ ] capture a bybit `type:snapshot` + bitget `action:update` + ompfinex initial-book
-            frame (none in the latest-200 window)
-      - [ ] investigate seq anomalies before job-2 rules: bitget non-monotonic `seq`,
-            bybit `u` gaps, ompfinex `U`/`u` range gaps (NiFi losing messages?)
-      - [ ] ex1 had multi-document Kafka records (2 newline-joined JSON docs, mixed channels) —
-            job 1 must split records
+- [ ] Collect sample raw payloads per exchange — **RESET 2026-07-14**: the 2026-07-13 bulk
+      capture was discarded (recoverable from git); rebuilding into `sample-raw-data.md`
+      **one exchange at a time**, each verified before moving on:
+      - [x] ex1 nobitex — captured 2026-07-14 (snapshot regime + Centrifugo envelope
+            re-confirmed, channel format differs from ex2; `pub.offset` = out-of-order
+            check field (REVISED 2026-07-14) + records always single-doc — see
+            sample-raw-data.md)
+      - [x] ex2 bitpin — captured 2026-07-14 (snapshot regime + Centrifugo envelope
+            re-confirmed; `pub.offset` = out-of-order check field (REVISED 2026-07-14) —
+            see sample-raw-data.md)
+      - [x] ex3 wallex — captured 2026-07-14 (per-side snapshot regime + numeric JSON
+            prices re-confirmed; NOT Centrifugo — `["{market}@{side}", [levels]]` array;
+            no seq/timestamp at all ⚠ ONLY exchange with no out-of-order protection —
+            see sample-raw-data.md)
+      - [x] ex4 ramzinex — captured 2026-07-14 (full-snapshot regime + numeric JSON prices
+            re-confirmed; Centrifugo but channel key is a NUMERIC market id `orderbook:12`;
+            7-element level arrays, `sells` sorted descending (best ask LAST); no seq —
+            `pub.offset` = out-of-order check field (REVISED 2026-07-14) — see
+            sample-raw-data.md)
+      - [x] ex5 bitget — captured 2026-07-14 (snapshot-only re-confirmed, and explicit on
+            the wire: `action: "snapshot"` — first exchange with a discriminator; NOT
+            Centrifugo — `action`/`arg`/`data` shape, `data` is an ARRAY; string levels;
+            **`seq` = out-of-order check field (REVISED 2026-07-14)** — no gap/jump rule,
+            just drop stale snapshots; `pseq` metadata — see sample-raw-data.md)
+      - [x] ex6 bybit — captured 2026-07-14 (snapshot + delta samples; regime re-confirmed:
+            snapshot/delta via `type` discriminator; NOT Centrifugo — `topic`/`ts`/`type`/
+            `data`/`cts` shape; string levels; **sequence id = `u`, jump = 1**
+            (user-confirmed, re-confirmed 2026-07-14: "bybit u gap is 1") — `data.seq` is
+            NOT contiguous, ignore for gaps; qty-"0" delete frame still to capture — see
+            sample-raw-data.md)
+      - [~] ex7 ompfinex — POSTPONED 2026-07-14 (team decision — known issue with its raw
+            data). Revisit when the raw feed is fixed.
+      - [x] ex8 okx — captured 2026-07-14 (snapshot + update samples — topic-existence caveat
+            settled, feed is live; regime: snapshot/update via `action` discriminator; bitget-
+            family envelope (`arg`/`action`/`data`-array) but grouped book `books-grouped` +
+            `grouping`, market key `arg.instId` = `BTC-USDT` with a DASH; string levels;
+            **sequence id = `ts` (string epoch-millis), jump = 300** (user-confirmed);
+            **qty-"0" delete CONFIRMED on wire** — first delete frame in the set — see
+            sample-raw-data.md).
+            Scope = **ex1–ex6 + ex8** (ex7 postponed).
+      - [x] re-verify while rebuilding — DONE 2026-07-14: three regimes ✅; Centrifugo
+            envelope on ex1/2/4 ✅; wallex/ramzinex numeric prices ✅; bitget snapshot-only ✅
+            (`seq` = out-of-order field, no gap rule); bybit `u` jump=1 ✅ (re-confirmed);
+            ex1 multi-doc records CLOSED (user: always ONE doc, no splitting); bybit `u`
+            gaps CLOSED (user: skip NiFi investigation — job 2's drop+await-snapshot gap
+            rule absorbs the upstream loss).
+            **Job-2 validation scope (REVISED 2026-07-14, user): gap/jump rules ONLY for
+            the delta feeds ex6 (`u`/1) + ex8 (`ts`/300); snapshot feeds get an
+            OUT-OF-ORDER check instead — drop any snapshot whose ordering field is not
+            greater than the last seen (ex1/2/4 `pub.offset`, ex5 `seq`; ex3 has no field
+            → no protection possible).**
 - [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange,
       who creates the raw topics, retention. → verify: written agreement in
       `memory/project_raw_pipeline_decision.md`
@@ -106,13 +146,16 @@ TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Mi
 
 - [ ] `RawExchangeParser` interface: `byte[] payload → List<RawOrderBookEvent>` (pair still as
       the exchange's market string at this point) + one implementation per exchange, selected
-      by `exchange_id` parsed from the source topic name. Test-first against the real fixtures
+      by `exchange_id` parsed from the source topic name. Test-first against the real fixtures.
+      Scope: ex1–ex6 + ex8 parsers (ex7/ompfinex postponed — see M0)
 - [ ] Market-string → `pair_id` resolution via `RefreshingLookup` over
       `exchange_markets(exchange_id, market) → market_id`; unknown market string → log + drop
       (+ counter) — NOT dead-letter (dead-letter is job-2's validation concern)
 - [ ] Source: `KafkaSource<byte[]>` pattern `^ex[0-9]+-raw$`, earliest-or-latest decision
       (propose `latest`, consistent with consolidator), Kafka metadata needed: topic name (for
-      exchange_id) — use a `KafkaRecordDeserializationSchema` that captures topic
+      exchange_id) — use a `KafkaRecordDeserializationSchema` that captures topic.
+      NOTE: pattern also matches the postponed `ex7-raw` — decide at implementation whether to
+      exclude it from the pattern or drop-with-counter on missing parser
 - [ ] Sink: `KafkaSink` with topic selector `ex{exchange_id}-p{pair_id}-raw-flink`, Avro via
       registry subject `raw-order-book-event`
 - [ ] `PairExtractorJob.main`: env config (`KAFKA_BOOTSTRAP_SERVERS`, `SCHEMA_REGISTRY_URL`,

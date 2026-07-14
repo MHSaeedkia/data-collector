@@ -1,1017 +1,500 @@
 # Raw Topic Sample Data (`ex{id}-raw`)
 
-Captured 2026-07-13 from kafka-ui at `http://192.168.150.104:8080/` (cluster `local`), latest 200
-messages per topic via the messages API. Every record: **key = null**, single partition, value =
-verbatim exchange payload as forwarded by NiFi (no envelope added by NiFi).
+> **RESET 2026-07-14**: the 2026-07-13 bulk capture (kafka-ui latest-200 per topic) was
+> discarded — samples are being rebuilt **one exchange at a time**. The old file is
+> recoverable from git if ever needed. Each section below gets filled as its sample is
+> captured and verified.
+>
+> Findings from the discarded capture (regimes, envelopes, wire types, seq anomalies) are
+> summarized in `memory/project_raw_pipeline_decision.md` — treat them as **to re-verify**
+> while each exchange's sample is rebuilt, not as confirmed ground truth.
+>
+> **Message types (rule, FINAL 2026-07-14)**: raw topics carry **snapshot** and **update**
+> messages, and MAY contain **other data** (acks, pings, other channels, …). **Anything that
+> is not a recognized book message is silently discarded by job 1** — whitelist parse: drop,
+> never crash, never dead-letter. User decision 2026-07-14: capturing example non-book frames
+> is NOT required; the drop rule is simply "not a recognized book frame ⇒ discard".
 
-Exchange id ↔ name mapping confirmed from the server's `exchanges` table; the market identifier
-embedded in each payload's channel/topic string is exactly `exchange_markets.market` for that
-exchange (verified against the server's subscribed rows).
-
-| Topic     | Exchange | Style                                                 | Market key in payload                              | Sequence fields                 | Price/qty wire type                  |
-| --------- | -------- | ----------------------------------------------------- | -------------------------------------------------- | ------------------------------- | ------------------------------------ |
-| `ex1-raw` | nobitex  | full book (24×24) every msg                           | channel `public:orderbook-{MARKET}`                | `pub.offset`, `lastUpdate` (ms) | strings                              |
-| `ex2-raw` | bitpin   | full book (50×50) every msg                           | channel `orderbook:{MARKET}`                       | `pub.offset`, `event_time`      | strings (but `price` field = number) |
-| `ex3-raw` | wallex   | full book, **one side per msg** (≤50)                 | event name `{MARKET}@buyDepth\|sellDepth`          | **none**                        | **numbers**                          |
-| `ex4-raw` | ramzinex | full book (50×50) every msg                           | channel `orderbook:{MARKET}` (numeric)             | `pub.offset`, per-row ts (ms)   | **numbers**                          |
-| `ex5-raw` | bitget   | `action: snapshot\|update` (only `snapshot` observed) | `arg.instId`                                       | `seq`, `pseq`, `ts`             | strings                              |
-| `ex6-raw` | bybit    | `type: snapshot\|delta` (only `delta` observed)       | topic `orderbook.50.{MARKET}`, `data.s`            | `u`, `seq`, `ts`, `cts`         | strings                              |
-| `ex7-raw` | ompfinex | delta only (Binance-style diff)                       | channel `public-market:r-depth-{MARKET}` (numeric) | `U`/`u` range, `pub.offset`     | strings                              |
-
-The server DB also has exchange **8 = okx**, but no `ex8-raw` topic exists yet.
-
-`ex1`, `ex2`, `ex4`, `ex7` are wrapped in a Centrifugo push envelope:
-`{"push": {"channel": ..., "pub": {"data": <payload>, "offset": <int>}}}` — `pub.offset` is the
-per-channel Centrifugo publication counter.
+| Topic     | Exchange | Sample status                 |
+| --------- | -------- | ----------------------------- |
+| `ex1-raw` | nobitex  | ✅ captured 2026-07-14 (snapshot; always single-doc per user) |
+| `ex2-raw` | bitpin   | ✅ captured 2026-07-14 (snapshot) |
+| `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
+| `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
+| `ex5-raw` | bitget   | ✅ captured 2026-07-14 (snapshot; `seq` used for out-of-order check only) |
+| `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture) |
+| `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
+| `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
 
 ---
 
 ## ex1-raw — nobitex
 
-- Channel `public:orderbook-{MARKET}` (e.g. `public:orderbook-SOLIRT`).
-- `data`: `asks`/`bids` = arrays of `["price","quantity"]` **strings**; always 24 levels per side
-  in the sample (top-24 book, full replacement each message); plus `lastTradePrice` (string),
-  `lastUpdate` (epoch ms).
-- No update/delta variant observed — every message is a full snapshot.
+**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
+message** — "we have only snapshots" (user statement). Centrifugo push envelope re-confirmed.
 
-Verbatim record (offset 27437, 2026-07-13T08:25:02.707Z):
+Sample (pretty-printed; level arrays trimmed — the real message carried **24 levels per side**,
+so depth is NOT the fixed 50 bitpin uses; possibly variable):
 
 ```json
 {
-	"push": {
-		"channel": "public:orderbook-SOLUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["76.711", "1"],
-					["76.733", "2.298"],
-					["76.748", "70.5"],
-					["76.76", "0.958"],
-					["76.765", "1.693"],
-					["76.8", "1.612"],
-					["77.134", "0.262"],
-					["77.135", "38.834"],
-					["77.2", "3.846"],
-					["77.3", "2.011"],
-					["77.38", "1.084"],
-					["77.4", "2.302"],
-					["77.406", "0.129"],
-					["77.499", "1.314"],
-					["77.6", "3.997"],
-					["77.8", "17.849"],
-					["77.9", "95.94"],
-					["78", "6.156"],
-					["78.054", "0.128"],
-					["78.23", "0.27"],
-					["78.453", "1.861"],
-					["78.49", "10"],
-					["78.499", "1.273"],
-					["78.5", "0.708"]
-				],
-				"bids": [
-					["76.55", "0.6"],
-					["76.477", "1"],
-					["76.445", "1"],
-					["76.444", "6.63"],
-					["76.403", "0.163"],
-					["76.4", "32.107"],
-					["76.35", "3.145"],
-					["76.218", "18.7"],
-					["76.217", "0.076"],
-					["76.2", "2.312"],
-					["76.15", "5"],
-					["76.148", "9.191"],
-					["76.121", "6.568"],
-					["76.117", "38.834"],
-					["76", "14.497"],
-					["75.9", "1.317"],
-					["75.82", "0.202"],
-					["75.6", "0.251"],
-					["75.58", "0.568"],
-					["75.5", "4.536"],
-					["75.2", "1.329"],
-					["75.195", "0.083"],
-					["75.18", "1"],
-					["75.1", "1"]
-				],
-				"lastTradePrice": "76.55",
-				"lastUpdate": 1783931102472
-			},
-			"offset": 1204296
-		}
-	}
+  "push": {
+    "channel": "public:orderbook-BTCUSDT",
+    "pub": {
+      "data": {
+        "asks": [
+          ["62678", "0.000963"],
+          ["62679.87", "0.004151"],
+          ["62679.91", "0.004663"]
+        ],
+        "bids": [
+          ["62669", "0.010863"],
+          ["62600", "0.110842"],
+          ["62571.82", "0.031963"]
+        ],
+        "lastTradePrice": "62669",
+        "lastUpdate": 1784021328931
+      },
+      "offset": 33259
+    }
+  }
 }
 ```
 
-### ⚠ Multi-document records
+Parsing notes (job 1):
 
-3 of 200 records contained **two newline-concatenated JSON documents in one Kafka record** — and
-they can belong to **different channels**. Job 1 must split records into consecutive JSON
-documents, not assume one document per record.
-
-Verbatim record (offset 27353, 2026-07-13T08:24:53.656Z):
-
-```json
-{"push":{"channel":"public:orderbook-XRPIRT","pub":{"data":{"asks":[["1942090","494.4"],["1942130","43.5"],["1947470","8.8"],["1947480","50"],["1947500","22.6"],["1949420","647.4"],["1950000","1099.7"],["1950500","20"],["1954900","14"],["1954950","29.5"],["1960000","90"],["1960070","0.3"],["1960080","570.8"],["1960100","702.1"],["1960990","505.3"],["1961000","961.3"],["1961110","505.2"],["1961200","761.1"],["1964770","0.3"],["1965000","199.2"],["1969630","0.3"],["1969970","167.2"],["1969990","101.3"],["1970000","523.2"]],"bids":[["1939850","11.3"],["1939840","0.6"],["1939830","37.8"],["1938170","88.4"],["1938110","9.9"],["1937270","50"],["1937250","0.3"],["1934970","9.8"],["1934960","5.1"],["1934940","100"],["1932960","100.3"],["1932000","1"],["1931000","18.4"],["1930710","12"],["1930020","380.2"],["1930000","2040.6"],["1929970","207.2"],["1929960","2520.9"],["1928000","100.3"],["1927430","648.3"],["1926000","255.4"],["1925000","5.3"],["1924130","0.3"],["1921710","152.7"]],"lastTradePrice":"1939840","lastUpdate":1783931093471},"offset":1079308}}}
-{"push":{"channel":"public:orderbook-SOLIRT","pub":{"data":{"asks":[["138132630","1"],["138132640","0.496"],["138132700","2.609"],["138132860","0.324"],["138137260","13.119"],["138137270","0.265"],["138151720","0.004"],["138200000","0.228"],["138500000","2.456"],["138557190","0.004"],["138997750","3"],["139000000","62.574"],["139055000","0.004"],["139400060","0.88"],["139460000","1.417"],["139490000","2.229"],["139500000","5.069"],["139779740","0.004"],["139900000","0.019"],["140000000","48.205"],["140170000","0.1"],["140180000","0.1"],["140267200","0.004"],["140295410","2.888"]],"bids":[["137129740","1.035"],["137129730","1.218"],["137096850","0.232"],["136939020","0.021"],["136939010","3.358"],["136543940","0.004"],["136300000","0.512"],["136230460","9.167"],["136200000","0.59"],["136100000","5"],["136084460","0.023"],["136047030","0.004"],["136000050","0.011"],["136000000","18.344"],["135952550","0.004"],["135950000","0.073"],["135762680","0.072"],["135648440","0.004"],["135531050","0.011"],["135500000","0.983"],["135400000","0.078"],["135373750","0.09"],["135300000","0.1"],["135240500","0.004"]],"lastTradePrice":"136950170","lastUpdate":1783931093466},"offset":1399335}}}
-```
-
----
+- **Envelope**: same Centrifugo `push` → `pub` → `data` as bitpin, but the channel format
+  differs: `public:orderbook-{market}` (here `BTCUSDT`) vs bitpin's `orderbook:{market}`.
+  NO `symbol` field inside `data` — the channel string is the ONLY market key.
+- **Levels**: `bids`/`asks` are `[price, qty]` **string** pairs ✅ (asks listed first in the
+  payload; asks price-ascending, bids price-descending). Prices may lack decimals (`"62678"`).
+- **`lastTradePrice` is a string** ✅ (unlike bitpin's numeric `price`); `lastUpdate` is
+  epoch-millis as a JSON number — both metadata, not book levels.
+- **No snapshot/update discriminator** — no `event`/type field at all; snapshot regime implied
+  by the feed.
+- **No seq field in `data`**; **ordering field for the job-2 out-of-order check =
+  `pub.offset`** (REVISED 2026-07-14, user: snapshot feeds still need out-of-order
+  detection — drop any message whose ordering value is not greater than the last seen.
+  No gap/jump rule; gaps self-heal on the next snapshot). `data.lastUpdate` (epoch-millis)
+  is a fallback candidate if `pub.offset` ever proves unreliable.
+- **Multi-doc records: CLOSED 2026-07-14 (user)** — ex1 records always contain ONE JSON
+  document; the discarded-capture 2-newline-concatenated-docs lead was an artifact. No
+  splitting logic in job 1.
 
 ## ex2-raw — bitpin
 
-- Channel `orderbook:{MARKET}` with `MARKET` like `BTC_IRT` (underscore form = `exchange_markets.market`).
-- `data`: `asks`/`bids` = arrays of `["price","quantity"]` **strings**, 50 levels per side (bids
-  occasionally fewer); `event` = always `"market_data"` (200/200); `symbol`, `event_time`
-  (ISO-ish string), `price` (last price, **JSON number**), `volume_ask`/`volume_bid` (strings).
-- Full snapshot every message; no delta variant observed.
+**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
+message** — "always we have snapshot" (user statement). Centrifugo push envelope re-confirmed.
 
-Verbatim record (offset 55173, 2026-07-13T08:25:22.849Z):
+Sample (pretty-printed; level arrays trimmed — the real message carried **50 levels per side**):
 
 ```json
 {
-	"push": {
-		"channel": "orderbook:TRX_USDT",
-		"pub": {
-			"data": {
-				"bids": [
-					["0.3299", "549.62"],
-					["0.3291", "91.19"],
-					["0.3288", "60.59"],
-					["0.3284", "10153.80"],
-					["0.3283", "10163.06"],
-					["0.3282", "21760.53"],
-					["0.3281", "22004.83"],
-					["0.3280", "10849.73"],
-					["0.3279", "46520.09"],
-					["0.3278", "21624.33"],
-					["0.3275", "139870.95"],
-					["0.3274", "103699.44"],
-					["0.3273", "35927.03"],
-					["0.3272", "35032.88"],
-					["0.3271", "71716.78"],
-					["0.3270", "140714.71"],
-					["0.3269", "102152.19"],
-					["0.3268", "35530.07"],
-					["0.3260", "90.52"],
-					["0.3255", "122.94"],
-					["0.3250", "3330.38"],
-					["0.3248", "121.95"],
-					["0.3205", "114.29"],
-					["0.3194", "2097.68"],
-					["0.3151", "93.37"],
-					["0.3150", "31.74"],
-					["0.3100", "32.25"],
-					["0.3000", "1436.54"],
-					["0.2907", "3.54"],
-					["0.2687", "12.44"],
-					["0.2684", "186.28"],
-					["0.2488", "60.60"],
-					["0.2345", "4.26"],
-					["0.2008", "2598.78"],
-					["0.2000", "108.50"],
-					["0.1808", "303.03"],
-					["0.1592", "0.50"],
-					["0.1555", "12.86"],
-					["0.1408", "121.21"],
-					["0.1208", "60.60"],
-					["0.0664", "1.80"]
-				],
-				"asks": [
-					["0.3311", "18448.94"],
-					["0.3312", "20698.13"],
-					["0.3313", "11569.64"],
-					["0.3314", "10857.83"],
-					["0.3315", "21765.34"],
-					["0.3316", "22356.02"],
-					["0.3319", "35689.82"],
-					["0.3320", "175566.57"],
-					["0.3321", "210971.99"],
-					["0.3322", "140870.11"],
-					["0.3323", "35654.31"],
-					["0.3324", "33817.10"],
-					["0.3326", "35500.50"],
-					["0.3327", "35550.78"],
-					["0.3330", "648.73"],
-					["0.3335", "830.65"],
-					["0.3336", "1238.82"],
-					["0.3340", "362.79"],
-					["0.3344", "151.42"],
-					["0.3348", "694.14"],
-					["0.3350", "98.88"],
-					["0.3360", "33.94"],
-					["0.3362", "30.06"],
-					["0.3364", "531.26"],
-					["0.3365", "390.71"],
-					["0.3371", "247.77"],
-					["0.3384", "3117.03"],
-					["0.3385", "4264.41"],
-					["0.3390", "329.96"],
-					["0.3396", "60.04"],
-					["0.3399", "108.74"],
-					["0.3400", "4289.62"],
-					["0.3420", "885.01"],
-					["0.3440", "84.21"],
-					["0.3450", "642.70"],
-					["0.3453", "548.33"],
-					["0.3454", "526.42"],
-					["0.3456", "3.79"],
-					["0.3460", "93.12"],
-					["0.3468", "29.89"],
-					["0.3500", "21489.53"],
-					["0.3533", "272.45"],
-					["0.3558", "478.08"],
-					["0.3560", "378.66"],
-					["0.3590", "241.38"],
-					["0.3600", "1213.61"],
-					["0.3604", "5435.54"],
-					["0.3612", "360.35"],
-					["0.3619", "120.23"],
-					["0.3650", "1555.11"]
-				],
-				"volume_ask": "861104.46",
-				"volume_bid": "819367.88",
-				"symbol": "TRX_USDT",
-				"event": "market_data",
-				"price": 0.3311,
-				"event_time": "2026-07-13T08:25:22.699081Z"
-			},
-			"offset": 7955331
-		}
-	}
+  "push": {
+    "channel": "orderbook:BTC_USDT",
+    "pub": {
+      "data": {
+        "bids": [
+          ["62672.30", "0.01003106"],
+          ["62655.92", "0.01368489"],
+          ["62653.15", "0.00645139"]
+        ],
+        "asks": [
+          ["62714.50", "0.01387100"],
+          ["62720.77", "0.00970970"],
+          ["62727.04", "0.00679679"]
+        ],
+        "volume_ask": "3.04336136",
+        "volume_bid": "2.83692543",
+        "symbol": "BTC_USDT",
+        "event": "market_data",
+        "price": 62687.34,
+        "event_time": "2026-07-14T05:56:09.833955Z"
+      },
+      "offset": 11286199
+    }
+  }
 }
 ```
 
----
+Parsing notes (job 1):
+
+- **Envelope**: Centrifugo `push` → `pub` → `data`; market key is in `push.channel`
+  (`orderbook:{market}`, here `BTC_USDT`) and duplicated in `data.symbol`.
+- **Levels**: `bids`/`asks` are `[price, qty]` **string** pairs ✅ (BigDecimal-from-string,
+  no numeric-literal hazard for the levels). Bids sorted price-descending, asks ascending.
+- **⚠ `data.price` is a JSON number** (last price, not a book level) — irrelevant to the book,
+  but if ever read, it needs `USE_BIG_DECIMAL_FOR_FLOATS`.
+- **No snapshot/update discriminator** — `event` is always `market_data`; snapshot regime is
+  implied by the feed, not flagged per message.
+- **No seq field in `data`**; **ordering field for the job-2 out-of-order check =
+  `pub.offset`** (REVISED 2026-07-14, user — drop stale/out-of-order snapshots; no
+  gap/jump rule). `event_time` (ISO string) is a fallback candidate.
+- `volume_ask`/`volume_bid`, `event_time`: metadata, not book levels.
 
 ## ex3-raw — wallex
 
-- Socket.io-style array: `["{MARKET}@buyDepth", [levels...]]` — **one side per message**
-  (`buyDepth` = bids, `sellDepth` = asks), 37–50 levels, full replacement of that side.
-- Levels are objects `{"price": num, "quantity": num, "sum": num}` — **JSON numbers, not
-  strings** (BigDecimal must be parsed from the decimal literal, never via double).
-- **No sequence field of any kind** — job 2 has nothing to validate here except arrival order.
+**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot per SIDE** —
+"only has snapshot and asks and bids are not in same message" (user statement). Each Kafka
+record carries ONE side of the book; the two sides arrive as separate messages.
 
-Verbatim record (offset 343417, 2026-07-13T08:25:39.637Z):
+Samples (pretty-printed; level arrays trimmed — each real message carried **50 levels**):
 
 ```json
-[
-	"TRXUSDT@buyDepth",
-	[
-		{ "price": 0.32875, "quantity": 1690.4, "sum": 555.719 },
-		{ "price": 0.3287, "quantity": 59.4, "sum": 19.52478 },
-		{ "price": 0.32818, "quantity": 1497.3, "sum": 491.383914 },
-		{ "price": 0.327, "quantity": 4.9, "sum": 1.6023 },
-		{ "price": 0.32694, "quantity": 1653.3, "sum": 540.529902 },
-		{ "price": 0.3257, "quantity": 1825.6, "sum": 594.59792 },
-		{ "price": 0.32542, "quantity": 820.3, "sum": 266.942026 },
-		{ "price": 0.32521, "quantity": 1618, "sum": 526.18978 },
-		{ "price": 0.325, "quantity": 41.5, "sum": 13.4875 },
-		{ "price": 0.32446, "quantity": 2015.8, "sum": 654.046468 },
-		{ "price": 0.3244, "quantity": 104.1, "sum": 33.77004 },
-		{ "price": 0.32322, "quantity": 2225.9, "sum": 719.455398 },
-		{ "price": 0.322, "quantity": 12.5, "sum": 4.025 },
-		{ "price": 0.315, "quantity": 33.5, "sum": 10.5525 },
-		{ "price": 0.31, "quantity": 8, "sum": 2.48 },
-		{ "price": 0.305, "quantity": 10, "sum": 3.05 },
-		{ "price": 0.3, "quantity": 51.2, "sum": 15.36 },
-		{ "price": 0.2999, "quantity": 30, "sum": 8.997 },
-		{ "price": 0.2758, "quantity": 1229.5, "sum": 339.0961 },
-		{ "price": 0.273, "quantity": 87.2, "sum": 23.8056 },
-		{ "price": 0.26605, "quantity": 1104.2, "sum": 293.77241 },
-		{ "price": 0.25777, "quantity": 7, "sum": 1.80439 },
-		{ "price": 0.25, "quantity": 307, "sum": 76.75 },
-		{ "price": 0.23777, "quantity": 7, "sum": 1.66439 },
-		{ "price": 0.22585, "quantity": 2257.4, "sum": 509.83379 },
-		{ "price": 0.22, "quantity": 96.3, "sum": 21.186 },
-		{ "price": 0.21777, "quantity": 7, "sum": 1.52439 },
-		{ "price": 0.2119, "quantity": 126.2, "sum": 26.74178 },
-		{ "price": 0.2, "quantity": 225, "sum": 45 },
-		{ "price": 0.1866, "quantity": 57.8, "sum": 10.78548 },
-		{ "price": 0.17536, "quantity": 50, "sum": 8.768 },
-		{ "price": 0.17526, "quantity": 2841.4, "sum": 497.983764 },
-		{ "price": 0.14444, "quantity": 700, "sum": 101.108 },
-		{ "price": 0.09, "quantity": 1111.1, "sum": 99.999 },
-		{ "price": 0.03, "quantity": 3210, "sum": 96.3 },
-		{ "price": 0.0001, "quantity": 40000, "sum": 4 },
-		{ "price": 0.00001, "quantity": 100000, "sum": 1 }
-	]
-]
+["BTCUSDT@buyDepth", [
+  {"price": 62525.04, "quantity": 0.000451, "sum": 28.19879304},
+  {"price": 62424.28, "quantity": 0.02624,  "sum": 1638.0131072},
+  {"price": 62200,    "quantity": 0.068493, "sum": 4260.2646}
+]]
 ```
-
-Verbatim record (offset 343241, 2026-07-13T08:25:38.711Z):
 
 ```json
-[
-	"TRXTMN@sellDepth",
-	[
-		{ "price": 59808, "quantity": 92, "sum": 5502336 },
-		{ "price": 59809, "quantity": 69.9, "sum": 4180649.1 },
-		{ "price": 59810, "quantity": 2937.3, "sum": 175679913 },
-		{ "price": 59835, "quantity": 34, "sum": 2034390 },
-		{ "price": 60138, "quantity": 2214.4, "sum": 133169587.2 },
-		{ "price": 60139, "quantity": 10, "sum": 601390 },
-		{ "price": 60140, "quantity": 500, "sum": 30070000 },
-		{ "price": 60141, "quantity": 1, "sum": 60141 },
-		{ "price": 60142, "quantity": 87.8, "sum": 5280467.6 },
-		{ "price": 60143, "quantity": 10, "sum": 601430 },
-		{ "price": 60144, "quantity": 10, "sum": 601440 },
-		{ "price": 60145, "quantity": 10, "sum": 601450 },
-		{ "price": 60146, "quantity": 344, "sum": 20690224 },
-		{ "price": 60147, "quantity": 6.6, "sum": 396970.2 },
-		{ "price": 60148, "quantity": 779.5, "sum": 46885366 },
-		{ "price": 60150, "quantity": 229, "sum": 13774350 },
-		{ "price": 60198, "quantity": 187.4, "sum": 11281105.2 },
-		{ "price": 60200, "quantity": 420, "sum": 25284000 },
-		{ "price": 60295, "quantity": 1, "sum": 60295 },
-		{ "price": 60300, "quantity": 391.9, "sum": 23631570 },
-		{ "price": 60340, "quantity": 1, "sum": 60340 },
-		{ "price": 60350, "quantity": 1, "sum": 60350 },
-		{ "price": 60400, "quantity": 1, "sum": 60400 },
-		{ "price": 60430, "quantity": 1, "sum": 60430 },
-		{ "price": 60450, "quantity": 1, "sum": 60450 },
-		{ "price": 60500, "quantity": 43.4, "sum": 2625700 },
-		{ "price": 60530, "quantity": 2.5, "sum": 151325 },
-		{ "price": 60550, "quantity": 1, "sum": 60550 },
-		{ "price": 60600, "quantity": 18.8, "sum": 1139280 },
-		{ "price": 60650, "quantity": 1, "sum": 60650 },
-		{ "price": 60700, "quantity": 1, "sum": 60700 },
-		{ "price": 60743, "quantity": 1, "sum": 60743 },
-		{ "price": 60748, "quantity": 184, "sum": 11177632 },
-		{ "price": 60749, "quantity": 667.3, "sum": 40537807.7 },
-		{ "price": 60750, "quantity": 1, "sum": 60750 },
-		{ "price": 60850, "quantity": 1, "sum": 60850 },
-		{ "price": 60900, "quantity": 13.7, "sum": 834330 },
-		{ "price": 60950, "quantity": 1, "sum": 60950 },
-		{ "price": 60975, "quantity": 1, "sum": 60975 },
-		{ "price": 60986, "quantity": 161, "sum": 9818746 },
-		{ "price": 60988, "quantity": 14.2, "sum": 866029.6 },
-		{ "price": 61000, "quantity": 4332, "sum": 264252000 },
-		{ "price": 61030, "quantity": 1, "sum": 61030 },
-		{ "price": 61035, "quantity": 1, "sum": 61035 },
-		{ "price": 61050, "quantity": 1, "sum": 61050 },
-		{ "price": 61080, "quantity": 1, "sum": 61080 },
-		{ "price": 61100, "quantity": 1, "sum": 61100 },
-		{ "price": 61125, "quantity": 1, "sum": 61125 },
-		{ "price": 61150, "quantity": 1, "sum": 61150 },
-		{ "price": 61170, "quantity": 1, "sum": 61170 }
-	]
-]
+["BTCUSDT@sellDepth", [
+  {"price": 62579.56, "quantity": 0.004585, "sum": 286.9272826},
+  {"price": 62619.76, "quantity": 0.002,    "sum": 125.23952},
+  {"price": 62634.08, "quantity": 0.048566, "sum": 3041.88672928}
+]]
 ```
 
----
+Parsing notes (job 1):
+
+- **Envelope**: NOT Centrifugo — the top level is a 2-element JSON **array**:
+  `["{market}@{side}", [levels…]]`. Market key + side both live in that first string
+  (`BTCUSDT@buyDepth` / `BTCUSDT@sellDepth`); `buyDepth` = bids, `sellDepth` = asks.
+- **⚠ Levels are objects with JSON-NUMBER `price`/`quantity`** (re-confirms the discarded-capture
+  lead) — parsing MUST use Jackson `USE_BIG_DECIMAL_FOR_FLOATS` so BigDecimal comes from the
+  decimal literal, never via double. Prices may lack decimals (`62200`).
+- **`sum` = price × quantity per level** (verified on the sample; NOT cumulative) — derived
+  notional, metadata; ignore for the book.
+- **Sorting**: buyDepth (bids) price-descending, sellDepth (asks) price-ascending. 50 levels
+  per message in both samples.
+- **Per-side snapshots**: one message replaces ONE side only — the shared Avro event must
+  express "snapshot of side X", and job 5 must merge sides (replace one side at a time)
+  instead of assuming every snapshot carries both.
+- **No seq field, no timestamp, no event/type field anywhere** — ⚠ the ONLY exchange with
+  no usable ordering field, so the job-2 out-of-order check (REVISED 2026-07-14) cannot
+  apply here: with 1 partition, Kafka offset = arrival order, which is exactly what we
+  cannot validate against. ex3 gets no out-of-order protection.
 
 ## ex4-raw — ramzinex
 
-- Channel `orderbook:{MARKET}` where `MARKET` is ramzinex's numeric pair id (`exchange_markets.market`
-  stores these digits, e.g. `2`, `13`, `218`).
-- `data`: `buys`/`sells` = arrays of 7-element rows, all **JSON numbers**:
-  `[price, quantity, sum, false, null, N, timestamp_ms]` — elements 4–6 unverified (likely
-  is-own-order flag, ?, order-count); 50 levels per side (occasionally fewer). Full snapshot every message.
+**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
+message** (both sides present) — "for ramzinex we have snapshot" (user statement). Centrifugo
+push envelope re-confirmed.
 
-Verbatim record (offset 65970, 2026-07-13T08:25:32.05Z):
+Sample (pretty-printed; level arrays trimmed — the real message carried **50 levels per side**):
 
 ```json
 {
-	"push": {
-		"channel": "orderbook:27",
-		"pub": {
-			"data": {
-				"buys": [
-					[
-						0.32851,
-						942.717181,
-						309.69202113031,
-						false,
-						null,
-						48,
-						1783931131960
-					],
-					[
-						0.32564,
-						584.91366,
-						190.4712842424,
-						false,
-						null,
-						41,
-						1783930941273
-					],
-					[
-						0.32377,
-						3.8994,
-						1.262508738,
-						false,
-						null,
-						7,
-						1783930941273
-					],
-					[
-						0.32239,
-						496.09747,
-						159.9368633533,
-						false,
-						null,
-						38,
-						1783930941273
-					],
-					[0.31347, 1000, 313.47, false, null, 48, 1783930941273],
-					[
-						0.31262,
-						566.80256,
-						177.1938163072,
-						false,
-						null,
-						40,
-						1783930941273
-					],
-					[0.30041, 1000, 300.41, false, null, 48, 1783930941273],
-					[
-						0.29959,
-						468.29757,
-						140.2972689963,
-						false,
-						null,
-						36,
-						1783930941273
-					],
-					[0.2266, 12, 2.7192, false, null, 9, 1783930941273],
-					[0.2265, 100, 22.65, false, null, 19, 1783930941273],
-					[0.22, 20, 4.4, false, null, 11, 1783930941273],
-					[0.18, 10, 1.8, false, null, 8, 1783930941273],
-					[0.1, 332.4, 33.24, false, null, 22, 1783930941273],
-					[
-						0.07309,
-						22.4463,
-						1.640600067,
-						false,
-						null,
-						8,
-						1783930941273
-					],
-					[
-						0.01519,
-						87.7419,
-						1.332799461,
-						false,
-						null,
-						7,
-						1783930941273
-					],
-					[
-						0.01517,
-						236.1239,
-						3.581999563,
-						false,
-						null,
-						10,
-						1783930941273
-					],
-					[
-						0.01516,
-						95.6303,
-						1.4497553479999998,
-						false,
-						null,
-						7,
-						1783930941273
-					],
-					[
-						0.01515,
-						95.6303,
-						1.4487990450000001,
-						false,
-						null,
-						7,
-						1783930941273
-					],
-					[
-						0.00047,
-						12310.6382,
-						5.785999954,
-						false,
-						null,
-						12,
-						1783930941273
-					],
-					[
-						0.00044,
-						43795.4545,
-						19.269999979999998,
-						false,
-						null,
-						18,
-						1783930941273
-					],
-					[
-						0.00042,
-						33952.380899,
-						14.25999997758,
-						false,
-						null,
-						16,
-						1783930941273
-					],
-					[
-						0.00041,
-						88122.8571,
-						36.130371411,
-						false,
-						null,
-						23,
-						1783930941273
-					]
-				],
-				"sells": [
-					[70000, 1.0139, 70973, false, null, 323, 1783930941273],
-					[44800, 0.005, 224, false, null, 43, 1783930941273],
-					[42450, 0.0113, 479.685, false, null, 56, 1783930941273],
-					[34656, 0.2801, 9707.1456, false, null, 161, 1783930941273],
-					[11000, 3.9708, 43678.8, false, null, 272, 1783930941273],
-					[270, 2.284, 616.68, false, null, 61, 1783930941273],
-					[28, 7.3792, 206.6176, false, null, 42, 1783930941273],
-					[15, 1.4574, 21.861, false, null, 19, 1783930941273],
-					[
-						14.99982,
-						28.2469,
-						423.69841555799997,
-						false,
-						null,
-						54,
-						1783930941273
-					],
-					[12, 12, 144, false, null, 37, 1783930941273],
-					[5, 692.8425, 3464.2125, false, null, 112, 1783930941273],
-					[4, 11.45, 45.8, false, null, 25, 1783930941273],
-					[3, 8.2487, 24.7461, false, null, 20, 1783930941273],
-					[2, 2.5776, 5.1552, false, null, 11, 1783930941273],
-					[1.9, 1002.424, 1904.6056, false, null, 91, 1783930941273],
-					[
-						1.04,
-						3.7421,
-						3.8917840000000004,
-						false,
-						null,
-						10,
-						1783930941273
-					],
-					[1, 52.5563, 52.5563, false, null, 26, 1783930941273],
-					[0.9, 100.7472, 90.67248, false, null, 31, 1783930941273],
-					[0.75, 17.6295, 13.222125, false, null, 16, 1783930941273],
-					[
-						0.64123,
-						16.3775,
-						10.501744325,
-						false,
-						null,
-						15,
-						1783930941273
-					],
-					[0.55, 15, 8.25, false, null, 14, 1783930941273],
-					[
-						0.525,
-						24.1677,
-						12.6880425,
-						false,
-						null,
-						16,
-						1783930941273
-					],
-					[
-						0.52068,
-						13.1815,
-						6.86334342,
-						false,
-						null,
-						13,
-						1783930941273
-					],
-					[
-						0.50777,
-						3.7725,
-						1.9155623250000002,
-						false,
-						null,
-						8,
-						1783930941273
-					],
-					[
-						0.50126,
-						26.4442,
-						13.255419691999998,
-						false,
-						null,
-						16,
-						1783930941273
-					],
-					[0.5, 24.1676, 12.0838, false, null, 15, 1783930941273],
-					[
-						0.49999,
-						88.8341,
-						44.416161659000004,
-						false,
-						null,
-						24,
-						1783930941273
-					],
-					[0.44, 19.9367, 8.772148, false, null, 14, 1783930941273],
-					[0.43, 895.553, 385.08779, false, null, 52, 1783930941273],
-					[0.42, 228.358, 95.91036, false, null, 32, 1783930941273],
-					[
-						0.413,
-						1693.3795,
-						699.3657334999999,
-						false,
-						null,
-						64,
-						1783930941273
-					],
-					[0.38, 12.0349, 4.573262, false, null, 11, 1783930941273],
-					[
-						0.3712,
-						92485.200383,
-						34330.5063821696,
-						false,
-						null,
-						250,
-						1783930941273
-					],
-					[
-						0.36435,
-						98107.199672,
-						35745.3582004932,
-						false,
-						null,
-						254,
-						1783930941273
-					],
-					[
-						0.364,
-						72155.353536,
-						26264.548687104,
-						false,
-						null,
-						228,
-						1783930941273
-					],
-					[
-						0.36133,
-						303.89103,
-						109.80494586990001,
-						false,
-						null,
-						33,
-						1783930941273
-					],
-					[
-						0.361,
-						24881.689751,
-						8982.290000111001,
-						false,
-						null,
-						156,
-						1783930941273
-					],
-					[
-						0.36,
-						516.8892,
-						186.08011199999999,
-						false,
-						null,
-						40,
-						1783930941273
-					],
-					[
-						0.356,
-						28.2217,
-						10.0469252,
-						false,
-						null,
-						15,
-						1783930941273
-					],
-					[
-						0.3501,
-						28325.700087,
-						9916.827600458699,
-						false,
-						null,
-						162,
-						1783930941273
-					],
-					[0.35, 6.9825, 2.443875, false, null, 9, 1783930941273],
-					[
-						0.3499,
-						11375.139724,
-						3980.1613894275997,
-						false,
-						null,
-						118,
-						1783930941273
-					],
-					[
-						0.34794,
-						440.24558,
-						153.1790471052,
-						false,
-						null,
-						38,
-						1783930941273
-					],
-					[
-						0.338,
-						9915.651184,
-						3351.490100192,
-						false,
-						null,
-						111,
-						1783930941273
-					],
-					[0.33799, 545, 184.20455, false, null, 40, 1783930941273],
-					[
-						0.33791,
-						369.15494,
-						124.74114577540001,
-						false,
-						null,
-						35,
-						1783930941273
-					],
-					[
-						0.33537,
-						51.004,
-						17.10521148,
-						false,
-						null,
-						17,
-						1783930941273
-					],
-					[
-						0.33456,
-						584.91366,
-						195.68871408959998,
-						false,
-						null,
-						41,
-						1783930941273
-					],
-					[
-						0.334,
-						60.0609,
-						20.0603406,
-						false,
-						null,
-						18,
-						1783930941273
-					],
-					[
-						0.33399,
-						316.5587,
-						105.727440213,
-						false,
-						null,
-						33,
-						1783930941273
-					]
-				]
-			},
-			"offset": 7794547
-		}
-	}
+  "push": {
+    "channel": "orderbook:12",
+    "pub": {
+      "data": {
+        "buys": [
+          [62423.72, 0.011617, 725.17635524, false, null, 65, 1784025165152],
+          [62423.71, 0.00005, 3.1211855, false, null, 10, 1784024541991],
+          [62400, 0.00615, 383.76, false, null, 52, 1784024541991]
+        ],
+        "sells": [
+          [64490, 0.011219, 723.51331, false, null, 65, 1784024634304],
+          [64467.99, 0.0054599, 351.98877860100004, false, null, 50, 1784025196620],
+          [62616.58, 0.00159, 99.5603622, false, null, 32, 1784025263854]
+        ]
+      },
+      "offset": 5412464
+    }
+  }
 }
 ```
 
----
+Parsing notes (job 1):
+
+- **Envelope**: Centrifugo `push` → `pub` → `data` like ex1/ex2, but the channel market key is
+  a **numeric market id**: `orderbook:12` — NOT a symbol string. No symbol anywhere in `data`;
+  the channel's `12` must match `exchange_markets.market` for ramzinex.
+- **Sides named `buys`/`sells`** (not bids/asks), both in the same message.
+- **⚠ Levels are 7-element arrays with JSON-NUMBER price/quantity** (re-confirms the
+  discarded-capture lead) — `USE_BIG_DECIMAL_FOR_FLOATS` required. Prices may lack decimals
+  (`62400`). Layout: `[price, quantity, notional, false, null, smallInt, epochMillis]`.
+- **Elements 3–7 are metadata — ignore**: element 3 = price × quantity (verified on the
+  sample; shows binary-float artifacts like `694.9048600000001`, i.e. producer computed it
+  with doubles — one more reason to never touch doubles ourselves); element 4 always `false`,
+  element 5 always `null` (meaning unknown); element 6 a small int (10–74 in this sample,
+  meaning unverified — possibly order count); element 7 epoch-millis last-update per level.
+- **⚠ Sorting: BOTH sides price-descending** — buys best-first (descending is natural), but
+  `sells` are also descending, so the **best ask is the LAST element**. Don't assume
+  best-first ordering when parsing. 50 levels per side in this sample.
+- **No snapshot/update discriminator, no seq field in `data`** — **ordering field for the
+  job-2 out-of-order check = `pub.offset`** (REVISED 2026-07-14, user — drop
+  stale/out-of-order snapshots; no gap/jump rule). The per-level epoch-millis (element 7)
+  is per-level, not per-message — not an ordering candidate.
 
 ## ex5-raw — bitget
 
-- Native bitget v2 websocket frame: `action`, `arg{instType,channel,instId}`, `data[0]` with
-  `asks`/`bids` (string pairs, 50×50), `ts` (string, ms), `seq`, `pseq`.
-- `channel` = `books50`. **All 200 sampled messages are `action:"snapshot"` with `pseq:0`** —
-  either NiFi requests snapshots only, or `update` frames exist outside this window. The bitget
-  protocol also defines `action:"update"` (with `pseq` chaining to previous `seq`); **not observed**.
-- ⚠ Anomaly: per `instId`, `seq` is **not monotonic in topic order** (e.g. ETHUSDT
-  `…855106 → …856449 → …850557`). Suggests out-of-order production (multiple producer
-  threads/connections?). Must be understood before job 2's sequence rules are applied here.
+**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
+message** (both sides present) — "bitget (ex5) is all snapshot" (user statement), and the
+message itself says so: `action: "snapshot"` — the FIRST exchange with an explicit
+snapshot/update discriminator on the wire.
 
-Verbatim record (offset 183311, 2026-07-13T08:25:45.613Z):
+Sample (pretty-printed; level arrays trimmed — the real message carried **50 levels per side**,
+matching the `books50` channel name):
 
 ```json
 {
-	"action": "snapshot",
-	"arg": { "instType": "SPOT", "channel": "books50", "instId": "SOLUSDT" },
-	"data": [
-		{
-			"asks": [
-				["76.46", "170.4979"],
-				["76.47", "157.7384"],
-				["76.48", "615.7737"],
-				["76.49", "1140.6579"],
-				["76.5", "182.099"],
-				["76.51", "627.9033"],
-				["76.52", "624.5865"],
-				["76.53", "55.1059"],
-				["76.54", "115.2946"],
-				["76.55", "324.2526"],
-				["76.56", "444.9932"],
-				["76.57", "109.3573"],
-				["76.58", "70.1361"],
-				["76.59", "123.3304"],
-				["76.6", "484.5297"],
-				["76.61", "1538.7692"],
-				["76.62", "105.8116"],
-				["76.63", "53.889"],
-				["76.64", "42.9299"],
-				["76.65", "1455.9054"],
-				["76.66", "41.875"],
-				["76.67", "102.3301"],
-				["76.68", "19.3473"],
-				["76.69", "1245.5286"],
-				["76.7", "44.8301"],
-				["76.71", "1752.0342"],
-				["76.72", "1507.3683"],
-				["76.73", "1562.6898"],
-				["76.74", "42.3818"],
-				["76.75", "46.3257"],
-				["76.76", "42.5273"],
-				["76.77", "1387.9849"],
-				["76.78", "89.5718"],
-				["76.79", "1379.2252"],
-				["76.8", "49.0401"],
-				["76.81", "44.5152"],
-				["76.82", "44.001"],
-				["76.83", "42.2854"],
-				["76.84", "42.8768"],
-				["76.85", "45.5254"],
-				["76.86", "44.4216"],
-				["76.87", "42.2063"],
-				["76.88", "26.7454"],
-				["76.89", "25.4036"],
-				["76.9", "28.0739"],
-				["76.91", "25.8868"],
-				["76.92", "26.5738"],
-				["76.93", "26.3946"],
-				["76.94", "26.9588"],
-				["76.95", "26.4224"]
-			],
-			"bids": [
-				["76.45", "51.5912"],
-				["76.44", "479.8938"],
-				["76.43", "915.0479"],
-				["76.42", "289.525"],
-				["76.41", "825.7275"],
-				["76.4", "844.8768"],
-				["76.39", "504.3807"],
-				["76.38", "410.2058"],
-				["76.37", "774.379"],
-				["76.36", "453.7381"],
-				["76.35", "183.4227"],
-				["76.34", "633.5887"],
-				["76.33", "5348.0441"],
-				["76.32", "162.9463"],
-				["76.31", "1775.7804"],
-				["76.3", "42.0497"],
-				["76.29", "79.9366"],
-				["76.28", "43.1005"],
-				["76.27", "103.9208"],
-				["76.26", "1843.9421"],
-				["76.25", "43.9818"],
-				["76.24", "42.9056"],
-				["76.23", "5031.9493"],
-				["76.22", "2204.0303"],
-				["76.21", "2078.9875"],
-				["76.2", "83.1337"],
-				["76.19", "82.2922"],
-				["76.18", "44.6093"],
-				["76.17", "42.4303"],
-				["76.16", "42.17"],
-				["76.15", "45.3369"],
-				["76.14", "44.059"],
-				["76.13", "245.6265"],
-				["76.12", "44.1419"],
-				["76.11", "46.2055"],
-				["76.1", "49.0074"],
-				["76.09", "42.8702"],
-				["76.08", "25.2441"],
-				["76.07", "25.3952"],
-				["76.06", "25.3929"],
-				["76.05", "26.5849"],
-				["76.04", "25.4138"],
-				["76.03", "25.5596"],
-				["76.02", "25.3974"],
-				["76.01", "26.1239"],
-				["76", "39.3047"],
-				["75.99", "25.216"],
-				["75.98", "459.1078"],
-				["75.97", "26.6711"],
-				["75.96", "1094.7464"]
-			],
-			"ts": "1783931143931",
-			"seq": 748071887651,
-			"pseq": 0
-		}
-	],
-	"ts": 1783931143933
+  "action": "snapshot",
+  "arg": {
+    "instType": "SPOT",
+    "channel": "books50",
+    "instId": "BTCUSDT"
+  },
+  "data": [
+    {
+      "asks": [
+        ["62815", "0.021591"],
+        ["62815.9", "0.001"],
+        ["62817.32", "0.015919"]
+      ],
+      "bids": [
+        ["62814.99", "6.180672"],
+        ["62814.77", "0.1612"],
+        ["62814.23", "0.910845"]
+      ],
+      "ts": "1784026071995",
+      "seq": 655666926391,
+      "pseq": 0
+    }
+  ],
+  "ts": 1784026072003
 }
 ```
 
----
+Parsing notes (job 1):
+
+- **Envelope**: NOT Centrifugo — bitget's own WS shape: top-level `action` / `arg` / `data` /
+  `ts`. Market key is `arg.instId` (`BTCUSDT`, must match `exchange_markets.market`); `arg.channel`
+  is `books50` (depth encoded in the channel name), `arg.instType` is `SPOT`.
+- **`data` is an ARRAY** containing the book object (one element in this sample) — the parser
+  must unwrap the array, not treat `data` as an object.
+- **`action: "snapshot"` is an explicit discriminator** — unlike ex1–ex4, no need to infer the
+  regime from the feed. Snapshot-only per the user, so other `action` values are not expected
+  on the book channel (any unrecognized frame is discarded per the message-types rule above).
+- **Levels**: `asks`/`bids` are `[price, qty]` **string** pairs ✅ (BigDecimal-from-string, no
+  numeric-literal hazard). Asks price-ascending, bids price-descending (best-first both sides,
+  unlike ramzinex). Prices may lack decimals (`"62815"`, `"62800"`).
+- **`seq`: ordering field for the job-2 out-of-order check** (REVISED 2026-07-14, user:
+  snapshot feeds still need out-of-order detection — no gap/jump rule, but drop any message
+  whose `seq` is not greater than the last seen). Note the discarded capture showed
+  non-monotonic `seq` in the topic — under the revised rule that is no longer a reason to
+  distrust the field: it is exactly the out-of-order arrival the check exists to drop.
+  Inner `ts` (string epoch-millis) is a fallback candidate. `pseq` stays metadata.
+- **Two timestamps**: inner `ts` is a **string** epoch-millis (`"1784026071995"`), top-level
+  `ts` a JSON **number** (1784026072003, slightly later — likely send time). Metadata.
 
 ## ex6-raw — bybit
 
-- Native bybit v5 frame: `topic: "orderbook.50.{MARKET}"`, `type: "delta"`, `data{s, b, a, u, seq}`,
-  `ts`/`cts` (ms). `b`/`a` = changed levels only (string pairs, 0–70 per side, median 2);
-  **`quantity:"0"` means delete the level**.
-- Protocol also defines `type:"snapshot"` (sent on subscribe/reconnect); **not observed in the
-  latest 200** — a snapshot capture is still needed for fixtures.
-- ⚠ Anomaly: per symbol, `u` (update id) shows frequent gaps in topic order (e.g. 17 gaps across
-  53 SOLUSDT messages). If bybit guarantees contiguous `u` per symbol on one connection, messages
-  are being lost before/at NiFi. Directly affects job 2's gap rules — verify.
+**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: snapshot/delta** —
+"bybit is snapshot/update" (user statement). The FIRST of two exchanges in scope with true
+delta semantics (the other is ex8/okx); the discriminator is `type: "snapshot" | "delta"`.
 
-Verbatim record (offset 313000, 2026-07-13T08:25:48.594Z):
+**Sequence rule (user-confirmed 2026-07-14): the sequence id is `u`, and the expected jump
+is 1** (contiguous — snapshot `u: 126776811` → delta `u: 126776812` in the samples below).
+The separate `data.seq` field is NOT contiguous (…484 → …490 across the same two messages) —
+do not use it for gap detection.
 
-```json
-{
-	"topic": "orderbook.50.SOLUSDT",
-	"ts": 1783931148445,
-	"type": "delta",
-	"data": {
-		"s": "SOLUSDT",
-		"b": [["76.41", "173.8305"]],
-		"a": [["76.5", "764.1611"]],
-		"u": 76414790,
-		"seq": 155262345824
-	},
-	"cts": 1783931148441
-}
-```
-
-Delta containing `"0"` quantities (level deletions):
-
-Verbatim record (offset 313020, 2026-07-13T08:25:48.911Z):
+Snapshot sample (pretty-printed; level arrays trimmed — the real message carried **50 levels
+per side**, matching the depth in the topic name `orderbook.50.BTCUSDT`):
 
 ```json
 {
-	"topic": "orderbook.50.BTCUSDT",
-	"ts": 1783931148736,
-	"type": "delta",
-	"data": {
-		"s": "BTCUSDT",
-		"b": [
-			["63015.8", "0.0005"],
-			["63012.1", "0"]
-		],
-		"a": [],
-		"u": 124414028,
-		"seq": 111360615093
-	},
-	"cts": 1783931148729
+  "topic": "orderbook.50.BTCUSDT",
+  "ts": 1784027470176,
+  "type": "snapshot",
+  "data": {
+    "s": "BTCUSDT",
+    "b": [
+      ["62724.1", "0.407233"],
+      ["62723.6", "0.00012"],
+      ["62722.6", "0.002"]
+    ],
+    "a": [
+      ["62724.2", "0.529827"],
+      ["62724.3", "0.029207"],
+      ["62724.4", "0.029554"]
+    ],
+    "u": 126776811,
+    "seq": 111416318484
+  },
+  "cts": 1784027470170
 }
 ```
 
----
+Delta sample (verbatim, complete — deltas carry ONLY the changed levels):
+
+```json
+{
+  "topic": "orderbook.50.BTCUSDT",
+  "ts": 1784027470196,
+  "type": "delta",
+  "data": {
+    "s": "BTCUSDT",
+    "b": [
+      ["62709.4", "0.096404"]
+    ],
+    "a": [
+      ["62724.2", "0.529037"]
+    ],
+    "u": 126776812,
+    "seq": 111416318490
+  },
+  "cts": 1784027470192
+}
+```
+
+Parsing notes (job 1):
+
+- **NOT Centrifugo** — bybit's own WS shape: top-level `topic` / `ts` / `type` / `data` /
+  `cts`. Fifth distinct envelope shape in the set.
+- **Market key**: `data.s` (`BTCUSDT` → `exchange_markets.market`); also embedded in the
+  `topic` string (`orderbook.{depth}.{symbol}` — depth 50 encoded there, like bitget's
+  `books50`).
+- **`type` is the regime discriminator**: `"snapshot"` (full book, 50 levels/side) or
+  `"delta"` (only changed levels — a delta may touch one side only, or replace/insert/delete
+  levels). This is what job 2's snapshot/update classification reads.
+- **Sides are `b` (bids) / `a` (asks)** — abbreviated keys. On the snapshot: bids
+  price-descending, asks price-ascending — best-first on both sides. Delta level order
+  presumably follows the same convention (single-level sides here — unverified).
+- Levels are `[price, qty]` **string** pairs ✅ (no JSON-number hazard). Prices may lack
+  decimals (`"62720"`).
+- **Sequence**: `u` with jump 1 (see rule above) — the first exchange where job 2's
+  `sequence_id`/`sequence_jump` gap rules apply for real. `seq` is bybit-internal
+  (cross-topic per docs) — treat as metadata. `u` gaps in the topic mean real
+  upstream/NiFi-side loss (the discarded capture showed gaps between ~30% of consecutive
+  records) — **DECIDED 2026-07-14 (user): skip the NiFi investigation; job 2's gap rule
+  absorbs it** (on gap: drop until the next snapshot re-syncs the book).
+- **Delta delete = qty `"0"`** — lead from the discarded capture, NOT shown in these samples;
+  capture a real qty-"0" delta frame to confirm.
+- **Two timestamps**, both JSON numbers: `ts` (outer, likely gateway send time) and `cts`
+  (earlier — likely matching-engine time). Metadata.
+- **Still to capture**: a qty-"0" delete delta frame.
 
 ## ex7-raw — ompfinex
 
-- Centrifugo channel `public-market:r-depth-{MARKET}`, numeric market id (`exchange_markets.market`).
-- `data`: Binance-style diff-depth: `U` (first update id), `u` (final update id), `a`/`b` =
-  changed levels as `["price","quantity"]` strings (0–9 per side); **`quantity:"0"` = delete**.
-- Delta-only in the sample; no snapshot variant observed — how the initial book is obtained is
-  an open question for job 5's cold start.
-- ⚠ Anomaly: on some channels consecutive messages have `U > prev_u + 1` (missing ranges), e.g.
-  `r-depth-27`: `(…433,…436) → next U …438`. Same verification need as ex6.
+> ⚠ **POSTPONED 2026-07-14** (team decision): known issue with its raw data — excluded from
+> the initial pipeline scope.
 
-Verbatim record (offset 26608, 2026-07-13T08:25:24.453Z):
+## ex8-raw — okx
+
+**Captured 2026-07-14** (supplied by team — which also settles the earlier "no `ex8-raw`
+topic yet" caveat: the feed is live). Regime **re-confirmed: snapshot/update** — "okx has
+both" (user statement). The SECOND exchange in scope with true delta semantics (after
+ex6/bybit); the discriminator is `action: "snapshot" | "update"`.
+
+**Sequence rule (user-confirmed 2026-07-14): the sequence id is `ts`, and the expected jump
+is 300** — the epoch-millis timestamp inside the data object doubles as the sequence
+(`"1784028204900"` → `"1784028205200"`, exactly +300 in the samples below; i.e. a fixed
+300 ms publish cadence). Note it is a **string** on the wire — parse to long for the gap
+math. There is no `u`/`seq`-style counter field at all.
+
+Snapshot sample (pretty-printed; level arrays trimmed — the real message carried
+**150 levels per side** (both sides exactly 150 here — likely a fixed depth, unverified)):
 
 ```json
 {
-	"push": {
-		"channel": "public-market:r-depth-21",
-		"pub": {
-			"data": {
-				"u": 2411192,
-				"U": 2411191,
-				"a": [["0.3302", "0"]],
-				"b": [["0.3302", "2.13"]]
-			},
-			"offset": 94120
-		}
-	}
+  "arg": {
+    "channel": "books-grouped",
+    "instId": "BTC-USDT",
+    "grouping": "1"
+  },
+  "action": "snapshot",
+  "data": [
+    {
+      "asks": [
+        ["62770", "2.21924167"],
+        ["62771", "0.17447383"],
+        ["62772", "0.19067482"]
+      ],
+      "bids": [
+        ["62769", "0.50795335"],
+        ["62768", "0.02744953"],
+        ["62767", "0.20630833"]
+      ],
+      "ts": "1784028204900"
+    }
+  ]
 }
 ```
 
----
+Update sample (verbatim, complete — updates carry ONLY the changed levels; note the
+qty-`"0"` delete at ask `62773` and the brand-new ask level `62931`):
 
-## Consequences for the pipeline (feed into todo.md M0)
+```json
+{
+  "arg": {
+    "channel": "books-grouped",
+    "instId": "BTC-USDT",
+    "grouping": "1"
+  },
+  "action": "update",
+  "data": [
+    {
+      "asks": [
+        ["62771", "0.29045069"],
+        ["62772", "0.12"],
+        ["62773", "0"],
+        ["62777", "0.35307699"],
+        ["62779", "1.33057882"],
+        ["62780", "0.33476925"],
+        ["62784", "0.8498818"],
+        ["62789", "0.01864785"],
+        ["62797", "2.14864649"],
+        ["62802", "1.17385946"],
+        ["62809", "0.51130367"],
+        ["62814", "0.02415278"],
+        ["62822", "0.56817495"],
+        ["62827", "0.19123979"],
+        ["62931", "0.10148108"]
+      ],
+      "bids": [
+        ["62769", "0.55175335"],
+        ["62767", "0.28491215"],
+        ["62765", "0.15675841"],
+        ["62762", "1.30193303"],
+        ["62758", "0.09900068"],
+        ["62757", "0.00001599"],
+        ["62750", "1.31062803"],
+        ["62678", "0.0092566"]
+      ],
+      "ts": "1784028205200"
+    }
+  ]
+}
+```
 
-1. **Job 1 must split multi-document records** (seen on ex1; assume possible anywhere).
-2. **Three snapshot/update regimes**, not one:
-   full-snapshot-every-message (ex1, ex2, ex4), full-snapshot-per-SIDE (ex3),
-   delta-with-sequence (ex5, ex6, ex7 — plus a snapshot bootstrap that was NOT observed for
-   ex6/ex7). The shared post-job-1 Avro event and job 2/5 semantics must cover all three.
-3. **wallex (ex3) and ramzinex (ex4) put prices/quantities on the wire as JSON numbers** — parse
-   into BigDecimal from the literal (Jackson `USE_BIG_DECIMAL_FOR_FLOATS`), never via double.
-4. **ex3 has no sequence data at all**; ex1/ex2/ex4 only have the Centrifugo `pub.offset`.
-5. **Sequence anomalies to investigate before job 2**: bitget non-monotonic `seq`,
-   bybit `u` gaps, ompfinex `U`/`u` range gaps.
-6. No `ex8-raw` (okx) yet, but the DB already defines the exchange — pipeline should tolerate a
-   new exchange appearing.
+Parsing notes (job 1):
+
+- **NOT Centrifugo — same envelope family as bitget (ex5)**: `arg` / `action` / `data`-ARRAY.
+  Differences from bitget: no top-level `ts`, no `instType`, `arg` carries a `grouping`
+  field, and `action` has TWO values (`snapshot`/`update`) instead of snapshot-only. Not a
+  new envelope shape — a variant of ex5's.
+- **Market key**: `arg.instId` (`BTC-USDT` → `exchange_markets.market`) — note the DASH,
+  unlike every other exchange's `BTCUSDT`. Channel identity is `arg.channel`
+  (`books-grouped`) + `arg.grouping` (`"1"`): a price-GROUPED book with bucket size 1 —
+  which is why every price in the sample is a bare integer.
+- **`action` is the regime discriminator**: `"snapshot"` (full book) or `"update"` (only
+  changed levels — may include deletes and brand-new prices). This is what job 2's
+  snapshot/update classification reads. (Third exchange with an explicit discriminator,
+  after bitget's `action` and bybit's `type`.)
+- **`data` is an ARRAY** wrapping a single book object (like bitget) — parser must unwrap.
+  Whether >1 element can occur is unverified.
+- **Sides are `asks` / `bids`**, `[price, qty]` **string** pairs ✅ (no JSON-number
+  hazard). Asks price-ascending, bids price-descending — best-first both sides, on snapshot
+  AND update. Prices here are integers because of grouping `"1"`, not a wire rule.
+- **Delete = qty `"0"` CONFIRMED on the wire** (ask `62773` in the update) — the first
+  captured delete frame in the whole sample set. Job 5 must remove that level; the update
+  also inserts levels absent from the snapshot (`62931`).
+- **Sequence**: `ts` with jump 300 (see rule above) — a time-based sequence, unlike bybit's
+  counter. Second exchange where job 2's `sequence_id`/`sequence_jump` gap rules apply for
+  real; per-exchange config must support both a counter (`u`, jump 1) and a millis
+  timestamp (`ts`, jump 300).
+- The inner `ts` is the ONLY timestamp on the message (string epoch-millis) — it is both
+  the event time and the sequence id.

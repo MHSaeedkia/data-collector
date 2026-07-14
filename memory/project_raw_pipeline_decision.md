@@ -69,26 +69,76 @@ added mid-decision as "step6/step7"). The topic names below are the ground truth
   markets/rebase/precision rows). Interval TBD at implementation (suggest env-configurable,
   default ~1min). Note: unlike the consolidator (deliberately Postgres-free), these jobs DO
   depend on Postgres.
+- **Non-book messages in raw topics (RULE, FINAL 2026-07-14)**: `ex{id}-raw` topics carry
+  snapshot and update messages, but MAY also contain other data (e.g. subscription acks,
+  pings, heartbeats, other channels). Job 1 (which owns parsing) **silently discards anything
+  that is not a recognized book message** — whitelist parse: drop, never crash, never
+  dead-letter. User decision 2026-07-14: capturing example non-book frames per exchange is
+  NOT required; the drop rule is "not a recognized book frame ⇒ discard".
 
 ## Raw payload reality check (2026-07-13, from live `ex{id}-raw` topics)
 
-Samples fetched from server kafka-ui (192.168.150.104:8080) and categorized in
-**`sample-raw-data.md`** (repo root) — that file is the wire-format ground truth for job 1.
-Headlines (details + verbatim samples there):
+**⚠ SAMPLES RESET 2026-07-14 (user decision): the 2026-07-13 bulk capture was thrown away —
+samples are being rebuilt one exchange at a time into `sample-raw-data.md` (old content
+recoverable from git). Until an exchange's sample is re-captured, treat the headlines below
+as UNVERIFIED leads to re-confirm, not ground truth.** Original capture source: server
+kafka-ui (192.168.150.104:8080), latest-200 per topic.
 
 - **7 live exchanges, not 3**: 1=nobitex, 2=bitpin, 3=wallex, 4=ramzinex, 5=bitget, 6=bybit,
   7=ompfinex (server `exchanges` table; 8=okx exists in DB, no topic yet). The market key inside
   each payload's channel/topic string == `exchange_markets.market` exactly.
-- **Three regimes**: full-snapshot-every-msg (ex1/ex2/ex4), full-snapshot-per-SIDE with NO seq
-  fields (ex3 wallex — buyDepth/sellDepth are separate messages), delta-with-seq (ex5/ex6/ex7,
-  qty="0" = delete). The shared Avro event + jobs 2/5 must cover all three.
+- **Three regimes**: full-snapshot-every-msg (**ex1 nobitex + ex2 bitpin + ex4 ramzinex +
+  ex5 bitget RE-CONFIRMED 2026-07-14** post-reset, samples + parsing notes in
+  `sample-raw-data.md` — ex1/ex2/ex4 Centrifugo but different channel keys (ex4's is a
+  NUMERIC market id `orderbook:12`; its `sells` sort descending = best ask LAST); ex5 NOT
+  Centrifugo — `action`/`arg`/`data` shape with an explicit `action: "snapshot"`
+  discriminator (the only exchange with one) and a real `seq`+`pseq` field; ex1 multi-doc
+  records still to re-verify),
+  full-snapshot-per-SIDE with NO seq
+  fields (**ex3 wallex RE-CONFIRMED 2026-07-14** post-reset — buyDepth/sellDepth are separate
+  messages, `["{market}@{side}", [levels]]` array envelope, sample + parsing notes in
+  `sample-raw-data.md`), delta-with-seq — TWO exchanges (**ex6 bybit RE-CONFIRMED
+  2026-07-14** post-reset — `type: "snapshot" | "delta"` discriminator, NOT Centrifugo
+  (`topic`/`ts`/`type`/`data`/`cts` shape), sides `b`/`a` string pairs, **sequence id = `u`
+  with jump 1 (user-confirmed)** while `data.seq` is non-contiguous metadata; qty="0" =
+  delete still a lead for bybit — no delete frame captured yet; **ex8 okx CAPTURED
+  2026-07-14** — `action: "snapshot" | "update"` discriminator in a bitget-family
+  `arg`/`action`/`data`-array envelope, grouped book (`books-grouped`, `grouping: "1"` →
+  integer prices), market key `arg.instId` = `BTC-USDT` (DASH — unlike every other
+  exchange), string levels, **sequence id = `ts` (STRING epoch-millis inside data[0]) with
+  jump 300 (user-confirmed)** — no counter field at all, and **qty="0" delete CONFIRMED on
+  okx's wire** (first delete frame in the set); ex7 postponed). Job 2's per-exchange seq
+  config must support both a counter (`u`/1) and a millis timestamp (`ts`/300). The shared
+  Avro event + jobs 2/5 must cover all three regimes.
 - **wallex + ramzinex send prices/qtys as JSON numbers** — BigDecimal must come from the decimal
   literal (Jackson `USE_BIG_DECIMAL_FOR_FLOATS`), never double ([[bigdecimal-rules]]).
-- **ex1 records can contain 2 newline-concatenated JSON docs (even different channels)** —
-  job 1 must split multi-document records.
-- **Seq anomalies to investigate before job 2**: bitget `seq` non-monotonic per instId; bybit
-  `u` gaps (~30% of consecutive msgs); ompfinex `U`/`u` range gaps. Possibly NiFi message loss.
-- Missing fixtures still: bybit `type:snapshot`, bitget `action:update`, ompfinex initial book.
+  (BOTH RE-CONFIRMED 2026-07-14 — wallex and ramzinex.)
+- **ex1 multi-doc records: CLOSED 2026-07-14 (user)** — ex1 records always contain ONE JSON
+  document; NO multi-doc splitting in job 1 (the discarded-capture
+  2-newline-concatenated-docs lead was an artifact).
+- **ompfinex (ex7) POSTPONED 2026-07-14** (team decision — known issue with its raw data).
+  **okx (ex8) ADDED to scope 2026-07-14** (previously in DB with no topic — caveat settled
+  same day: snapshot+update samples captured, feed is live). Initial pipeline scope =
+  **ex1–ex6 + ex8**. Deferred with
+  ex7: initial-book fixture + `U`/`u` range-gap investigation. Job 1's `^ex[0-9]+-raw$` source
+  pattern still matches `ex7-raw` — exclude-vs-drop decision noted in todo.md M2.
+- **Job-2 validation scope (REVISED 2026-07-14, user — supersedes the same-day
+  "no checks for snapshot feeds" decision)**: two distinct rule kinds.
+  (a) **Gap/jump validation** ONLY for the two delta feeds — **ex6 bybit (`u`, jump 1)**
+  and **ex8 okx (`ts`, string epoch-millis, jump 300)**; on gap: drop until the next
+  snapshot re-syncs the book. bybit `u` gaps in the topic = real upstream/NiFi-side loss
+  (~30% of consecutive msgs in the discarded capture), but the user decided to **SKIP the
+  NiFi investigation** — the gap rule absorbs it.
+  (b) **Out-of-order (staleness) check** for snapshot feeds — user: "we should be aware of
+  out of order messages … using ts, seq, offset or any field we have". Per (exchange,
+  pair): drop any snapshot whose ordering value is not greater than the last seen. No
+  gap/jump rule — gaps self-heal on the next snapshot. Ordering fields: ex1/ex2/ex4 =
+  Centrifugo `pub.offset` (ex1 fallback `lastUpdate`, ex2 fallback `event_time`);
+  ex5 = `seq` (fallback inner `ts`; the discarded capture's non-monotonic `seq` is exactly
+  what this check drops, not a reason to distrust the field). **ex3 wallex has NO ordering
+  field at all** — no out-of-order protection possible (Kafka offset = arrival order).
+- Fixtures: RESET 2026-07-14 — being rebuilt per exchange (checklist in todo.md M0); the
+  earlier bybit snapshot+delta and bitget snapshot captures were discarded with the rest.
 - Kafka records: key=null, 1 partition per topic.
 
 ## Design notes / open items (record before implementing)
