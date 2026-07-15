@@ -37,13 +37,15 @@ public class OrderBookSnapshotDeserializer implements DeserializationSchema<Orde
     }
 
     static OrderBookSnapshot fromGenericRecord(GenericRecord record) {
-        return new OrderBookSnapshot(
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
                 (int) record.get("exchange_id"),
                 (int) record.get("pair_id"),
                 (long) record.get("event_time"),
                 (Long) record.get("last_sequence_id"),
                 PriceLevels.fromRecords(record.get("asks")),
                 PriceLevels.fromRecords(record.get("bids")));
+        snapshot.setPipelineTimings(PipelineTimingsRecords.fromRecord(record.get("pipeline_timings")));
+        return snapshot;
     }
 
     @Override

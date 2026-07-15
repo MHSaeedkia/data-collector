@@ -87,4 +87,27 @@ class RawOrderBookEventSerializerTest {
         assertThat(record.get("asks")).isNotNull();
         assertThat((List<?>) record.get("asks")).isEmpty();
     }
+
+    /**
+     * Given an event stamped by job 1 only, When mapped, Then pipeline_timings lands as a nested
+     * record with the pair-extract fields set and every unreached stage left null — the schema
+     * names all stages up front so null unambiguously means "not yet reached".
+     */
+    @Test
+    @DisplayName("maps pipeline_timings onto the nested wire record")
+    void mapsPipelineTimings() {
+        RawOrderBookEvent event = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 1752473005123L,
+                List.of(), List.of());
+        event.getPipelineTimings().setPairExtractIn(1752473005140L);
+        event.getPipelineTimings().setPairExtractOut(1752473005142L);
+
+        GenericRecord record = RawOrderBookEventSerializer.toGenericRecord(event, SCHEMA);
+
+        GenericRecord timings = (GenericRecord) record.get("pipeline_timings");
+        assertThat(timings).isNotNull();
+        assertThat(timings.get("pair_extract_in")).isEqualTo(1752473005140L);
+        assertThat(timings.get("pair_extract_out")).isEqualTo(1752473005142L);
+        assertThat(timings.get("type_validate_in")).isNull();
+        assertThat(timings.get("level_emit_out")).isNull();
+    }
 }

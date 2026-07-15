@@ -67,6 +67,24 @@ class OrderBookSnapshotSerdeTest {
     }
 
     /**
+     * Given a book carrying timings accumulated through jobs 1–5, When round-tripped, Then the
+     * set stages survive and the not-yet-run level-emit stage stays null.
+     */
+    @Test
+    @DisplayName("round-trips pipeline_timings through the book builder's output")
+    void roundTripsPipelineTimings() {
+        OrderBookSnapshot in = new OrderBookSnapshot(6, 1, 123L, 1L, List.of(), List.of());
+        in.getPipelineTimings().setPairExtractIn(140L);
+        in.getPipelineTimings().setBookBuildOut(182L);
+
+        OrderBookSnapshot out = roundTrip(in);
+
+        assertThat(out.getPipelineTimings().getPairExtractIn()).isEqualTo(140L);
+        assertThat(out.getPipelineTimings().getBookBuildOut()).isEqualTo(182L);
+        assertThat(out.getPipelineTimings().getLevelEmitOut()).isNull();
+    }
+
+    /**
      * Given the deserializer, When queried, Then it never ends the stream and advertises
      * {@link OrderBookSnapshot} as its produced type.
      */

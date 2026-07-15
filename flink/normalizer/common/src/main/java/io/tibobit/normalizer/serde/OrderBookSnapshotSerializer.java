@@ -47,6 +47,8 @@ public class OrderBookSnapshotSerializer implements SerializationSchema<OrderBoo
                 .set("last_sequence_id", snapshot.getLastSequenceId())
                 .set("asks", PriceLevels.toRecords(snapshot.getAsks(), levelSchema))
                 .set("bids", PriceLevels.toRecords(snapshot.getBids(), levelSchema))
+                .set("pipeline_timings", PipelineTimingsRecords.toRecord(
+                        snapshot.getPipelineTimings(), schema.getField("pipeline_timings").schema()))
                 .build();
     }
 }

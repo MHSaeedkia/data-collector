@@ -26,6 +26,7 @@ public class RawOrderBookEvent {
     private long eventTime;
     private List<PriceLevel> asks;
     private List<PriceLevel> bids;
+    private PipelineTimings pipelineTimings = new PipelineTimings();
 
     public RawOrderBookEvent() {
     }
@@ -105,5 +106,13 @@ public class RawOrderBookEvent {
 
     public void setBids(List<PriceLevel> bids) {
         this.bids = bids;
+    }
+
+    public PipelineTimings getPipelineTimings() {
+        return pipelineTimings;
+    }
+
+    public void setPipelineTimings(PipelineTimings pipelineTimings) {
+        this.pipelineTimings = pipelineTimings;
     }
 }

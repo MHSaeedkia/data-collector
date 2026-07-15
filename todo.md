@@ -99,6 +99,24 @@ the R3-postponed block lives on in `memory/project_orderbook_consolidator_decisi
             OUT-OF-ORDER check instead — drop any snapshot whose ordering field is not
             greater than the last seen (ex1/2/4 `pub.offset`, ex5 `seq`; ex3 has no field
             → no protection possible).**
+- [x] **Per-step latency timings (REQUIREMENT 2026-07-15, `memory/project_raw_pipeline_decision.md`)** —
+      DONE 2026-07-15. One `pipeline_timings` field per schema, wire type `["null", PipelineTimings]`
+      `default: null` (nullable union chosen over non-null-record for one-token backward-compat
+      default). `PipelineTimings` = 12 nullable `timestamp-millis` fields:
+      `{pair_extract,type_validate,rebase,precision,book_build,level_emit}_{in,out}`, duplicated
+      field-for-field (same rule as `PriceLevel`/`Type`):
+  - [x] `raw_order_book_event.avsc` (jobs 1–4) + example JSON
+  - [x] `order_book_snapshot.avsc` (job 5) + example
+  - [x] `rejected_order_book_event.avsc` inlined event — field-for-field identical
+  - [x] `price_level_event.avsc` (job 6, frozen consolidator input) — nullable/defaulted,
+        backward-compatible so consolidator/`web/` decode unchanged (⚠ NOT re-verified against a
+        live registry's compat check yet — do at M8 provisioning)
+  - [x] common Java models (`PipelineTimings` POJO + field on Raw/OrderBookSnapshot) + shared
+        `PipelineTimingsRecords` serde helper; job 1 stamps `pair_extract_in/out`
+        (`_in` at `flatMap` entry, `_out` before `collect`). Jobs 2–6 inherit the field, stamp
+        their own two when built. 47 tests green (5 new).
+  - [x] warmup.sh needs NO change — `register_schema` reads the `.avsc` files directly, so the
+        edits register as new subject versions on next warmup run
 - [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange.
       → verify: written agreement in `memory/project_raw_pipeline_decision.md`
       (topic creation + retention SETTLED 2026-07-14: `warmup.sh` creates `ex{id}-raw` per

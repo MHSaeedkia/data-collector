@@ -50,6 +50,14 @@ passed for ex1 (snapshot) and ex8 (update incl. qty-"0" delete) on the local sta
 - Test fixtures = verbatim samples from `sample-raw-data.md` in
   `src/test/resources/fixtures/` — if a sample is re-captured, update BOTH places.
 
+## Latency timings (added 2026-07-15, see [[raw-pipeline-decision]] / [[avro-schema-orderbook]])
+
+`PairExtractFunction.flatMap` stamps `pipeline_timings.pair_extract_in` (captured once at
+`flatMap` entry = "came from the raw topic") and `pair_extract_out` (`now`, before each
+`collect`) on every emitted event. All events parsed from one message share the same `_in`.
+It reads `event.getPipelineTimings()` (parsers leave it an empty non-null instance). Downstream
+stages stay null until their jobs run.
+
 ## Gotchas
 
 - **Postgres JDBC driver is NOT in the Flink image** — it ships in the job's shaded jar

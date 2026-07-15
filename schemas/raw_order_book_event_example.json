@@ -11,5 +11,19 @@
 	],
 	"bids": [
 		{ "price": "62760.1", "quantity": "1.204" }
-	]
+	],
+	"pipeline_timings": {
+		"pair_extract_in": "2026-07-14T06:23:25.140Z",
+		"pair_extract_out": "2026-07-14T06:23:25.142Z",
+		"type_validate_in": null,
+		"type_validate_out": null,
+		"rebase_in": null,
+		"rebase_out": null,
+		"precision_in": null,
+		"precision_out": null,
+		"book_build_in": null,
+		"book_build_out": null,
+		"level_emit_in": null,
+		"level_emit_out": null
+	}
 }

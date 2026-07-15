@@ -4,5 +4,19 @@
 	"side": "asks",
 	"event_time": "2025-06-23T12:00:00.000Z",
 	"price": "97240.50",
-	"quantity": "0.42"
+	"quantity": "0.42",
+	"pipeline_timings": {
+		"pair_extract_in": "2025-06-23T12:00:00.120Z",
+		"pair_extract_out": "2025-06-23T12:00:00.122Z",
+		"type_validate_in": "2025-06-23T12:00:00.130Z",
+		"type_validate_out": "2025-06-23T12:00:00.131Z",
+		"rebase_in": "2025-06-23T12:00:00.140Z",
+		"rebase_out": "2025-06-23T12:00:00.141Z",
+		"precision_in": "2025-06-23T12:00:00.150Z",
+		"precision_out": "2025-06-23T12:00:00.151Z",
+		"book_build_in": "2025-06-23T12:00:00.160Z",
+		"book_build_out": "2025-06-23T12:00:00.162Z",
+		"level_emit_in": "2025-06-23T12:00:00.170Z",
+		"level_emit_out": "2025-06-23T12:00:00.172Z"
+	}
 }

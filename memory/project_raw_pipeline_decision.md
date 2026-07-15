@@ -141,6 +141,80 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
   earlier bybit snapshot+delta and bitget snapshot captures were discarded with the rest.
 - Kafka records: key=null, 1 partition per topic.
 
+## Per-step latency tracking (REQUIREMENT, 2026-07-15)
+
+Goal (user): measure how long each event spends at every step, so processing delay is
+observable end-to-end — exchange event → each job → final hand-off. Design decisions locked
+with the user before implementation:
+
+1. **Ingest + emit per step.** Each job records when it read the event off its input topic
+   (`_in`) and when it wrote to its output topic (`_out`) — separating in-job compute from
+   Kafka transit, which a single stamp could not.
+2. **Named fields, NOT an array** (user rejected the array as ambiguous + query-hostile,
+   2026-07-15). The pipeline is a FIXED, known 6 steps — model it as one nested record
+   `PipelineTimings` with one explicitly-named nullable `timestamp-millis` field per
+   step×phase, all `default: null`:
+
+   ```
+   PipelineTimings:
+     pair_extract_in,  pair_extract_out
+     type_validate_in, type_validate_out
+     rebase_in,        rebase_out
+     precision_in,     precision_out
+     book_build_in,    book_build_out
+     level_emit_in,    level_emit_out
+   ```
+
+   Every event carries ONE `pipeline_timings` field. **Implemented wire type (2026-07-15):
+   `["null", PipelineTimings]` with `default: null`** — a nullable union was chosen over a
+   non-null record so the added-field default is one token and cleanly backward-compatible;
+   writers always emit a NON-null record (per-stage fields null until run), the null branch
+   only appears for data written before the field existed.
+   Each job fills ONLY its own two fields; the rest stay `null` until that stage runs — so
+   `null` unambiguously means "not yet reached this stage" (the schema names all stages up
+   front). Adding/removing a stage is then an explicit Avro schema change (add optional field
+   `default: null` = backward-compatible), not the silent index-shift the array caused. A
+   `map<string,…>` was also rejected — no schema guarantee of which keys exist, still needs
+   key-lookup to query.
+3. **Timings run through the final hand-off** — `price_level_event.avsc` (job 6 output, the
+   frozen consolidator input) also gains the `pipeline_timings` field. Nullable/defaulted, so
+   backward-compatible on the wire (the consolidator + `web/` ignore the added field); one
+   nested field is far less intrusive on the frozen schema than 12 flat ones. This is the one
+   deliberate edit to that frozen schema.
+
+**Anchor is the existing `event_time`** (exchange-reported). `pair_extract_in` already IS
+"the time the event came from the raw topic", so NO separate top-level ingest field is added.
+
+Derived metrics (computed by any consumer/audit — direct field paths, nothing below is stored):
+- exchange → pipeline lag = `pair_extract_in − event_time`
+- in-job processing at a step = `<stage>_out − <stage>_in`
+- Kafka transit into a step = `<stage>_in − <prev_stage>_out`
+- cumulative latency at a step = `<stage>_out − event_time`
+- **total end-to-end** = `level_emit_out − event_time`
+
+Carriers: `pipeline_timings` goes on `raw_order_book_event` (jobs 1–4), `order_book_snapshot`
+(job 5), the inlined event in `rejected_order_book_event` (kept field-for-field identical),
+and `price_level_event` (job 6). `PipelineTimings` is duplicated field-for-field across the
+avsc files (same rule as `PriceLevel`/`Type` — identical redefinitions only). Fan-out note:
+job 6 flattens one book into many price-level events; they all carry the same upstream timings
++ job 6's own `level_emit_*`.
+
+Implementation (each job, at wiring time): capture `<stage>_in` at the start of
+`processElement`/`map`, set `<stage>_out = now` just before `collect`. **Clock caveat**:
+`_in`/`_out` are wall-clock (`System.currentTimeMillis`) on whichever TaskManager runs the
+operator — fine single-node; cross-machine clock skew could distort transit deltas (flagged,
+non-blocking).
+
+**DONE 2026-07-15** (schemas + common models + job 1): `PipelineTimings` POJO
+(`model/`) + a `pipelineTimings` field on `RawOrderBookEvent`/`OrderBookSnapshot` (existing
+constructors keep an empty instance, so no call site changed); shared
+`serde/PipelineTimingsRecords` maps it to/from the nested Avro record, reused by all three
+serde (rejected inherits it via the inline event); **job 1 stamps `pair_extract_in/out`** in
+`PairExtractFunction.flatMap`. Jobs 2–6 stamp their own two when built. Read timestamps back as
+raw `Long` (the Confluent generic deserializer returns raw longs for timestamp-millis, matching
+the existing `event_time` handling). 47 tests green. Not yet re-verified against a live registry
+compat check (do at M8).
+
 ## Design notes / open items (record before implementing)
 
 - **Job 6 vanished-level handling**: emitting only the current book's levels would leave deleted

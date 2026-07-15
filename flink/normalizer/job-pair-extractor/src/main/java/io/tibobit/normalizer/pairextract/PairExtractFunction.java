@@ -1,6 +1,7 @@
 package io.tibobit.normalizer.pairextract;
 
 import io.tibobit.normalizer.lookup.RefreshingLookup;
+import io.tibobit.normalizer.model.PipelineTimings;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.pairextract.parser.ParsedBookEvent;
 import io.tibobit.normalizer.pairextract.parser.RawExchangeParser;
@@ -53,6 +54,7 @@ public class PairExtractFunction extends RichFlatMapFunction<RawExchangeMessage,
 
     @Override
     public void flatMap(RawExchangeMessage message, Collector<RawOrderBookEvent> out) {
+        long ingestTime = System.currentTimeMillis();
         RawExchangeParser parser = parsers.get(message.getExchangeId());
         if (parser == null) {
             droppedNoParser.inc();
@@ -76,6 +78,9 @@ public class PairExtractFunction extends RichFlatMapFunction<RawExchangeMessage,
             RawOrderBookEvent event = p.getEvent();
             event.setExchangeId(message.getExchangeId());
             event.setPairId(pairId);
+            PipelineTimings timings = event.getPipelineTimings();
+            timings.setPairExtractIn(ingestTime);
+            timings.setPairExtractOut(System.currentTimeMillis());
             out.collect(event);
         }
     }

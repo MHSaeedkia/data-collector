@@ -16,6 +16,7 @@ public class OrderBookSnapshot {
     private Long lastSequenceId;
     private List<PriceLevel> asks;
     private List<PriceLevel> bids;
+    private PipelineTimings pipelineTimings = new PipelineTimings();
 
     public OrderBookSnapshot() {
     }
@@ -76,5 +77,13 @@ public class OrderBookSnapshot {
 
     public void setBids(List<PriceLevel> bids) {
         this.bids = bids;
+    }
+
+    public PipelineTimings getPipelineTimings() {
+        return pipelineTimings;
+    }
+
+    public void setPipelineTimings(PipelineTimings pipelineTimings) {
+        this.pipelineTimings = pipelineTimings;
     }
 }

@@ -37,7 +37,7 @@ public class RawOrderBookEventDeserializer implements DeserializationSchema<RawO
     }
 
     static RawOrderBookEvent fromGenericRecord(GenericRecord record) {
-        return new RawOrderBookEvent(
+        RawOrderBookEvent event = new RawOrderBookEvent(
                 (int) record.get("exchange_id"),
                 (int) record.get("pair_id"),
                 record.get("type").toString(),
@@ -46,6 +46,8 @@ public class RawOrderBookEventDeserializer implements DeserializationSchema<RawO
                 (long) record.get("event_time"),
                 PriceLevels.fromRecords(record.get("asks")),
                 PriceLevels.fromRecords(record.get("bids")));
+        event.setPipelineTimings(PipelineTimingsRecords.fromRecord(record.get("pipeline_timings")));
+        return event;
     }
 
     @Override

@@ -60,6 +60,27 @@ class PairExtractFunctionTest {
     }
 
     /**
+     * Given a message flowing through, When the event is emitted, Then job 1 stamps its
+     * pair-extract in/out timings (in ≤ out, both within the processing window) and leaves the
+     * downstream stages null — this is the "came from raw topic" anchor for latency tracking.
+     */
+    @Test
+    @DisplayName("stamps pair-extract in/out timings on the emitted event")
+    void stampsPairExtractTimings() throws Exception {
+        long before = System.currentTimeMillis();
+        try (var harness = harness(Map.of(1, FIXED_PARSER), Map.of("1|BTCUSDT", 42))) {
+            harness.processElement(new StreamRecord<>(new RawExchangeMessage(1, ANY_PAYLOAD)));
+            long after = System.currentTimeMillis();
+
+            var timings = harness.extractOutputValues().get(0).getPipelineTimings();
+            assertThat(timings.getPairExtractIn()).isNotNull().isBetween(before, after);
+            assertThat(timings.getPairExtractOut()).isNotNull()
+                    .isBetween(timings.getPairExtractIn(), after);
+            assertThat(timings.getTypeValidateIn()).isNull();
+        }
+    }
+
+    /**
      * Given a market string not in exchange_markets, When the message flows through, Then it
      * is dropped (log + counter) — NOT dead-lettered.
      */

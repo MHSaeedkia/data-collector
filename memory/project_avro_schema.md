@@ -134,6 +134,30 @@ one changes), `reject_reason:string` (human-readable, e.g. "sequence gap: expect
 `PriceLevel`/`Type` are duplicated across these files with IDENTICAL definitions on purpose
 (Avro codegen tolerates identical redefinitions; divergent ones break the build).
 
+## Per-step latency timings (added 2026-07-15, IMPLEMENTED, see [[raw-pipeline-decision]])
+
+Every event carries ONE `pipeline_timings` field — wire type `["null", PipelineTimings]`,
+`default: null` (nullable union for a one-token backward-compat default; writers always emit a
+non-null record). NOT an array (user rejected the array as ambiguous/query-hostile; the
+pipeline is a fixed 6 steps, so name them). `PipelineTimings` has one nullable
+`timestamp-millis` field per step×phase, all
+`default: null`: `pair_extract_in/out`, `type_validate_in/out`, `rebase_in/out`,
+`precision_in/out`, `book_build_in/out`, `level_emit_in/out` (`_in` = read off input topic,
+`_out` = written to output — separates in-job compute from Kafka transit). Each job fills ONLY
+its own two fields; `null` means "not yet reached this stage". Anchor = existing `event_time`;
+`pair_extract_in` doubles as "came from the raw topic", so NO separate top-level ingest field.
+Total end-to-end = `level_emit_out − event_time`; other derived deltas (all direct field paths)
+in [[raw-pipeline-decision]].
+
+Carriers: `raw_order_book_event` (jobs 1–4), `order_book_snapshot` (job 5), the inlined event
+in `rejected_order_book_event` (keep field-for-field identical), and — deliberately —
+**`price_level_event.avsc`** (job 6, the otherwise-frozen consolidator input): the added field
+is nullable/defaulted, backward-compatible so the consolidator/`web/` keep decoding unchanged
+(one nested field, not 12 flat ones). `PipelineTimings` is duplicated field-for-field across
+the avsc files, same identical-redefinition rule as `PriceLevel`/`Type`. Adding/removing a
+stage later = explicit optional-field schema evolution, not a silent array index shift.
+Schema-file + Java-model edits are the implementation step following this doc update.
+
 ## Which schemas are real wire encoding vs documentation-only
 
 `price_level_event.avsc` and `consolidated_order_book_event.avsc` are **TRUE Confluent Avro wire

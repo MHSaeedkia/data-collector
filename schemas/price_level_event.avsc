@@ -33,6 +33,29 @@
 		{
 			"name": "quantity",
 			"type": "string"
+		},
+		{
+			"name": "pipeline_timings",
+			"type": ["null", {
+				"type": "record",
+				"name": "PipelineTimings",
+				"doc": "Per-step latency timings carried through the pipeline; optional (default null) so the frozen consolidator input stays backward-compatible. See memory/project_raw_pipeline_decision.md.",
+				"fields": [
+					{ "name": "pair_extract_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "pair_extract_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "type_validate_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "type_validate_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "rebase_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "rebase_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "precision_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "precision_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "book_build_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "book_build_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "level_emit_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+					{ "name": "level_emit_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null }
+				]
+			}],
+			"default": null
 		}
 	]
 }

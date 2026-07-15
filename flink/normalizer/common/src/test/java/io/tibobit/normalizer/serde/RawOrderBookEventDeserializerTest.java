@@ -73,6 +73,26 @@ class RawOrderBookEventDeserializerTest {
     }
 
     /**
+     * Given an event stamped by job 1 only, When round-tripped, Then the pair-extract timings
+     * survive and every unreached stage stays null — jobs 2–5 read these to measure latency.
+     */
+    @Test
+    @DisplayName("round-trips pipeline_timings, leaving unreached stages null")
+    void roundTripsPipelineTimings() {
+        RawOrderBookEvent in = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), List.of());
+        in.getPipelineTimings().setPairExtractIn(140L);
+        in.getPipelineTimings().setPairExtractOut(142L);
+
+        RawOrderBookEvent out = roundTrip(in);
+
+        assertThat(out.getPipelineTimings().getPairExtractIn()).isEqualTo(140L);
+        assertThat(out.getPipelineTimings().getPairExtractOut()).isEqualTo(142L);
+        assertThat(out.getPipelineTimings().getTypeValidateIn()).isNull();
+        assertThat(out.getPipelineTimings().getLevelEmitOut()).isNull();
+    }
+
+    /**
      * Given any element, When {@code isEndOfStream} is queried, Then it is always false — an
      * unbounded live stream must never signal completion.
      */
