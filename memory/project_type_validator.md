@@ -61,22 +61,40 @@ onward), `rejectedAt` records the dead-letter time.
   new synthetic topic is flaky until the job is (re)submitted WITH the topic already existing — then
   it's an initial partition at `latest`. jobs 3–6 smokes: create the input topic before submitting.
 
-## E2E smoke test
+## E2E smoke test — RAW-IN whole-chain model (rewritten 2026-07-15)
 
-`flink/normalizer/smoke-type-validator.sh` — job 2 is STATEFUL, so the smoke must be idempotent
-against persistent keyed state and repeat runs. It uses a synthetic key **ex99/p99** (collides
-with no real feed) and a **monotonic `seq = now` (epoch millis via `date +%s`×1000; macOS has no
-`%3N`)**, so every run's first snapshot is a fresh-or-newer baseline and the deliberately stale
-case (`seq=1`) is always rejected. **8 cases run IN ORDER on the same key, walking one full delta
-lifecycle** (jump 1 throughout, so each contiguous seq = prev+1): snapshot baseline→valid, two
-contiguous updates (snapshot→update→update)→valid, a gap (seq=now+5, expected now+3)→dead-letter
-`sequence_gap`, next update→dead-letter `awaiting_snapshot` (held until re-sync), newer snapshot
-(now+10)→valid re-sync (clears awaiting), contiguous update after re-sync→valid, stale
-snapshot(seq=1)→dead-letter `stale_or_duplicate`. This exercises the same gap/awaiting/recovery
-path as the `gapThenAwaitingSnapshotUntilResync` unit test, but LIVE through both Avro sinks. Reads
-the output topic from its pre-produce end offset (job-1 smoke's determinism trick). Decoded Avro
-`pipeline_timings` union key is **namespace-qualified**:
-`.pipeline_timings["io.tibobit.orderbook.PipelineTimings"].type_validate_out.long`.
+`flink/normalizer/smoke-type-validator.sh` follows the **normalizer smoke rule** (see
+[[normalizer-scaffold]]): send **raw exchange payloads ONLY** (to `ex{id}-raw`), let the WHOLE
+Flink chain run (job1 pair-extract → job2 type-validate → …), capture the topic of the job under
+test, and stamp **event_time = wall-clock execution time** so per-stage `pipeline_timings` are
+verified as real, monotonically-increasing processing times. Prior version produced job 2's input
+DIRECTLY to `ex99-p99-raw-flink` — that bypassed job 1 (so `pair_extract_*` had to be faked with
+sentinels) and could never catch a real upstream-stamping bug.
+
+**Why ex99/p99 was DROPPED:** under raw-in, a synthetic exchange can't be used — job 1
+`Parsers.byExchangeId()` only knows ex1–6+8, so `ex99-raw` is dropped (`dropped-no-parser`) and
+never reaches job 2. The smoke now drives **ex8 (OKX)** because `OkxParser` reads one `ts` field
+that becomes **BOTH `event_time` AND `sequence_id`** (jump 300) — so setting `ts = now` gives an
+execution-time event_time *and* full sequence-lifecycle control in one field. OKX `BTC-USDT`
+resolves to **pair_id 1** in the warmed DB, so the live key is **(8, 1)** (real, not synthetic).
+Idempotency across repeat runs is kept the same way: `ts = now` (epoch millis `date +%s`×1000;
+macOS has no `%3N`) is strictly increasing, so the baseline is always fresh and the stale case
+(`ts=1`) always rejects. **Prereq: BOTH jobs must be RUNNING** (the smoke checks both), DB warmed,
+and no competing live OKX feed writing `ex8-*`.
+
+**8 cases IN ORDER on key (8,1), one full delta lifecycle** (OKX jump 300, contiguous ts = prev+300):
+snapshot baseline→valid, two contiguous updates→valid, gap (ts=now+4·300, expected now+3·300)→
+dead-letter `sequence_gap`, next update→`awaiting_snapshot`, newer snapshot (now+10·300)→valid
+re-sync, contiguous update after re-sync→valid, stale snapshot (ts=1)→`stale_or_duplicate`.
+Assertions verify: `event_time == the ts we sent`, and the **timing chain**
+`event_time ≤ pair_extract_in ≤ pair_extract_out ≤ type_validate_in ≤ type_validate_out` (all real,
+stamped by the two live jobs — no sentinels). On rejects (which wrap the original under `.event`),
+upstream `pair_extract_*` PRESERVE and `type_validate_out` stays null. Raw is produced as plain JSON
+via `kafka-console-producer` (verbatim topic, no schema registry); output topics are read Confluent-
+Avro from their pre-produce end offset (determinism trick). Decoded `pipeline_timings` union key is
+**namespace-qualified**: `.pipeline_timings["io.tibobit.orderbook.PipelineTimings"].<field>.long`
+(on rejects: `.event.pipeline_timings[…]`). **Smoke 8/8 green 2026-07-15.** Note: cases can
+transiently FAIL on the 25s consumer read-timeout (now a two-hop chain) — re-run; not a logic bug.
 
 **Why:** jobs 3–6 consume `-type-validated-raw-flink` and assume these events already passed
 sequence validation (job 5 does NOT re-check sequences). **How to apply:** the gap/jump rule keys

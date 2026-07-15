@@ -245,13 +245,18 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       `RawOrderBookEventDeserializer`, latest) → keyBy → `.process` → two sinks (validated topic
       selector `-type-validated-raw-flink` reusing `raw-order-book-event` / dead-letter
       `ex{id}-p{id}-rejected-flink` with `RejectedOrderBookEventSerializer`). No DB, no jackson.
-- [x] Repeatable e2e smoke `flink/normalizer/smoke-type-validator.sh` — produces Confluent-Avro
-      events directly to the input topic (synthetic key ex99/p99, monotonic seq=now for idempotence
-      against the STATEFUL job), asserts valid→validated + reject(stale)→dead-letter with reason +
-      job-2 timings stamped. 8 cases run in order as one full delta lifecycle: baseline → two
-      contiguous updates (snapshot→update→update) → gap (`sequence_gap`) → held update
-      (`awaiting_snapshot`) → snapshot re-sync → contiguous-after-resync → stale snapshot
-      (`stale_or_duplicate`). → verify: "8 passed, 0 failed" (green 2026-07-15).
+- [x] Repeatable e2e smoke `flink/normalizer/smoke-type-validator.sh` — REWRITTEN 2026-07-15 to the
+      RAW-IN whole-chain model (normalizer smoke rule): produces raw OKX payloads to `ex8-raw`, lets
+      job1→job2 run, captures `ex8-p1-type-validated-raw-flink`/`-rejected-flink`. Uses ex8 because
+      its `ts` sets BOTH event_time and sequence_id (jump 300); event_time = now (execution time),
+      key (8,1), monotonic ts for idempotence against the STATEFUL job; precondition checks BOTH jobs
+      RUNNING. 8 cases run in order as one full delta lifecycle: baseline → two contiguous updates →
+      gap (`sequence_gap`) → held update (`awaiting_snapshot`) → snapshot re-sync →
+      contiguous-after-resync → stale snapshot (`stale_or_duplicate`). Asserts event_time == sent ts
+      AND the real timing chain `event_time ≤ pair_extract_in ≤ pair_extract_out ≤ type_validate_in ≤
+      type_validate_out` (no sentinels — both stages stamp live), plus upstream preservation on reject
+      (`.event.…`, type_validate_out null). → verify: "8 passed, 0 failed" (green 2026-07-15; two-hop
+      chain, cases may transiently time out on read — re-run).
 - [x] Runtime blocker fixed (same class as job 1): re-registered `rejected-order-book-event` to v2
       (was stale v1, no `pipeline_timings` on the inlined event → Avro NPE on the reject sink).
 

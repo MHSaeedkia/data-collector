@@ -65,6 +65,26 @@ The Maven multi-module home of the 6 raw-pipeline jobs ([[raw-pipeline-decision]
   taskmanager build from `./flink/normalizer` and the taskmanager has **8 task slots** so the
   single cluster fits the consolidator job + 6 normalizer jobs.
 
+## Smoke-test rule (RULE, user decision 2026-07-15 — applies to EVERY job's smoke)
+
+E2E smokes must exercise the **whole chain from raw**, never a job's intermediate input:
+
+1. Produce **raw exchange payloads ONLY** to `ex{id}-raw` (plain JSON via `kafka-console-producer`
+   — verbatim topic, no schema registry). Never hand-craft a downstream job's Avro input directly;
+   that bypasses upstream stamping and hides real behaviour (it also forces fake sentinel timings).
+2. Let **all running Flink jobs** process it (job1 → job2 → …). Precondition-check that **every**
+   job in the chain is RUNNING, not just the one under test.
+3. Capture the **output topic of the job under test** and assert its contract.
+4. Stamp **event_time = wall-clock execution time** on the raw payload, so each stage's
+   `pipeline_timings` (in/out per step) can be asserted as real, monotonically-increasing
+   processing times: `event_time ≤ pair_extract_in ≤ pair_extract_out ≤ … ≤ <last>_out`.
+
+Consequences: you must use a **real exchange** (job 1 only parses ex1–6+8; synthetic ids are
+dropped `dropped-no-parser`), and the key is whatever the DB market lookup assigns (BTC → p1), so
+smokes run against **real keyed state** — keep them idempotent with a monotonic `ts/seq = now`
+(epoch millis) and run with no competing live feed. Reference impl: `smoke-type-validator.sh` drives
+**ex8 OKX** because its `ts` field sets BOTH event_time and sequence_id (see [[type-validator]]).
+
 **Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
 duplicates common code.
 **How to apply:** when adding a job module, copy the conventions above; when touching the
