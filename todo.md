@@ -211,6 +211,19 @@ TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Mi
       ex1 (snapshot → `ex1-p1-raw-flink`, exact seq/event_time/level strings) AND ex8 (update
       → jump 300, qty-"0" delete preserved); postgres driver confirmed shaded into the job jar
       (NOT in the Flink image); run-job.sh full submit path verified (M1 leftover)
+- [x] Repeatable e2e smoke test — `flink/normalizer/smoke-pair-extractor.sh` (2026-07-15):
+      produces each fixture verbatim to `ex{id}-raw`, reads back the Confluent-Avro event on
+      `ex{id}-p1-raw-flink`, asserts exchange_id/pair_id/type/sequence_id/side-shape. Covers all
+      10 fixtures (ex1–6+8 incl. ex3 per-side split + ex6/ex8 update). Deterministic: snapshots
+      the output end-offset before producing then reads from it (no consumer-group latest-reset
+      race). Needs stack up + warmed DB + job submitted. → verify: `./smoke-pair-extractor.sh`
+      prints "10 passed, 0 failed" (green 2026-07-15).
+- [x] Fix 2 runtime blockers surfaced running the timings-enabled build (2026-07-15):
+      (1) `ExchangeMarketsLoader` now `Class.forName`s the postgres driver — DriverManager's lazy
+      ServiceLoader doesn't see the driver in Flink's child-first classloader (intermittent "No
+      suitable driver found", job dies INITIALIZING). (2) Re-registered `raw-order-book-event` to
+      v2 with `pipeline_timings` (registry was stale vs schema+code → Avro sink NPE on first emit).
+      → verify: smoke green 10/10 with NO "(no pipeline_timings on this build)" note.
 
 ## Milestone 3 — Job 2: type validator (→ `ex{id}-p{id}-type-validated-raw-flink` + dead-letter)
 

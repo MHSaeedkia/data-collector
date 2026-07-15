@@ -28,6 +28,10 @@ public class ExchangeMarketsLoader implements RefreshingLookup.Loader<String, In
 
     @Override
     public Map<String, Integer> load() throws Exception {
+        // Force the driver to register from THIS (Flink user-code, child-first) classloader.
+        // DriverManager's lazy ServiceLoader auto-registration runs under the parent classloader
+        // and doesn't see the driver shaded into the job jar -> "No suitable driver found".
+        Class.forName("org.postgresql.Driver");
         try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password);
              Statement statement = connection.createStatement();
              ResultSet rs = statement.executeQuery(

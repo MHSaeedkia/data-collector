@@ -60,11 +60,51 @@ passed for ex1 (snapshot) and ex8 (update incl. qty-"0" delete) on the local sta
 It reads `event.getPipelineTimings()` (parsers leave it an empty non-null instance). Downstream
 stages stay null until their jobs run.
 
+## E2E smoke test (added 2026-07-15)
+
+`flink/normalizer/smoke-pair-extractor.sh` — repeatable live test of job 1 against the running
+stack. For each of the 10 fixtures it produces the verbatim raw JSON to `ex{id}-raw` and reads
+back the emitted Confluent-Avro event on `ex{id}-p1-raw-flink`, asserting
+exchange_id/pair_id/type/sequence_id/side-shape. Preconditions: stack up, DB warmed, job
+submitted (checks Flink REST for a RUNNING `normalizer-pair-extractor`, else errors). All warmed
+BTC markets map to `market_id 1`, so every fixture routes to `p1` (asserted `EXPECTED_PAIR_ID`).
+
+- **Determinism is the whole trick**: a fresh console-consumer with `auto.offset.reset=latest`
+  races the emit — if the record lands just before the consumer positions, `latest` skips it
+  (this was a real flaky FAIL on ex4, green in isolation). Fixed by snapshotting the output
+  topic's end offset with `kafka-get-offsets` BEFORE producing, then reading `--partition 0
+  --offset <that>`. No group, no sleep, no race. Don't "simplify" it back to a plain consumer.
+- **Decoded Avro union-wrapping** (kafka-avro-console-consumer / Avro JsonEncoder): `sequence_id`
+  → `{"long":N}` or `null`; `asks`/`bids` → `{"array":[…]}` or `null`. Assertions use
+  `.sequence_id.long`, `.asks.array|length`, etc. log4j also prints to **stdout**, so the record
+  line is isolated with `grep '^{'`.
+- **Assertions are build-independent** (exchange_id/pair_id/type/seq/shape), NOT pipeline_timings —
+  the script only prints a soft "(no pipeline_timings on this build)" note when the field is absent.
+  As of 2026-07-15 the timings-enabled build IS deployed and the registry schema updated (below), so
+  a green run shows NO such note = timings are on the wire. Keeping the assertion build-independent
+  still protects against a future timings-less build.
+- **Sink needs the registry schema to carry `pipeline_timings`** (fixed 2026-07-15). The rebuilt
+  (timings-enabled) job hit `NullPointerException: Schema.getField("pipeline_timings") is null` at
+  `RawOrderBookEventSerializer.toGenericRecord` (job RUNNING→FAILED at first emit) because the
+  registry's `raw-order-book-event` subject was still v1 (no timings) while `schemas/
+  raw_order_book_event.avsc` + the code both had it. Fix: register the updated avsc (idempotent POST
+  like warmup.sh → v2, additive nullable field, compat-passed). The serializer fetches the schema
+  from the registry at runtime, so a stale registry breaks the sink even with correct code+jar.
+  Re-run `scripts/warmup.sh` (or POST the one subject) after any raw-pipeline schema change.
+
 ## Gotchas
 
 - **Postgres JDBC driver is NOT in the Flink image** — it ships in the job's shaded jar
   (parent pom manages `org.postgresql:postgresql` 42.7.3 compile-scope; jackson-databind is
   managed `provided` at the image's 2.14.3). Jobs 3/4 (also DB-reading) reuse both entries.
+- **`ExchangeMarketsLoader.load()` MUST `Class.forName("org.postgresql.Driver")` before
+  `DriverManager.getConnection`** (fixed 2026-07-15). The driver class + `META-INF/services/
+  java.sql.Driver` ARE in the shaded jar, but DriverManager's lazy ServiceLoader auto-registration
+  runs under the parent classloader and doesn't reliably see a driver in Flink's child-first
+  user-code classloader → intermittent `No suitable driver found for jdbc:postgresql://…` at
+  `open()` (job dies INITIALIZING→FAILED). It's NONDETERMINISTIC: works when DriverManager was
+  already warmed by an earlier job on that TaskManager, fails cold — which is why an earlier smoke
+  run passed and a later cold submit didn't. Jobs 3/4 (also DB-reading) need the same explicit load.
 - kafka-avro-console-consumer (in the schema-registry container) is the quickest smoke-read
   of the output topics; kafka-ui has no serde binding for `*-raw-flink` topics until M8.
 
