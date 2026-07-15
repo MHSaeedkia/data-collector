@@ -259,6 +259,13 @@ TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Mi
       emit the FULL book (both sides + `last_sequence_id` + `event_time`) on every change.
       Sequence rules are NOT re-checked (job 2 already validated; topics are single-partition
       so order holds). Test-first via harness: replace/upsert/delete/emit-shape/canonical-price
+- [ ] **⚠ Wallex (ex3) per-side snapshot merge — DO NOT MISS.** ex3 sends full snapshots ONE
+      side per message (`asks=null` xor `bids=null`, no seq/ts). "Replace book wholesale" must
+      mean **replace only the non-null side(s), keep the other side's state** — never clear a
+      side just because its array is null. Distinguish `null` side ("not in this event, leave
+      it") from an empty array (`[]` = "this side reported empty, clear it"). This is THE place
+      wallex's two messages combine into one two-sided book (decided against job 1 — [[pair-extractor]]).
+      Test: ex3 buyDepth snapshot then sellDepth snapshot ⇒ emitted book has BOTH sides populated
 - [ ] Wiring: source `^ex[0-9]+-p[0-9]+-applied-precision-flink$` → keyBy → builder → sink
       (`order-book-snapshot` serde)
       → verify: module tests green

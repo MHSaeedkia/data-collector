@@ -46,7 +46,9 @@ passed for ex1 (snapshot) and ex8 (update incl. qty-"0" delete) on the local sta
   fromPriceQuantityObjects`.
 - ex6/ex8 sides: **missing key → null side, present-but-empty → empty list** (a delta may
   touch one side; null-vs-empty semantics per [[avro-schema-orderbook]]). ex3: exactly one
-  side set, the other null; `sequence_id` null.
+  side set, the other null; `sequence_id` null. **ex3's two per-side messages are NOT combined
+  here** — job 1 stays stateless; the two-sided merge is the book-build step's job (step 5),
+  decided 2026-07-15, see [[raw-pipeline-decision]].
 - Test fixtures = verbatim samples from `sample-raw-data.md` in
   `src/test/resources/fixtures/` — if a sample is re-captured, update BOTH places.
 

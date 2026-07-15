@@ -52,6 +52,17 @@ added mid-decision as "step6/step7"). The topic names below are the ground truth
 - **Rejects in job 2**: dead-letter topic, fits accuracy-first goal.
 - **Snapshot flattening**: solved structurally — job 5 materializes the full book first, job 6
   flattens from full books instead of flattening raw snapshot/update events.
+- **Wallex (ex3) side merge → book-build step (step 5 "orderbook build"), NOT job 1** (decided
+  2026-07-15). ex3 sends full snapshots ONE side per message (`asks`/`bids` one null, the other
+  set; no seq, no timestamp — [[pair-extractor]] / sample-raw-data.md § ex3). Combining the two
+  sides into one two-sided book is deliberately left to the stateful book-build step, which
+  already holds per-`(exchange,pair)` book state; job 1 stays a stateless splitter. Rejected
+  doing it in job 1: it would force keyed buffering state onto the one stateless stage, for one
+  exchange, duplicating book-build's job — and with no seq/ts the two messages can't be
+  correlated anyway (only last-value paired, which IS book maintenance). **Requirement on
+  book-build:** a snapshot replaces ONLY its non-null side(s); a `null` side means "leave the
+  other side's state untouched" (vs an empty `[]` = "that side reported empty, clear it"). See
+  the ⚠ Milestone 6 todo item.
 
 ## Implementation Q&A decisions (2026-07-13, round 2)
 
