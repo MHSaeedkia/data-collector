@@ -1,0 +1,16 @@
+{
+	"event": {
+		"exchange_id": 6,
+		"pair_id": 1,
+		"type": "update",
+		"sequence_id": 126776820,
+		"sequence_jump": 1,
+		"event_time": "2026-07-14T06:23:26.456Z",
+		"asks": [
+			{ "price": "62775.5", "quantity": "0.031418" }
+		],
+		"bids": []
+	},
+	"reject_reason": "sequence gap: expected 126776813, got 126776820",
+	"rejected_at": "2026-07-14T06:23:26.460Z"
+}

@@ -27,8 +27,11 @@ exactly `0.3`.
 
 **Equality caveat (already relied on):** `BigDecimal.equals`/`hashCode` are
 scale-sensitive — `"97240.50"` and `"97240.5"` are NOT `.equals`, but `.compareTo == 0`.
-So order-book levels are keyed in a `TreeMap` (compareTo-based), never a `HashMap`. See
-[[orderbook-aggregation]].
+So never key price levels by raw string or in a `HashMap<BigDecimal,…>`. Two live patterns:
+`flink/orderbook-job` keys levels in a `TreeMap<BigDecimal,…>` (compareTo-based); the
+consolidator's hash-based Flink `MapState` keys by the **canonical string**
+`new BigDecimal(price).stripTrailingZeros().toPlainString()`. See [[orderbook-aggregation]]
+and [[orderbook-consolidator-decision]].
 
 **Why:** This is an exchange/financial pipeline — silent precision drift corrupts prices
 and quantities. The whole string→BigDecimal discipline exists to make decimal math exact.

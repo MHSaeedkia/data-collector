@@ -35,7 +35,7 @@ func (f *fakeConn) Close() error {
 
 func TestAdd_SendsSnapshotOfExistingBooks(t *testing.T) {
 	h := New()
-	h.latest["asks-p1"] = domain.Book{PairID: 1, Side: "asks"}
+	h.latest["p1-asks"] = domain.Book{PairID: 1, Side: "asks"}
 	c := &fakeConn{}
 
 	h.add(c)
@@ -54,7 +54,7 @@ func TestPublish_BroadcastsToAllClients(t *testing.T) {
 	h.add(c1)
 	h.add(c2)
 
-	h.Publish("asks-p1", domain.Book{PairID: 1, Side: "asks"})
+	h.Publish("p1-asks", domain.Book{PairID: 1, Side: "asks"})
 
 	for _, c := range []*fakeConn{c1, c2} {
 		require.Len(t, c.writes, 2) // snapshot on add + the update
@@ -63,7 +63,7 @@ func TestPublish_BroadcastsToAllClients(t *testing.T) {
 		assert.Equal(t, "update", upd.Type)
 		assert.Equal(t, 1, upd.Book.PairID)
 	}
-	assert.Equal(t, domain.Book{PairID: 1, Side: "asks"}, h.latest["asks-p1"])
+	assert.Equal(t, domain.Book{PairID: 1, Side: "asks"}, h.latest["p1-asks"])
 }
 
 func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
@@ -73,7 +73,7 @@ func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
 	h.add(bad)
 	h.add(good)
 
-	h.Publish("asks-p1", domain.Book{PairID: 1})
+	h.Publish("p1-asks", domain.Book{PairID: 1})
 
 	assert.True(t, bad.closed, "failing client should be closed")
 	_, stillRegistered := h.clients[bad]

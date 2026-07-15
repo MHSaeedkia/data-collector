@@ -18,11 +18,11 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
  * Job entry point for the order book consolidator.
  *
  * Pipeline (one unified topology — every pair/exchange/side flows through a single stream):
- *   Kafka input topics  {side}-p{pair_id}-ex{exchange_id}   (every exchange, every pair)
+ *   Kafka input topics  ex{exchange_id}-p{pair_id}-{side}   (every exchange, every pair)
  *     -> source                             (one regex subscription — PriceLevelSourceFactory)
  *     -> keyBy(pair_id, exchange_id, side)  -> PerExchangeBookBuilder    (stage 1: R1/R2 per exchange)
  *     -> keyBy(pair_id, side)               -> CrossExchangeConsolidator (stage 2: R4 union / R5 sort)
- *     -> Kafka output topic  {side}-p{pair_id}   (R6 dynamic per-record routing)
+ *     -> Kafka output topic  p{pair_id}-{side}   (R6 dynamic per-record routing)
  *        + print() to stdout for verification.
  *
  * Unlike orderbook-job there is no Postgres/PairsLoader: the source subscribes to every input
@@ -32,13 +32,15 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 public class OrderBookConsolidatorJob {
 
     public static void main(String[] args) throws Exception {
-        // Kafka config — defaults target the docker-compose network; override via env vars.
+        // Kafka/schema registry config — defaults target the docker-compose network; override via env vars.
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
         String groupId = getEnv("KAFKA_GROUP_ID", "orderbook-consolidator-flink");
+        String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        KafkaSource<PriceLevelEvent> source = PriceLevelSourceFactory.create(bootstrapServers, groupId);
+        KafkaSource<PriceLevelEvent> source =
+                PriceLevelSourceFactory.create(bootstrapServers, groupId, schemaRegistryUrl);
 
         // No watermarks: latest-wins is driven by each event's own event_time compared in state,
         // not by event-time windows.
@@ -68,8 +70,9 @@ public class OrderBookConsolidatorJob {
                 .process(new CrossExchangeConsolidator())
                 .name("consolidated-book");
 
-        // R6: single sink, output topic chosen per record ({side}-p{pair_id}).
-        consolidated.sinkTo(ConsolidatedOrderBookSinkFactory.create(bootstrapServers)).name("consolidated-sink");
+        // R6: single sink, output topic chosen per record (p{pair_id}-{side}).
+        consolidated.sinkTo(ConsolidatedOrderBookSinkFactory.create(bootstrapServers, schemaRegistryUrl))
+                .name("consolidated-sink");
 
         // Also print to stdout for verification.
         consolidated.print("consolidated");

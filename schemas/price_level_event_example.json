@@ -2,7 +2,7 @@
 	"exchange_id": 1,
 	"pair_id": 1,
 	"side": "asks",
-	"event_time": 1750680000000,
+	"event_time": "2025-06-23T12:00:00.000Z",
 	"price": "97240.50",
 	"quantity": "0.42"
 }

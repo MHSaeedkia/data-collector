@@ -14,15 +14,15 @@ the Flink job + [[orderbook-web]] without running NiFi.
 - Uses `github.com/segmentio/kafka-go` (note: **different** Kafka lib than the web app's
   franz-go). On start it creates every input topic (1 partition, RF 1, ignores
   "already exists"), then loops emitting snapshots until `DURATION_SECONDS` elapses or Ctrl-C.
-- Emits to the **ID-based input topics** `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`),
-  matching [[kafka-topic-strategy]]. Each event carries the full payload
-  (`exchange_id`, `exchange_name`, `base`, `quote`, `pair_id`, `side`, `type`, `event_time`, `levels`)
-  per [[avro-schema-orderbook]]; `type` is always `"snapshot"` (it generates fresh full books).
+- **⚠️ STALE vs the current pipeline:** emits JSON `OrderBookEvent` payloads
+  (`exchange_id`, `exchange_name`, `base`, `quote`, `pair_id`, `side`, `type`, `event_time`, `levels`,
+  per [[avro-schema-orderbook]]; `type` always `"snapshot"`) to the **OLD topic naming**
+  `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`). It was deliberately NOT updated for the
+  2026-07-12 topic-name flip (`ex{exchange_id}-p{pair_id}-{side}`) nor the Avro migration — so it
+  only feeds the old `flink/orderbook-job` pipeline; the consolidator's regex won't even match its
+  topics until it's updated (see [[kafka-topic-strategy]]).
 - Pairs/exchanges are **hardcoded** in `var` blocks (`Pair{ID,Base,Quote}`, `Exchange{ID,Name}`),
   NOT loaded from postgres — keep these IDs consistent with the DB if you want web enrichment to
   resolve to real labels. Default seed: pair `{ID:2, BTC/USDT}`, exchanges `{1 nobitex, 2 bitpin}`.
 - Filename is literally `mian.go` (typo, kept as-is). Config via env: `KAFKA_BOOTSTRAP`
   (default `localhost:9092`), `DURATION_SECONDS` (default 600).
-
-Aligned to the ID-based scheme + new `pair_id`/`type` fields on 2026-06-28 (previously emitted
-old `{pair}-{side}-{exchange}` topics with no `pair_id`/`type`).

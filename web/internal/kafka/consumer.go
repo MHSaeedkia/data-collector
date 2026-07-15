@@ -13,10 +13,10 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// Consolidated output topics: {side}-p{pair_id} (e.g. asks-p2). Input
-// topics ({side}-p{pair_id}-ex{exchange_id}) carry a trailing -ex... so
+// Consolidated output topics: p{pair_id}-{side} (e.g. p2-asks). Input
+// topics (ex{exchange_id}-p{pair_id}-{side}) carry a leading ex... so
 // they don't match.
-const topicPattern = `^(asks|bids)-p[0-9]+$`
+const topicPattern = `^p[0-9]+-(asks|bids)$`
 
 type Consumer struct {
 	client *kgo.Client

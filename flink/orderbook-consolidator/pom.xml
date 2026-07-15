@@ -13,13 +13,21 @@
         <java.version>21</java.version>
         <flink.version>2.2.0</flink.version>
         <flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
-        <jackson.version>2.14.3</jackson.version>
+        <avro.version>1.11.4</avro.version>
+        <confluent.schema.registry.client.version>7.5.3</confluent.schema.registry.client.version>
         <junit.version>5.10.2</junit.version>
         <assertj.version>3.25.3</assertj.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+        </repository>
+    </repositories>
 
     <dependencies>
         <!-- Flink streaming — provided by Flink runtime -->
@@ -38,12 +46,41 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Jackson — pre-installed in Flink image (/opt/flink/lib/) -->
+        <!-- Avro format + Confluent Schema Registry client — pre-installed in Flink image
+             (/opt/flink/lib/, see Dockerfile) -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
+            <version>${avro.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-avro</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-avro-confluent-registry</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-schema-registry-client</artifactId>
+            <version>${confluent.schema.registry.client.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.avro</groupId>
+                    <artifactId>avro</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- ===== Test dependencies (TDD: see memory/project_tdd_workflow.md) ===== -->
@@ -86,6 +123,36 @@
 
     <build>
         <plugins>
+            <!-- Test-only: copy the repo-root Avro schemas (single source of truth) onto the TEST
+                 classpath so unit tests can build fixture GenericRecords without a live Schema
+                 Registry. Production code never reads these — at runtime the (de)serializers fetch
+                 the schema from the Schema Registry exclusively (see AvroSchemaLoader.loadLatest),
+                 so this must NOT land in target/classes or the shaded jar. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-avro-schemas</id>
+                        <phase>generate-test-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.testOutputDirectory}/avro</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../schemas</directory>
+                                    <includes>
+                                        <include>price_level_event.avsc</include>
+                                        <include>consolidated_order_book_event.avsc</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>

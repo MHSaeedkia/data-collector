@@ -213,7 +213,7 @@ class CrossExchangeConsolidatorTest {
 
     /**
      * Given a bids book for the keyed pair, When consolidated, Then the output carries the correct
-     * pair_id and side so the sink routes it to {side}-p{pair_id} (R6).
+     * pair_id and side so the sink routes it to p{pair_id}-{side} (R6).
      */
     @Test
     @DisplayName("output carries pair_id and side for topic routing")

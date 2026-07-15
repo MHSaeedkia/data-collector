@@ -112,6 +112,21 @@ services:
             KAFKA_CLUSTERS_0_NAME: local
             KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
             KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8082
+            # Input/output topic names don't match Confluent's default TopicNameStrategy
+            # (<topic>-value), so without this kafka-ui finds no serde at all for them (empty
+            # valueSerde, nothing to pick when producing). Bind each topic pattern to the one
+            # canonical registry subject it actually uses instead of registering a subject per
+            # topic (see scripts/warmup.sh — only 3 canonical subjects are meant to exist).
+            KAFKA_CLUSTERS_0_SERDE_0_NAME: PriceLevelEventAvro
+            KAFKA_CLUSTERS_0_SERDE_0_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
+            KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^ex[0-9]+-p[0-9]+-(asks|bids)$
+            KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_URL: http://schema-registry:8082
+            KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: price-level-event
+            KAFKA_CLUSTERS_0_SERDE_1_NAME: ConsolidatedOrderBookEventAvro
+            KAFKA_CLUSTERS_0_SERDE_1_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
+            KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
+            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_URL: http://schema-registry:8082
+            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_SCHEMANAMETEMPLATE: consolidated-order-book-event
         networks:
             - data-collector-net
 
@@ -229,6 +244,7 @@ services:
             PORT: 3000
             KAFKA_BROKER: kafka:29092
             DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
+            SCHEMA_REGISTRY_URL: http://schema-registry:8082
         networks:
             - data-collector-net
 

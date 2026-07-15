@@ -1,0 +1,15 @@
+{
+	"exchange_id": 6,
+	"pair_id": 1,
+	"type": "update",
+	"sequence_id": 126776812,
+	"sequence_jump": 1,
+	"event_time": "2026-07-14T06:23:25.123Z",
+	"asks": [
+		{ "price": "62773", "quantity": "0" },
+		{ "price": "62775.5", "quantity": "0.031418" }
+	],
+	"bids": [
+		{ "price": "62760.1", "quantity": "1.204" }
+	]
+}

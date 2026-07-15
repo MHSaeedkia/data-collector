@@ -11,11 +11,17 @@ AVRO_SCHEMA_SUBJECT="${AVRO_SCHEMA_SUBJECT:-orderbook-event}"
 JSON_SCHEMA_SUBJECT="${JSON_SCHEMA_SUBJECT:-orderbook-event-json}"
 PRICE_LEVEL_SCHEMA_SUBJECT="${PRICE_LEVEL_SCHEMA_SUBJECT:-price-level-event}"
 CONSOLIDATED_ORDER_BOOK_SCHEMA_SUBJECT="${CONSOLIDATED_ORDER_BOOK_SCHEMA_SUBJECT:-consolidated-order-book-event}"
+RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-event}"
+ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
+REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AVRO_SCHEMA_FILE="$SCRIPT_DIR/../schemas/orderbook_event.avsc"
 PRICE_LEVEL_SCHEMA_FILE="$SCRIPT_DIR/../schemas/price_level_event.avsc"
 CONSOLIDATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/consolidated_order_book_event.avsc"
+RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
+ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
+REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required but not installed."; exit 1; }
@@ -52,6 +58,9 @@ register_schema() {
 register_schema "$AVRO_SCHEMA_SUBJECT" "AVRO" "$AVRO_SCHEMA_FILE"
 register_schema "$PRICE_LEVEL_SCHEMA_SUBJECT" "AVRO" "$PRICE_LEVEL_SCHEMA_FILE"
 register_schema "$CONSOLIDATED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$CONSOLIDATED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
+register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
 
 # --- Kafka Topics ---
 
@@ -73,6 +82,7 @@ fi
 
 echo "Creating Kafka topics..."
 
+RAW_RETENTION_MS=604800000    # 7 days
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
 
@@ -90,18 +100,24 @@ create_topic() {
         --config "retention.ms=$retention_ms"
 }
 
-# Input topics — one per side+pair+exchange (NiFi produces, Flink source consumes).
+# Raw topics — one per exchange (NiFi publishes verbatim exchange payloads here).
+distinct_exchanges=$(echo "$pairs" | cut -d'|' -f2 | sort -un)
+while IFS='|' read -r exchange_id; do
+    create_topic "ex${exchange_id}-raw" "$RAW_RETENTION_MS"
+done <<< "$distinct_exchanges"
+
+# Input topics — one per exchange+pair+side (NiFi produces, Flink source consumes).
 while IFS='|' read -r pair_id exchange_id exchange_name; do
     for side in asks bids; do
-        create_topic "${side}-p${pair_id}-ex${exchange_id}" "$INPUT_RETENTION_MS"
+        create_topic "ex${exchange_id}-p${pair_id}-${side}" "$INPUT_RETENTION_MS"
     done
 done <<< "$pairs"
 
-# Output topics — one per side+pair (Flink aggregation writes the consolidated book here).
+# Output topics — one per pair+side (Flink aggregation writes the consolidated book here).
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
-        create_topic "${side}-p${pair_id}" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 

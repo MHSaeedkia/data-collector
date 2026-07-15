@@ -16,21 +16,21 @@ import java.util.regex.Pattern;
  */
 public class PriceLevelSourceFactory {
 
-    // Matches every input topic {side}-p{pair_id}-ex{exchange_id} (e.g. asks-p2-ex3).
-    // The required "-ex{n}" segment is what excludes the consolidated OUTPUT topics
-    // ({side}-p{pair_id}, e.g. asks-p2) — that's what prevents the job re-consuming its
+    // Matches every input topic ex{exchange_id}-p{pair_id}-{side} (e.g. ex3-p2-asks).
+    // The required leading "ex{n}-" segment is what excludes the consolidated OUTPUT topics
+    // (p{pair_id}-{side}, e.g. p2-asks) — that's what prevents the job re-consuming its
     // own output.
     private static final Pattern INPUT_TOPIC_PATTERN =
-            Pattern.compile("(asks|bids)-p[0-9]+-ex[0-9]+");
+            Pattern.compile("ex[0-9]+-p[0-9]+-(asks|bids)");
 
-    public static KafkaSource<PriceLevelEvent> create(String bootstrapServers, String groupId) {
+    public static KafkaSource<PriceLevelEvent> create(String bootstrapServers, String groupId, String schemaRegistryUrl) {
         return KafkaSource.<PriceLevelEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 // Start at the tip: we want the live book, not historical replay.
                 .setStartingOffsets(OffsetsInitializer.latest())
-                .setValueOnlyDeserializer(new PriceLevelEventDeserializer())
+                .setValueOnlyDeserializer(new PriceLevelEventDeserializer(schemaRegistryUrl))
                 .build();
     }
 }

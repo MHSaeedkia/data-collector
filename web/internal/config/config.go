@@ -11,15 +11,17 @@ import (
 
 // Config holds every setting main() needs to wire the app up.
 type Config struct {
-	Port        string
-	KafkaBroker string
-	DatabaseURL string
+	Port              string
+	KafkaBroker       string
+	DatabaseURL       string
+	SchemaRegistryURL string
 }
 
 const (
-	defaultPort        = "3000"
-	defaultKafkaBroker = "localhost:9092"
-	defaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/markets"
+	defaultPort              = "3000"
+	defaultKafkaBroker       = "localhost:9092"
+	defaultDatabaseURL       = "postgres://postgres:postgres@localhost:5432/markets"
+	defaultSchemaRegistryURL = "http://localhost:8082"
 )
 
 // Load reads envFile into the process environment — a missing file is not
@@ -36,9 +38,10 @@ func Load(envFile string) Config {
 // override logic can be unit-tested with os.Setenv/t.Setenv alone.
 func FromEnv() Config {
 	return Config{
-		Port:        env("PORT", defaultPort),
-		KafkaBroker: env("KAFKA_BROKER", defaultKafkaBroker),
-		DatabaseURL: env("DATABASE_URL", defaultDatabaseURL),
+		Port:              env("PORT", defaultPort),
+		KafkaBroker:       env("KAFKA_BROKER", defaultKafkaBroker),
+		DatabaseURL:       env("DATABASE_URL", defaultDatabaseURL),
+		SchemaRegistryURL: env("SCHEMA_REGISTRY_URL", defaultSchemaRegistryURL),
 	}
 }
 

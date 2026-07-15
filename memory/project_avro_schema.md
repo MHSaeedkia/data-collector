@@ -24,14 +24,11 @@ Example payload: `schemas/orderbook_event_example.json`.
 | `side`          | enum `asks`\|`bids` (req)  | Mirrors topic prefix; included for self-describing messages   |
 | `type`          | enum `snapshot`\|`update` (req) | Event type. Flink honours it (Phase 3, 2026-06-29): `snapshot` replaces the exchange book, `update` mutates it — see [[orderbook-aggregation]] |
 | `event_time`    | long timestamp-millis (req) | Exchange-reported UTC timestamp in ms                       |
-| `sequence_id`   | long (required)            | Monotonic per `(pair_id, exchange_id)` stream; ordering/dedup token. Added 2026-06-29 for Phase 3 — see [[orderbook-aggregation]] |
+| `sequence_id`   | long (required)            | Monotonic per `(pair_id, exchange_id)` stream; ordering/dedup token — see [[orderbook-aggregation]] |
+| `sequence_jump` | long (required)            | Expected delta from the previous message's `sequence_id` (increments are NOT +1 — some exchanges jump ~300). In-order iff `seq == lastSeq + sequence_jump`; anything else is a gap — see [[orderbook-aggregation]] |
 | `levels`        | array of PriceLevel (req)  | Price + quantity both as string to preserve decimal precision |
 
-`pair_id` was added 2026-06-28; the pipeline already moved from a single `pair` string to separate `base`/`quote` fields earlier.
-
-Required vs optional (set 2026-06-28; `sequence_id` added 2026-06-29): `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `sequence_id`, `levels` are **required** (non-nullable, no default). The three display-only fields `exchange_name`/`base`/`quote` are **optional** — `["null","string"]` with `default: null` — since no logic depends on them.
-
-`sequence_id` is the per-stream ordering token for snapshot+update support. Flink uses it now only to drop stale/duplicate events (`seq <= lastSeq`); gap handling is deferred. Whether it is contiguous (+1) or merely increasing, and who generates it (exchange vs NiFi), is still TO CONFIRM with the NiFi team — see [[orderbook-aggregation]].
+Required vs optional: `exchange_id`, `pair_id`, `side`, `type`, `event_time`, `sequence_id`, `sequence_jump`, `levels` are **required** (non-nullable, no default). The three display-only fields `exchange_name`/`base`/`quote` are **optional** — `["null","string"]` with `default: null` — since no logic depends on them.
 
 ## `base`, `quote`, `exchange_name` are display-only — NO logic depends on them
 
@@ -52,9 +49,13 @@ NiFi is handled by a separate team and is not implemented in this repo. Document
 
 - Provide `base` and `quote` separately (e.g. raw `BTCUSDT` → `base=BTC`, `quote=USDT`) plus `pair_id` (DB `markets.id`) and `exchange_id`/`exchange_name`
 - Split raw exchange message (which contains both sides) into two separate events
-- Route each event to the correct input topic: `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`) — see [[kafka-topic-strategy]]
+- Route each event to the correct input topic: `ex{exchange_id}-p{pair_id}-{side}` (e.g. `ex1-p2-asks`) — see [[kafka-topic-strategy]]
 - Kafka message key is null (one exchange per topic already guarantees ordering)
-- Populate `sequence_id` as a monotonically increasing value per `(pair_id, exchange_id)` stream so Flink can drop stale/duplicate events
+- Populate `sequence_id`/`sequence_jump` per `(pair_id, exchange_id)` stream so Flink can drop stale/duplicate events and detect gaps
+
+**NOTE:** this whole NiFi-normalizes contract is being replaced by [[raw-pipeline-decision]]
+(NiFi will publish verbatim raw payloads to `ex{id}-raw`; a new Flink pipeline reproduces the
+normalization). Kept until cutover.
 
 ## Why price/qty are strings
 
@@ -63,7 +64,16 @@ Exchange APIs return price and quantity as strings to avoid floating-point preci
 **Why:** Schema registry contract between NiFi and Flink for the order book pipeline.
 **How to apply:** Any new exchange integration must produce events conforming to this schema after NiFi normalization.
 
-## Schema: ConsolidatedOrderBookEvent (added 2026-07-11)
+## Schema: PriceLevelEvent
+
+File: `schemas/price_level_event.avsc` (+ `_example.json`), record `PriceLevelEvent`, namespace
+`io.tibobit.orderbook`, registry subject `price-level-event`. The consolidator's **input** wire
+shape on `ex{exchange_id}-p{pair_id}-{side}` topics — one flat price level per message:
+`exchange_id:int`, `pair_id:int`, `side:enum(asks|bids)`, `event_time:timestamp-millis`,
+`price:string`, `quantity:string`. No `type`/`sequence_*`/`levels[]`/display fields — see
+[[orderbook-consolidator-decision]] for the semantics.
+
+## Schema: ConsolidatedOrderBookEvent
 
 File: `schemas/consolidated_order_book_event.avsc`, record name `ConsolidatedOrderBookEvent`,
 namespace `io.tibobit.orderbook`. Example payload: `schemas/consolidated_order_book_event_example.json`.
@@ -72,7 +82,7 @@ Registered in `scripts/warmup.sh` as subject `consolidated-order-book-event`, sa
 
 This documents the **output** wire shape of `flink/orderbook-consolidator/`'s
 `ConsolidatedOrderBook`/`ConsolidatedLevel` model (see
-[[orderbook-consolidator-decision]]), published to `{side}-p{pair_id}` and consumed by `web/`.
+[[orderbook-consolidator-decision]]), published to `p{pair_id}-{side}` and consumed by `web/`.
 That output shape is fixed/frozen — do not change it; this schema is a documentation/contract
 mirror of it, not a driver of it.
 
@@ -83,10 +93,55 @@ mirror of it, not a driver of it.
 | `event_time` | long timestamp-millis (required)    | Max `event_time` across contributing exchange books  |
 | `levels`     | array of record (required)          | Each: `exchange_id:int`, `price:string`, `quantity:string` — union across exchanges, never summed; equal prices from different exchanges stay as separate adjacent entries |
 
-**Important caveat — this schema is registered but NOT actually used for wire encoding.** Exactly
-like `price_level_event.avsc` above, `ConsolidatedOrderBookSerializer` (the sink) writes plain
-Jackson JSON bytes, not Confluent Avro binary. Registering the `.avsc` in the schema registry here
-is a documentation/contract step (mirrors the existing project convention), not a switch to Avro
-wire encoding — don't assume the schema registry enforces this shape at runtime.
+## Raw-pipeline schemas (added 2026-07-14, M0 of [[raw-pipeline-decision]])
+
+Three schemas for the new raw pipeline, namespace `io.tibobit.orderbook`, each with an
+`_example.json`, registered by `scripts/warmup.sh` as canonical fixed-name subjects (no
+per-topic subjects). Intended as TRUE Confluent Avro wire format once the jobs exist.
+
+**`raw_order_book_event.avsc`** — record `RawOrderBookEvent`, subject `raw-order-book-event`.
+The ONE shared event on all job 1–4 topics (`ex{id}-p{id}-raw-flink` etc. — no side segment;
+side split happens in job 6). Fields: `exchange_id:int`, `pair_id:int`,
+`type:enum Type(snapshot|update)`, `sequence_id:["null","long"]`, `sequence_jump:long`,
+`event_time:timestamp-millis`, `asks`/`bids`: nullable arrays of `PriceLevel{price:string,
+quantity:string}`. Design decisions (mine, 2026-07-14 — driven by the captured wire formats
+in `sample-raw-data.md`):
+
+- **`asks`/`bids` nullable, default null**: null = "this side is not part of this event" —
+  required for ex3 wallex per-SIDE snapshots. An EMPTY array is different: the exchange
+  reported that side empty (for a snapshot: clear the side). Never conflate the two.
+- **`sequence_id` nullable**: null = the feed has no ordering field at all (only ex3) —
+  job 2 must pass such events through unchecked. For everyone else job 1 fills it from the
+  per-exchange ordering field (ex1/2/4 `pub.offset`, ex5 `seq`, ex6 `u`, ex8 `ts` as long).
+- **`sequence_jump` semantics**: >0 = delta feed, job-2 gap rule `seq == last + jump`
+  (ex6=1, ex8=300); **0 = snapshot feed** — no gap rule, only the out-of-order check
+  (drop if not strictly greater than last seen). Differs from the old `orderbook_event.avsc`
+  where jump was always a real increment.
+- **`event_time` required**: exchange-reported ms where available; **ex3 has no timestamp on
+  the wire, so job 1 stamps processing time there** (judgment call — flag at job-1 impl).
+
+**`order_book_snapshot.avsc`** — record `OrderBookSnapshot`, subject `order-book-snapshot`.
+Job-5 output (full maintained book per (exchange, pair)): `exchange_id`, `pair_id`,
+`event_time`, `last_sequence_id:["null","long"]` (null for ex3), required `asks[]`/`bids[]`
+of `PriceLevel`.
+
+**`rejected_order_book_event.avsc`** — record `RejectedOrderBookEvent`, subject
+`rejected-order-book-event`. Dead-letter envelope: `event:RawOrderBookEvent` (full inline
+definition — kept field-for-field identical to `raw_order_book_event.avsc`; update BOTH if
+one changes), `reject_reason:string` (human-readable, e.g. "sequence gap: expected X, got Y"),
+`rejected_at:timestamp-millis` (job-2 processing time).
+
+`PriceLevel`/`Type` are duplicated across these files with IDENTICAL definitions on purpose
+(Avro codegen tolerates identical redefinitions; divergent ones break the build).
+
+## Which schemas are real wire encoding vs documentation-only
+
+`price_level_event.avsc` and `consolidated_order_book_event.avsc` are **TRUE Confluent Avro wire
+encoding** (magic byte + schema id + Avro payload): the consolidator reads/writes them via the
+Confluent registry classes, and `web/` decodes the output via `hamba/avro/v2` + the registry (see
+[[orderbook-consolidator-decision]] and [[orderbook-web]]). `orderbook_event.avsc` is still
+**documentation-only** — the old `flink/orderbook-job` speaks plain JSON matching it. The one
+open risk: NiFi's actual producer format on the consolidator's input topics is unverified
+(moot after [[raw-pipeline-decision]] cutover).
 
 [[kafka-topic-strategy]]
