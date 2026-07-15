@@ -227,19 +227,33 @@ TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Mi
 
 ## Milestone 3 — Job 2: type validator (→ `ex{id}-p{id}-type-validated-raw-flink` + dead-letter)
 
-- [ ] `TypeValidator` keyed `(exchange_id, pair_id)` `KeyedProcessFunction`, `ValueState
-      {lastSeq, awaitingSnapshot}`; rules ported from orderbook-job Phase 3 semantics:
-      snapshot = unconditional baseline (stores seq, clears awaiting); update valid iff
-      `seq == lastSeq + sequence_jump`; `seq <= lastSeq` → reject `stale_or_duplicate`;
-      gap → reject `sequence_gap` + set awaitingSnapshot (updates rejected `awaiting_snapshot`
-      until next snapshot); leading update before any snapshot → reject `no_baseline`.
-      Valid → main output; rejects → side output with reason. Test-first via
-      `KeyedOneInputStreamOperatorTestHarness` covering every branch above
-- [ ] Wiring: source (pattern `^ex[0-9]+-p[0-9]+-raw-flink$`) → keyBy → validator → two sinks
-      (validated topic selector / dead-letter `ex{id}-p{id}-rejected-flink` with
-      `rejected-order-book-event` serde)
-      → verify: module tests green; live smoke: feed an out-of-order sequence, see the reject
-      + reason on the dead-letter topic
+DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalidate`). See
+`memory/project_type_validator.md`. 11 unit tests + live smoke 8/8 green; job RUNNING.
+
+- [x] `TypeValidateFunction` keyed `(exchange_id, pair_id)` `KeyedProcessFunction`, `ValueState
+      {lastSeq, awaitingSnapshot}`. Rules RECONCILED with the revised job-2 scope in
+      `project_raw_pipeline_decision.md` (the discriminator is `type` + `sequence_id==null`, NOT
+      jump alone — delta-feed SNAPSHOT messages also carry jump>0, verified in the ex6/ex8 parsers):
+      `sequence_id==null` (ex3) → pass through unchecked; `snapshot` → out-of-order check only
+      (reject `stale_or_duplicate` if `seq <= lastSeq`, else re-sync: store seq, clear awaiting);
+      `update` → `no_baseline` if lastSeq null / `awaiting_snapshot` if still waiting / valid iff
+      `seq == lastSeq + sequence_jump` / `stale_or_duplicate` if `seq <= lastSeq` / else `sequence_gap`
+      + set awaitingSnapshot. Valid → main output; rejects → `REJECTED` side output. Stamps
+      `type_validate_in/out` (out only on emitted). 11 harness tests cover every branch + keying
+      isolation + timings.
+- [x] Wiring: `TypeValidatorJob` source (pattern `ex[0-9]+-p[0-9]+-raw-flink`,
+      `RawOrderBookEventDeserializer`, latest) → keyBy → `.process` → two sinks (validated topic
+      selector `-type-validated-raw-flink` reusing `raw-order-book-event` / dead-letter
+      `ex{id}-p{id}-rejected-flink` with `RejectedOrderBookEventSerializer`). No DB, no jackson.
+- [x] Repeatable e2e smoke `flink/normalizer/smoke-type-validator.sh` — produces Confluent-Avro
+      events directly to the input topic (synthetic key ex99/p99, monotonic seq=now for idempotence
+      against the STATEFUL job), asserts valid→validated + reject(stale)→dead-letter with reason +
+      job-2 timings stamped. 8 cases run in order as one full delta lifecycle: baseline → two
+      contiguous updates (snapshot→update→update) → gap (`sequence_gap`) → held update
+      (`awaiting_snapshot`) → snapshot re-sync → contiguous-after-resync → stale snapshot
+      (`stale_or_duplicate`). → verify: "8 passed, 0 failed" (green 2026-07-15).
+- [x] Runtime blocker fixed (same class as job 1): re-registered `rejected-order-book-event` to v2
+      (was stale v1, no `pipeline_timings` on the inlined event → Avro NPE on the reject sink).
 
 ## Milestone 4 — Job 3: rebaser (→ `ex{id}-p{id}-rebased-flink`)
 
