@@ -1,0 +1,5 @@
+["BTCUSDT@sellDepth", [
+  {"price": 62579.56, "quantity": 0.004585, "sum": 286.9272826},
+  {"price": 62619.76, "quantity": 0.002,    "sum": 125.23952},
+  {"price": 62634.08, "quantity": 0.048566, "sum": 3041.88672928}
+]]

@@ -14,6 +14,7 @@
          Job modules are added one per milestone — see todo.md. -->
     <modules>
         <module>common</module>
+        <module>job-pair-extractor</module>
     </modules>
 
     <properties>
@@ -22,6 +23,8 @@
         <flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
         <avro.version>1.11.4</avro.version>
         <confluent.schema.registry.client.version>7.5.3</confluent.schema.registry.client.version>
+        <jackson.version>2.14.3</jackson.version>
+        <postgresql.version>42.7.3</postgresql.version>
         <junit.version>5.10.2</junit.version>
         <assertj.version>3.25.3</assertj.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
@@ -89,6 +92,23 @@
                         <artifactId>*</artifactId>
                     </exclusion>
                 </exclusions>
+            </dependency>
+
+            <!-- Jackson — pre-installed in Flink image (/opt/flink/lib/, see Dockerfile);
+                 version pinned to the image's 2.14.3 -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Postgres JDBC driver — NOT in the Flink image lib, so compile scope: it must
+                 ship inside each DB-reading job module's shaded jar -->
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>${postgresql.version}</version>
             </dependency>
 
             <!-- ===== Test dependencies (TDD: see memory/project_tdd_workflow.md) ===== -->

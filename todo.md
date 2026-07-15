@@ -161,25 +161,38 @@ the R3-postponed block lives on in `memory/project_orderbook_consolidator_decisi
 
 TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Milestone 0.
 
-- [ ] `RawExchangeParser` interface: `byte[] payload → List<RawOrderBookEvent>` (pair still as
+- [x] `RawExchangeParser` interface: `byte[] payload → List<RawOrderBookEvent>` (pair still as
       the exchange's market string at this point) + one implementation per exchange, selected
       by `exchange_id` parsed from the source topic name. Test-first against the real fixtures.
       Scope: ex1–ex6 + ex8 parsers (ex7/ompfinex postponed — see M0)
-- [ ] Market-string → `pair_id` resolution via `RefreshingLookup` over
+      DONE 2026-07-15: returns `List<ParsedBookEvent>` (market string + event; exchange_id AND
+      pair_id both stamped later by PairExtractFunction). Whitelist rule = empty list for
+      unrecognized frames, throw for malformed (caller drops both). event_time per exchange:
+      ex1 `lastUpdate`, ex2 `event_time` (ISO), ex5 inner `ts`, ex6 `cts`, ex8 `ts`; ex3+ex4
+      have NO message-level timestamp → job-1 processing time (flagged in memory)
+- [x] Market-string → `pair_id` resolution via `RefreshingLookup` over
       `exchange_markets(exchange_id, market) → market_id`; unknown market string → log + drop
       (+ counter) — NOT dead-letter (dead-letter is job-2's validation concern)
-- [ ] Source: `KafkaSource<byte[]>` pattern `^ex[0-9]+-raw$`, earliest-or-latest decision
+      DONE 2026-07-15: `ExchangeMarketsLoader` (plain JDBC, key `"{exchange_id}|{market}"`);
+      drops counted via Flink metrics (dropped-no-parser/-unparseable/-unknown-market)
+- [x] Source: `KafkaSource<byte[]>` pattern `^ex[0-9]+-raw$`, earliest-or-latest decision
       (propose `latest`, consistent with consolidator), Kafka metadata needed: topic name (for
       exchange_id) — use a `KafkaRecordDeserializationSchema` that captures topic.
       NOTE: pattern also matches the postponed `ex7-raw` — decide at implementation whether to
       exclude it from the pattern or drop-with-counter on missing parser
-- [ ] Sink: `KafkaSink` with topic selector `ex{exchange_id}-p{pair_id}-raw-flink`, Avro via
-      registry subject `raw-order-book-event`
-- [ ] `PairExtractorJob.main`: env config (`KAFKA_BOOTSTRAP_SERVERS`, `SCHEMA_REGISTRY_URL`,
+      DONE 2026-07-15: `latest` offsets; ex7 DECIDED = drop-with-counter on missing parser
+      (scope lives in one place: `Parsers.byExchangeId()`)
+- [x] Sink: `KafkaSink` with topic selector `ex{exchange_id}-p{pair_id}-raw-flink`, Avro via
+      registry subject `raw-order-book-event` ✓
+- [x] `PairExtractorJob.main`: env config (`KAFKA_BOOTSTRAP_SERVERS`, `SCHEMA_REGISTRY_URL`,
       `POSTGRES_*`, `KAFKA_GROUP_ID=normalizer-pair-extractor`, `REFRESH_INTERVAL`); anonymous
       `KeySelector` classes if keying is needed (Flink lambda inference gotcha)
       → verify: `mvn -pl job-pair-extractor -am test` green; live smoke: publish a fixture
       payload to `ex1-raw`, see the structured event on `ex1-p{id}-raw-flink` via kafka-ui
+      DONE 2026-07-15: stateless — no keying needed. 24/24 tests green; live smoke PASSED for
+      ex1 (snapshot → `ex1-p1-raw-flink`, exact seq/event_time/level strings) AND ex8 (update
+      → jump 300, qty-"0" delete preserved); postgres driver confirmed shaded into the job jar
+      (NOT in the Flink image); run-job.sh full submit path verified (M1 leftover)
 
 ## Milestone 3 — Job 2: type validator (→ `ex{id}-p{id}-type-validated-raw-flink` + dead-letter)
 
