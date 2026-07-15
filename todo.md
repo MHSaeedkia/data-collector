@@ -119,28 +119,43 @@ the R3-postponed block lives on in `memory/project_orderbook_consolidator_decisi
 
 ## Milestone 1 — Scaffold `flink/normalizer/`
 
-- [ ] Parent `pom.xml` (packaging `pom`, modules list, shared dependencyManagement: Flink,
+- [x] Parent `pom.xml` (packaging `pom`, modules list, shared dependencyManagement: Flink,
       kafka connector, avro + confluent registry deps, JUnit5/AssertJ/flink-test-utils/JaCoCo —
       versions copied from `flink/orderbook-consolidator/pom.xml`) → verify: `mvn validate`
-- [ ] `common/` module (plain jar, no shade): 
-      - [ ] Models for the shared event/book/rejection shapes (plain POJOs, no Jackson —
+      DONE 2026-07-15: `io.tibobit:normalizer-parent`; modules list starts with `common` only
+      (user decision — each job-* module is added in its own milestone M2–M7)
+- [x] `common/` module (plain jar, no shade): DONE 2026-07-15, artifactId `normalizer-common`,
+      package `io.tibobit.normalizer.*`, 18 tests green
+      - [x] Models for the shared event/book/rejection shapes (plain POJOs, no Jackson —
             Avro GenericRecord mapping happens in serde classes, consolidator pattern)
-      - [ ] `AvroSchemaLoader.loadLatest(url, subject)` — registry-only at runtime (port from
+      - [x] `AvroSchemaLoader.loadLatest(url, subject)` — registry-only at runtime (port from
             consolidator; schemas NEVER bundled in shaded jars)
-      - [ ] Avro serde pairs per shared shape (`toGenericRecord`/`fromGenericRecord` as pure
-            package-private statics — the consolidator's testable-mapping pattern)
-      - [ ] `RefreshingLookup` — periodic-refresh Postgres reference reader: loads a `Map` via
+      - [x] Avro serde pairs per shared shape (`toGenericRecord`/`fromGenericRecord` as pure
+            package-private statics — the consolidator's testable-mapping pattern).
+            NOTE: rejected-event shape got a SERIALIZER only — nothing in the pipeline consumes
+            dead-letter topics (kafka-ui reads them); add a deserializer if a consumer appears
+      - [x] `RefreshingLookup` — periodic-refresh Postgres reference reader: loads a `Map` via
             JDBC in `open()`, re-loads every `REFRESH_INTERVAL` on a schedule; on refresh
-            failure keep last-good snapshot + log. TDD with a fake loader fn
-      - [ ] BigDecimal helpers: canonicalize (`stripTrailingZeros().toPlainString()`), rebase
+            failure keep last-good snapshot + log. TDD with a fake loader fn.
+            NOTE: generic `Loader<K,V>` fn — the actual JDBC query closure is built in M2 where
+            the exchange_markets query lives
+      - [x] BigDecimal helpers: canonicalize (`stripTrailingZeros().toPlainString()`), rebase
             (`scaleByPowerOfTen`), truncate (`setScale(p, DOWN)`) — pure, test-first
-      → verify: `mvn -pl common -am test` green
-- [ ] One parameterized `run-job.sh` + `Dockerfile` + `Makefile` at `flink/normalizer/` root
+      → verify: `mvn -pl common -am test` green ✓ (18/18)
+- [x] One parameterized `run-job.sh` + `Dockerfile` + `Makefile` at `flink/normalizer/` root
       (module name as arg; derive jar + main class per module) → verify: script builds a chosen
       module and prints the submit command against a local cluster
-- [ ] `docker-compose-normalizer.yml` at repo root (Flink cluster + kafka + schema-registry +
+      DONE 2026-07-15: main class comes from the jar manifest (each job module's shade config),
+      jar located by glob excluding shade's `original-*`; Dockerfile identical to the
+      consolidator's (one cluster image hosts all jobs); full submit path verified in M2 when
+      the first job module exists
+- [x] `docker-compose-normalizer.yml` at repo root (Flink cluster + kafka + schema-registry +
       postgres + kafka-ui, mirroring the consolidator compose incl. `restart: on-failure`,
-      log-dir volumes, named volumes) → verify: `docker compose config` passes
+      log-dir volumes, named volumes) → verify: `docker compose config` passes ✓
+      DONE 2026-07-15 (user decision): it is the FULL replacement stack — identical to the
+      consolidator compose (same container names/ports/volumes, only one compose runs at a
+      time) except Flink image builds from ./flink/normalizer and taskmanager has 8 slots so
+      the ONE cluster hosts consolidator + all 6 normalizer jobs
 
 ## Milestone 2 — Job 1: pair extractor (`ex{id}-raw` → `ex{id}-p{id}-raw-flink`)
 
