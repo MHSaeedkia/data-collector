@@ -17,6 +17,7 @@
         <module>job-pair-extractor</module>
         <module>job-type-validator</module>
         <module>job-rebaser</module>
+        <module>job-precision</module>
     </modules>
 
     <properties>

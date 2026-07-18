@@ -279,15 +279,27 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 ## Milestone 5 — Job 4: precision normalizer (→ `ex{id}-p{id}-applied-precision-flink`)
 
-- [ ] Stateless `RichMapFunction`: `price.setScale(markets.price_precision, DOWN)`,
+- [x] Stateless `RichMapFunction` (as sketched — unlike job 3, no side output is needed):
+      `price.setScale(markets.price_precision, DOWN)`,
       `quantity.setScale(markets.quantity_precision, DOWN)`; precisions per `pair_id` from
-      `RefreshingLookup` over `markets`; NULL precision column → leave value untouched.
-      **DESIGN FLAG to resolve here**: nonzero quantity truncating to exactly 0 becomes a
-      level-delete downstream — decide accept vs floor before coding. Test-first: truncation
-      never rounds up, already-fewer-decimals unchanged, zero-quantity passthrough, null
-      precision passthrough
-- [ ] Wiring: source `^ex[0-9]+-p[0-9]+-rebased-flink$` → map → sink
-      → verify: module tests green
+      `RefreshingLookup` over `markets`; NULL precision column → leave value untouched, and a
+      pair with NO markets row is the same passthrough (an un-truncated amount is merely too
+      precise, not corrupt — deliberately unlike job 3's dead-letter).
+      **DESIGN FLAG RESOLVED 2026-07-18 (user decision, revised same day): nonzero quantity
+      truncating to exactly 0 → EMIT `"0"` and KEEP the level.** Job 5 reads that as a
+      level-delete, which is intended — a size below the market's `quantity_precision` is not
+      representable liquidity. (The earlier "drop the level" answer was reversed; flooring stays
+      rejected, it would report more size than the exchange did.) Level count in == level count
+      out, which is what keeps this a plain `RichMapFunction`.
+      15 module tests green: truncation never rounds up, already-fewer-decimals unchanged,
+      precision 0, exactness on 20+ digit values, separate price/qty precisions, per-pair
+      lookup, null-precision & unknown-pair passthrough, zero-quantity passthrough, dust → "0"
+      (+ an all-dust side keeps every level), null-vs-empty side, both sides all levels,
+      timings
+- [x] Wiring: source `^ex[0-9]+-p[0-9]+-rebased-flink$` → map → sink
+      → verified: module tests 15/15 green + live smoke `smoke-precision.sh` 3/3 green
+      2026-07-18 (raw-in whole chain job1→job4; no DB mutation needed — the seeded markets row
+      is already non-identity at 2/8, and the seeded rebase row is 0/0 so job 3 stays a no-op)
 
 ## Milestone 6 — Job 5: book builder (→ `ex{id}-p{id}-orderbook-snapshot-flink`)
 
@@ -349,7 +361,8 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 - [ ] Job-1 source offsets: `latest` vs `earliest` for `ex{id}-raw`
 - [x] ~~Job-3 missing-rebase-row behavior~~ → RESOLVED 2026-07-18: dead-letter `no_rebase_row`
-- [ ] Job-4 truncate-to-zero hazard
+- [x] ~~Job-4 truncate-to-zero hazard~~ → RESOLVED 2026-07-18: emit `"0"` and keep the level, so
+      job 5 deletes it (not floor; an earlier "drop the level" answer was reversed same day)
 - [ ] Refresh interval default for `RefreshingLookup`
 - [ ] Retention values per new topic family
 - [ ] Checkpointing/state backend for jobs 2/5/6 (stateful; currently the whole platform runs

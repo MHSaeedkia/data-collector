@@ -87,7 +87,9 @@ smokes run against **real keyed state** — keep them idempotent with a monotoni
 A job whose behaviour depends on reference data (jobs 3 and 4) also has to make that data
 non-trivial: `smoke-rebaser.sh` temporarily UPDATEs the row, sleeps past the `RefreshingLookup`
 interval so the *running* job reloads, and restores it in an EXIT trap (see [[rebaser]]) — the
-seeded values are identity and would pass a broken job.
+seeded values are identity and would pass a broken job. `smoke-precision.sh` needs no such
+mutation (the seeded precisions are already non-identity) but *asserts* them as a precondition —
+either way the smoke must never depend on reference data it hasn't pinned (see [[precision]]).
 
 **Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
 duplicates common code.
