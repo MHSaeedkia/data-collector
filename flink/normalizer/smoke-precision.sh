@@ -80,8 +80,8 @@ RAW_BID_PRICE="62769.43219";  RAW_BID_QTY="1.999999999"
 WANT_ASK_PRICE="62770.98";    WANT_ASK_QTY="0.12345678"
 WANT_BID_PRICE="62769.43";    WANT_BID_QTY="1.99999999"
 
-# A second ask level whose quantity is below one unit at precision 8 — it must be DROPPED from
-# the book, not emitted as "0". This is the milestone's truncate-to-zero decision, live.
+# A second ask level whose quantity is below one unit at precision 8 — it must come out as "0"
+# with its level KEPT. This is the milestone's truncate-to-zero decision, live.
 DUST_ASK_PRICE="62771.5";     DUST_ASK_QTY="0.000000001"
 
 # Decoded Avro union keys are namespace-qualified; nullable arrays decode under ".array".

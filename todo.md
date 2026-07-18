@@ -303,25 +303,41 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 ## Milestone 6 — Job 5: book builder (→ `ex{id}-p{id}-orderbook-snapshot-flink`)
 
-- [ ] `BookBuilder` keyed `(exchange_id, pair_id)` `KeyedProcessFunction`, `MapState` per side
-      keyed by canonicalized price (`stripTrailingZeros().toPlainString()` — MapState is
+- [x] `BookBuildFunction` keyed `(exchange_id, pair_id)` `KeyedProcessFunction`, `MapState` per
+      side keyed by canonicalized price (`stripTrailingZeros().toPlainString()` — MapState is
       hash-based, won't collapse scales, consolidator lesson): snapshot → replace book
       wholesale; update → `quantity > 0` upsert / `== 0` delete (BigDecimal `signum()`);
       emit the FULL book (both sides + `last_sequence_id` + `event_time`) on every change.
       Sequence rules are NOT re-checked (job 2 already validated; topics are single-partition
-      so order holds). Test-first via harness: replace/upsert/delete/emit-shape/canonical-price
-- [ ] **⚠ Wallex (ex3) per-side snapshot merge — DO NOT MISS.** ex3 sends full snapshots ONE
+      so order holds).
+      **Snapshot and update share ONE per-level rule — they differ only by "clear the side
+      first".** So `quantity == 0` means "no level here" in a snapshot too, which closes the M5
+      follow-on hazard (a dust level inside a snapshot can never rest in the book). Those
+      deletes originate in job 4's truncation, not only from exchanges — commented at the
+      delete branch so nobody debugs a delete that isn't in the raw feed.
+      Sides are sorted on emit (asks↑/bids↓) because MapState iteration order is undefined.
+      15 module tests green: snapshot replaces / empty side clears / ex3 null side merges /
+      upsert / qty-0 delete / delete of unknown price / qty-0 inside a snapshot / canonical
+      price identity / sorting / identity+sequence / null sequence / both sides always present /
+      emit-on-every-event / timings / per-key isolation
+- [x] **⚠ Wallex (ex3) per-side snapshot merge — DONE.** ex3 sends full snapshots ONE
       side per message (`asks=null` xor `bids=null`, no seq/ts). "Replace book wholesale" must
       mean **replace only the non-null side(s), keep the other side's state** — never clear a
       side just because its array is null. Distinguish `null` side ("not in this event, leave
       it") from an empty array (`[]` = "this side reported empty, clear it"). This is THE place
       wallex's two messages combine into one two-sided book (decided against job 1 — [[pair-extractor]]).
-      Test: ex3 buyDepth snapshot then sellDepth snapshot ⇒ emitted book has BOTH sides populated
-- [ ] Wiring: source `^ex[0-9]+-p[0-9]+-applied-precision-flink$` → keyBy → builder → sink
+      Test `nullSideKeepsOtherSideState`: one-sided snapshot then the other ⇒ BOTH sides populated.
+      (Unreachable from the smoke — OKX always sends both sides.)
+- [x] Wiring: source `^ex[0-9]+-p[0-9]+-applied-precision-flink$` → keyBy → builder → sink
       (`order-book-snapshot` serde)
-      → verify: module tests green
-- [ ] NOTE cold-start limitation (no checkpointing configured — same known gap as the old
-      merger): book is empty after restart until the next snapshot; record, don't solve now
+      → verified: module tests 15/15 green + live smoke `smoke-book-builder.sh` 3/3 green
+      2026-07-18 (raw-in whole chain job1→job5; three ORDERED cases on one accumulating book:
+      snapshot seeds → update merges → qty 0 deletes). Gotcha: the registered
+      `order-book-snapshot` subject was stale v1 without `pipeline_timings` and had to be
+      re-registered — same trap as jobs 1 and 2
+- [x] NOTE cold-start limitation (no checkpointing configured — same known gap as the old
+      merger): book is empty after restart until the next snapshot; recorded, not solved
+      (see the checkpointing open item below)
 
 ## Milestone 7 — Job 6: level emitter (→ existing `ex{id}-p{id}-{side}`, `price_level_event.avsc`)
 

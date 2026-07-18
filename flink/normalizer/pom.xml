@@ -18,6 +18,7 @@
         <module>job-type-validator</module>
         <module>job-rebaser</module>
         <module>job-precision</module>
+        <module>job-book-builder</module>
     </modules>
 
     <properties>
