@@ -28,3 +28,13 @@ refresh-normalizer:
 	cd ./flink/normalizer && ./run-job.sh job-rebaser
 	cd ./flink/normalizer && ./run-job.sh job-type-validator
 	cd ./flink/normalizer && ./run-job.sh job-pair-extractor
+
+run-normalizer-jobs:
+	-git pull origin
+	cd ./flink/orderbook-consolidator && ./run-job.sh
+	cd ./flink/normalizer && ./run-job.sh job-level-emitter
+	cd ./flink/normalizer && ./run-job.sh job-book-builder
+	cd ./flink/normalizer && ./run-job.sh job-precision
+	cd ./flink/normalizer && ./run-job.sh job-rebaser
+	cd ./flink/normalizer && ./run-job.sh job-type-validator
+	cd ./flink/normalizer && ./run-job.sh job-pair-extractor
