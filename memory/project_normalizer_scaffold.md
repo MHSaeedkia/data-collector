@@ -84,6 +84,10 @@ dropped `dropped-no-parser`), and the key is whatever the DB market lookup assig
 smokes run against **real keyed state** — keep them idempotent with a monotonic `ts/seq = now`
 (epoch millis) and run with no competing live feed. Reference impl: `smoke-type-validator.sh` drives
 **ex8 OKX** because its `ts` field sets BOTH event_time and sequence_id (see [[type-validator]]).
+A job whose behaviour depends on reference data (jobs 3 and 4) also has to make that data
+non-trivial: `smoke-rebaser.sh` temporarily UPDATEs the row, sleeps past the `RefreshingLookup`
+interval so the *running* job reloads, and restores it in an EXIT trap (see [[rebaser]]) — the
+seeded values are identity and would pass a broken job.
 
 **Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
 duplicates common code.

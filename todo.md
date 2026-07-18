@@ -262,13 +262,20 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 ## Milestone 4 — Job 3: rebaser (→ `ex{id}-p{id}-rebased-flink`)
 
-- [ ] Stateless `RichMapFunction`: every level's `price × 10^price_amount_rebase`,
-      `quantity × 10^volume_amount_rebase` via `scaleByPowerOfTen` (exact); rebase values per
-      `(exchange_id, pair_id)` from `RefreshingLookup` over `exchange_markets`. Missing row →
-      decide drop-vs-passthrough at implementation (flag!). Test-first: rebase 0 identity,
-      positive/negative exponents, exactness (no double anywhere)
-- [ ] Wiring: source `^ex[0-9]+-p[0-9]+-type-validated-raw-flink$` → map → sink
-      → verify: module tests green; live smoke with a nonzero rebase row in postgres
+- [x] Stateless `ProcessFunction` (NOT `RichMapFunction` — the flag below resolved to a side
+      output): every level's `price × 10^price_amount_rebase`, `quantity × 10^volume_amount_rebase`
+      via `scaleByPowerOfTen` (exact); exponents per `(exchange_id, pair_id)` from
+      `RefreshingLookup` over `exchange_markets` (`RebaseFactorsLoader`, keyed by `market_id`
+      not the market string). **FLAG RESOLVED 2026-07-18 (user): missing row → DEAD-LETTER**
+      `no_rebase_row` to `ex{id}-p{id}-rejected-flink` (job 2's topic/schema reused) — not
+      drop, not passthrough; passthrough would emit silently corrupt prices downstream.
+      Null side stays null (ex3 half-book), empty stays empty. 9 tests green: rebase 0 identity,
+      +/- exponents, exactness on a 21-digit value, per-(ex,pair) lookup, both sides/all levels,
+      null-vs-empty, dead-letter, timings.
+- [x] Wiring: source `^ex[0-9]+-p[0-9]+-type-validated-raw-flink$` → process → sink
+      `ex{id}-p{id}-rebased-flink` + reject sink; unkeyed (rebase never depends on another event)
+      → verify: 9 module tests green; live smoke `smoke-rebaser.sh` 3/3 green 2026-07-18 with a
+      nonzero rebase row (price +2 / volume −3) — raw-in whole-chain per the smoke rule
 
 ## Milestone 5 — Job 4: precision normalizer (→ `ex{id}-p{id}-applied-precision-flink`)
 
@@ -341,7 +348,8 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 ## Open items (decide at the flagged milestone)
 
 - [ ] Job-1 source offsets: `latest` vs `earliest` for `ex{id}-raw`
-- [ ] Job-3 missing-rebase-row behavior; job-4 truncate-to-zero hazard
+- [x] ~~Job-3 missing-rebase-row behavior~~ → RESOLVED 2026-07-18: dead-letter `no_rebase_row`
+- [ ] Job-4 truncate-to-zero hazard
 - [ ] Refresh interval default for `RefreshingLookup`
 - [ ] Retention values per new topic family
 - [ ] Checkpointing/state backend for jobs 2/5/6 (stateful; currently the whole platform runs
