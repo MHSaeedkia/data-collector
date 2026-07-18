@@ -341,17 +341,31 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 ## Milestone 7 — Job 6: level emitter (→ existing `ex{id}-p{id}-{side}`, `price_level_event.avsc`)
 
-- [ ] `LevelDiffEmitter` keyed `(exchange_id, pair_id)`, state = last emitted book per side:
-      diff incoming full book vs last — changed/added prices → emit `price_level_event` upsert;
-      vanished prices → emit `quantity="0"` delete; first book → emit all levels. Confirm this
-      diff approach at implementation start (recorded as the likely-correct option — the
-      consolidator only removes levels on qty=0). Test-first: add/change/vanish/first-book/
-      no-change-no-emit
-- [ ] Sink: per-record topic selector `ex{exchange_id}-p{pair_id}-{side}` reusing the EXISTING
-      `price-level-event` registry subject — output must be byte-identical in format to what
-      the consolidator already consumes (its tests/serde define the contract)
-      → verify: module tests green; live smoke: full chain `ex1-raw` fixture → consolidated
-      book visible in `web/` UI with the consolidator running unchanged
+- [x] `LevelDiffFunction` keyed `(exchange_id, pair_id)`, state = last emitted book per side (one
+      `MapState` per side, canonicalized price → canonicalized quantity): changed/added price →
+      `price_level_event` upsert; vanished price → `quantity="0"`; unchanged book → emit nothing.
+      Diff approach CONFIRMED at implementation start by reading the consolidator's
+      `PerExchangeBookBuilder` (`signum()==0` → `levels.remove(price)`, unknown-price delete is a
+      no-op). 13 tests: first-book-emits-all, unchanged-emits-nothing, added, changed-quantity,
+      vanished→0, emptied-side, sides-diffed-independently, not-re-deleted, re-added, identity+
+      event_time, canonicalization, timings, per-key isolation
+- [x] Sink: per-record topic selector `ex{exchange_id}-p{pair_id}-{side}` on the EXISTING
+      `price-level-event` subject; new `PriceLevelEvent` model + serializer in `common` (side is an
+      Avro ENUM, not a string). Registry gotcha: the subject was stale v1 without
+      `pipeline_timings` — compatibility-checked FIRST (it is frozen and live), then registered
+      v2/id 10
+      → verified: 13/13 module tests + live smoke `smoke-level-emitter.sh` 3/3 green 2026-07-18
+      (assertions are per-level, not per-count, with a clock-derived price band — a diff job's
+      output depends on its own previous runs)
+- [ ] AFTER M7 (user, 2026-07-18): **compare job 5's book against the book the consolidator
+      builds from job 6's levels** for the same `(exchange_id, pair_id)`. They are built two
+      different ways — job 5 accumulates from raw events, the consolidator re-accumulates from
+      our emitted diffs — so any divergence means job 6's diff lost or invented a level. This is
+      the real end-to-end correctness check for M7; not blocking the milestone, do it once the
+      chain is live.
+- [ ] Still open from M7's original verify line: watch a consolidated book in the `web/` UI end to
+      end with the consolidator running unchanged (the smoke asserts the topic contract, not the
+      UI)
 
 ## Milestone 8 — Infra, provisioning, cutover
 
