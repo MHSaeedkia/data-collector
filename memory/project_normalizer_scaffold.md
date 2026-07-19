@@ -100,6 +100,13 @@ until the job reports RUNNING, which is what makes sequential Makefile lines a r
 than a hopeful one. Same constraint drives topic pre-creation in warmup.sh
 ([[kafka-topic-strategy]]).
 
+`make run-normalizer-jobs` is the same submission sequence without the compose rebuild, for when
+the cluster is already up. Because that cluster still holds the *previous* run's jobs (and their
+task slots), it first runs `scripts/cancel-flink-jobs.sh` — cancels every RUNNING/RESTARTING job
+via the REST API and blocks until each reaches a terminal state, otherwise resubmission can fail
+on slot exhaustion. `refresh-normalizer` deliberately does *not* call it: its `down -v` already
+destroys the cluster.
+
 **Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
 duplicates common code.
 **How to apply:** when adding a job module, copy the conventions above; when touching the

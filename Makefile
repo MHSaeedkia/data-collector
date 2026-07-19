@@ -31,6 +31,7 @@ refresh-normalizer:
 
 run-normalizer-jobs:
 	-git pull origin
+	./scripts/cancel-flink-jobs.sh
 	cd ./flink/orderbook-consolidator && ./run-job.sh
 	cd ./flink/normalizer && ./run-job.sh job-level-emitter
 	cd ./flink/normalizer && ./run-job.sh job-book-builder
