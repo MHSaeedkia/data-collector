@@ -35,6 +35,15 @@ Non-obvious hamba/avro facts (confirmed by reading the library's codec source):
 
 Malformed/undecodable records log-and-skip (`"Skipping bad message on %s: %v"`), never fatal.
 
+`event_time` stays **epoch millis (int64) end to end** — decoder → `domain.RawBook` → JSON → browser.
+It is never formatted server-side. This means there is **no UTC→local conversion to do anywhere**:
+epoch millis are timezone-agnostic, and `new Date(ms).toLocaleTimeString()` in `public/index.html`
+already renders in the viewer's browser timezone by default. Don't "fix" this by adding an offset —
+that would double-shift. The format call passes `{ timeZoneName: "short" }` so the rendered time
+carries an explicit zone label (e.g. `13:56:00 GMT+3:30`) and can't be misread as UTC.
+If displayed times ever look shifted, the bug is upstream in how the producer stamps `event_time`,
+not in the frontend formatting.
+
 ## ID → display resolution (key consequence of the ID-only pipeline)
 
 The Flink output carries only `pair_id` and per-level `exchange_id` — no `base`, `quote`, or

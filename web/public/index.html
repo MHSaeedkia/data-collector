@@ -288,7 +288,7 @@
 					asks ? asks.event_time : 0,
 					bids ? bids.event_time : 0,
 				);
-				$meta.textContent = `${askLevels.length} asks · ${bidLevels.length} bids · event_time ${t ? new Date(t).toLocaleTimeString() : "—"}`;
+				$meta.textContent = `${askLevels.length} asks · ${bidLevels.length} bids · event_time ${t ? new Date(t).toLocaleTimeString(undefined, { timeZoneName: "short" }) : "—"}`;
 			}
 
 			$pair.addEventListener("change", () => {
