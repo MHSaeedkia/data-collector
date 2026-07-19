@@ -369,17 +369,19 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 ## Milestone 8 — Infra, provisioning, cutover
 
-- [ ] Extend `scripts/warmup.sh`: `ex{id}-raw` DONE 2026-07-14 (per subscribed exchange,
-      7-day retention); still to add: the 5 per-pair intermediate/dead-letter topic families
-      for subscribed exchange_markets; decide retention per family (audit topics probably
-      longer than 1h — pick values); sequential creation (parallel xargs was reverted before,
-      don't retry)
+- [x] Extend `scripts/warmup.sh` — DONE 2026-07-19: `ex{id}-raw` (2026-07-14) plus the per-pair
+      normalizer families `{raw,type-validated-raw,rebased,applied-precision,orderbook-snapshot}
+      -flink` at 1h and the shared `rejected-flink` dead-letter at 7d. Created BEFORE the existing
+      input/output blocks (sources read `latest` — a late-discovered topic loses what was produced
+      in between). Sequential creation kept (parallel xargs was reverted before, don't retry)
 - [ ] kafka-ui serde config in `docker-compose-normalizer.yml`: `topicValuesPattern` +
       `schemaNameTemplate` per new topic family → the 3 new canonical subjects (pattern from
       `memory/project_kafka_topic_strategy.md`; registry stays clutter-free)
 - [ ] `fake-data-generator/`: new mode emitting realistic RAW exchange payloads to `ex{id}-raw`
       (stand-in for NiFi during dev)
-- [ ] Root `Makefile`: `refresh-normalizer` target; `README.md` section for the pipeline
+- [x] Root `Makefile`: `refresh-normalizer` target — DONE 2026-07-19 (submits DOWNSTREAM-FIRST:
+      consolidator, then jobs 6→1, because every source reads `latest`); `README.md` section for
+      the pipeline still TODO
 - [ ] Server deploy: build + submit all 6 jobs (`sudo`, Temurin 21 —
       `memory/project_ubuntu_server_env.md`); NOTE all composes share container names/ports —
       revisit "one stack at a time" rule, the normalizer must run ALONGSIDE the consolidator

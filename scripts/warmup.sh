@@ -85,6 +85,7 @@ echo "Creating Kafka topics..."
 RAW_RETENTION_MS=604800000    # 7 days
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
+REJECTED_RETENTION_MS=604800000  # 7 days — dead-letter is an audit point, read by hand long after the fact
 
 create_topic() {
     local topic="$1"
@@ -99,6 +100,26 @@ create_topic() {
         --replication-factor 1 \
         --config "retention.ms=$retention_ms"
 }
+
+# Normalizer topics — the raw pipeline's intermediate stages, one family per job output.
+# Created FIRST because every normalizer source reads from `latest`: a topic that does not exist
+# when its job starts is discovered late, and whatever was produced in between is lost.
+# Job 6's output is the existing ex{id}-p{id}-{side} family below, so it has no entry here.
+NORMALIZER_STAGES=(
+    raw-flink                    # job 1 pair-extractor  out
+    type-validated-raw-flink     # job 2 type-validator  out
+    rebased-flink                # job 3 rebaser         out
+    applied-precision-flink      # job 4 precision       out
+    orderbook-snapshot-flink     # job 5 book-builder    out
+)
+
+while IFS='|' read -r pair_id exchange_id exchange_name; do
+    for stage in "${NORMALIZER_STAGES[@]}"; do
+        create_topic "ex${exchange_id}-p${pair_id}-${stage}" "$INPUT_RETENTION_MS"
+    done
+    # Shared dead-letter for jobs 2 and 3.
+    create_topic "ex${exchange_id}-p${pair_id}-rejected-flink" "$REJECTED_RETENTION_MS"
+done <<< "$pairs"
 
 # Raw topics — one per exchange (NiFi publishes verbatim exchange payloads here).
 distinct_exchanges=$(echo "$pairs" | cut -d'|' -f2 | sort -un)

@@ -58,6 +58,26 @@ Topics are pre-provisioned by `scripts/warmup.sh` from the postgres `markets` + 
 - **Parallel topic creation** (`xargs -P` around the per-topic `docker exec ... kafka-topics --create`, each paying ~1-3s JVM startup): reverted same day, commit `81c18de`; script is back to the sequential `while` loop. Reason for the revert wasn't captured at the time.
 - **Per-topic `<topic>-value` schema subjects** (Confluent `TopicNameStrategy`, one registry subject per topic so kafka-ui would auto-default to AVRO): reverted same day at user's request — with pairs × exchanges × 2 sides it cluttered the registry with dozens of duplicate subjects on top of the 3 canonical ones. **Current stance: only the 3 canonical fixed-name subjects exist** (`orderbook-event`, `price-level-event`, `consolidated-order-book-event`). The kafka-ui goal was solved via serde config instead (below).
 
+## Normalizer intermediate topics (2026-07-19)
+
+The raw pipeline's stage topics are `ex{exchange_id}-p{pair_id}-{stage}-flink`, one family per job
+output: `raw` (job 1), `type-validated-raw` (2), `rebased` (3), `applied-precision` (4),
+`orderbook-snapshot` (5), plus `rejected-flink` — a *shared* dead-letter written by both jobs 2 and
+3. Job 6 has no family of its own: it writes the pre-existing `ex{id}-p{id}-{side}` topics, which is
+exactly the [[raw-pipeline-decision]] cutover seam. The `-flink` suffix marks "intermediate, ours to
+delete"; its absence on job 6's output is deliberate, not an oversight.
+
+**warmup.sh creates these BEFORE the existing input/output blocks, at the user's request.** Reason:
+every normalizer source uses `OffsetsInitializer.latest()`. A topic that doesn't exist when its job
+starts gets discovered by the source's periodic partition-discovery only *later*, and everything
+produced in the gap is silently lost. Provisioning up front removes the race. This is the same
+constraint that makes `make refresh-normalizer` submit jobs downstream-first.
+
+**Retention:** intermediates get the 1h `INPUT_RETENTION_MS` (transient, high volume, fully
+reproducible by replaying `ex{id}-raw`). `rejected-flink` gets 7 days — it is an audit point read by
+hand via kafka-ui, often long after the rejection, so 1h would make it useless. Same
+`--if-not-exists` caveat as above: retention only lands at first creation.
+
 ## kafka-ui AVRO-per-topic without registry clutter (serde config)
 
 Solved via custom serde config in `docker-compose-orderbook-consolidator.yml`'s `kafka-ui` service (pure kafka-ui config, registry untouched, still exactly 3 subjects). Manually picking a serde in kafka-ui's produce screen is **impossible** without this: the dropdown only lists serdes whose applicability check passes for that topic, and with no matching subject there's nothing to pick (`valueSerde: null`). Fix: two named custom serde instances of the built-in `SchemaRegistrySerde` class, each bound via `topicValuesPattern` to one topic shape and pinned via `properties.schemaNameTemplate` (no `%s`) to one fixed canonical subject:

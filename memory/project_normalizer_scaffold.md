@@ -91,6 +91,15 @@ seeded values are identity and would pass a broken job. `smoke-precision.sh` nee
 mutation (the seeded precisions are already non-identity) but *asserts* them as a precondition —
 either way the smoke must never depend on reference data it hasn't pinned (see [[precision]]).
 
+## `make refresh-normalizer` — submission order is load-bearing (2026-07-19)
+
+Rebuilds the stack and submits the consolidator plus all 6 normalizer jobs, **downstream-first**:
+consolidator, then job 6 → job 1. Every source reads `OffsetsInitializer.latest()`, so a job started
+*after* its upstream silently misses everything the upstream emitted in the gap. `run-job.sh` blocks
+until the job reports RUNNING, which is what makes sequential Makefile lines a real ordering rather
+than a hopeful one. Same constraint drives topic pre-creation in warmup.sh
+([[kafka-topic-strategy]]).
+
 **Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
 duplicates common code.
 **How to apply:** when adding a job module, copy the conventions above; when touching the
