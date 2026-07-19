@@ -107,6 +107,15 @@ via the REST API and blocks until each reaches a terminal state, otherwise resub
 on slot exhaustion. `refresh-normalizer` deliberately does *not* call it: its `down -v` already
 destroys the cluster.
 
+`make run-consolidator-job` is the consolidator-only equivalent of `run-normalizer-jobs`: pull,
+cancel, resubmit just `flink/orderbook-consolidator`. It is meant for the **standalone**
+consolidator stack (`docker-compose-orderbook-consolidator.yml`), which binds the same
+`localhost:7070` and `jobmanager` container name as the normalizer stack — the two are mutually
+exclusive, only one can be up at a time. **Gotcha:** `cancel-flink-jobs.sh` cancels *every* job on
+whatever cluster answers on 7070. If the normalizer stack happens to be the one running,
+`run-consolidator-job` will kill the 6 normalizer jobs and not bring them back — use
+`run-normalizer-jobs` there instead.
+
 **Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
 duplicates common code.
 **How to apply:** when adding a job module, copy the conventions above; when touching the

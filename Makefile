@@ -29,6 +29,11 @@ refresh-normalizer:
 	cd ./flink/normalizer && ./run-job.sh job-type-validator
 	cd ./flink/normalizer && ./run-job.sh job-pair-extractor
 
+run-consolidator-job:
+	-git pull origin
+	./scripts/cancel-flink-jobs.sh
+	cd ./flink/orderbook-consolidator && ./run-job.sh
+
 run-normalizer-jobs:
 	-git pull origin
 	./scripts/cancel-flink-jobs.sh
