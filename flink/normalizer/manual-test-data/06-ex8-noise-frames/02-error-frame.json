@@ -1,6 +1,6 @@
 {
-  "event": "error",
-  "code": "60012",
-  "msg": "Invalid request: unknown channel",
-  "connId": "a4d3ae55"
+	"event": "error",
+	"code": "60012",
+	"msg": "Invalid request: unknown channel",
+	"connId": "a4d3ae55"
 }
