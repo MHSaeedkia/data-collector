@@ -1,4 +1,7 @@
-["BTCUSDT@buyDepth", [
-  {"price": 62942.5, "quantity": 0.5,  "sum": 31471.25},
-  {"price": 62927.5, "quantity": 3.5,  "sum": 220246.25}
-]]
+[
+	"BTCUSDT@buyDepth",
+	[
+		{ "price": 62942.5, "quantity": 0.5, "sum": 31471.25 },
+		{ "price": 62927.5, "quantity": 3.5, "sum": 220246.25 }
+	]
+]

@@ -1,11 +1,15 @@
 {
-  "arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
-  "action": "snapshot",
-  "data": [
-    {
-      "asks": [["69999","9.99999999"]],
-      "bids": [["10000","9.99999999"]],
-      "ts": "1800000000150"
-    }
-  ]
+	"arg": {
+		"channel": "books-grouped",
+		"instId": "BTC-USDT",
+		"grouping": "1"
+	},
+	"action": "snapshot",
+	"data": [
+		{
+			"asks": [["69999", "9.99999999"]],
+			"bids": [["10000", "9.99999999"]],
+			"ts": "1800000000150"
+		}
+	]
 }

@@ -1,11 +1,18 @@
 {
-  "arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
-  "action": "update",
-  "data": [
-    {
-      "asks": [["62955", "0"], ["62970", "0.60000000"]],
-      "bids": [["62945", "1.65000000"]],
-      "ts": "1800000000600"
-    }
-  ]
+	"arg": {
+		"channel": "books-grouped",
+		"instId": "BTC-USDT",
+		"grouping": "1"
+	},
+	"action": "update",
+	"data": [
+		{
+			"asks": [
+				["62955", "0"],
+				["62970", "0.60000000"]
+			],
+			"bids": [["62945", "1.65000000"]],
+			"ts": "1800000000600"
+		}
+	]
 }
