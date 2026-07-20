@@ -195,22 +195,31 @@ snapshot).
 
 | Wire | Becomes | Why |
 | --- | --- | --- |
-| ask `62900.1234` @ `3.1234567891` | `62900.12` @ `3.12345678` | both truncated |
-| ask `62900.1289` @ `2.0000000099` | `62900.12` @ `2.00000000` | **collides with the row above** |
+| ask `62900.1234` @ `3.1234567891` + ask `62900.1289` @ `2.0000000099` | **one** level `62900.12` @ `5.12345679` | **collision: merged, quantities summed** |
 | ask `62902.999` @ `4` | `62902.99` @ `4` | truncates DOWN, not to `62903.00` |
 | ask `62905.10` @ `0.0000000090` | qty → `"0"` | **dust: level deleted, never shown** |
-| bid `62899.0567` @ `5.9876543219` | `62899.05` @ `5.98765432` | both truncated |
+| ask `62906.1234` @ `0.000000006` + ask `62906.1299` @ `0.000000006` | **one** level `62906.12` @ `0.00000001` | **two dusts that SURVIVE by summing** |
+| bid `62899.0567` @ `5.9876543219` + bid `62899.0512` @ `1` | **one** level `62899.05` @ `6.98765432` | collision on the bid side too |
 | bid `62898.9999` @ `7.25` | `62898.99` @ `7.25` | |
 
-The `62900.1234`/`62900.1289` pair is the one to watch: two distinct wire prices truncate to
-**one** book price. Job 5 keys its `MapState` by canonicalized price, so the UI must show
-**one** level at `62900.12` (last writer wins), not two.
+**7 asks in → 5 levels out; 5 bids in → 4 levels out.** The collisions are the thing to watch:
+truncating prices makes distinct wire prices land on the same book price, and job 4 merges them
+into one level carrying the **sum** of their quantities (user decision 2026-07-20). Previously it
+emitted both, and job 5 — which keys its `MapState` by canonicalized price — silently kept only
+the last, losing the other's liquidity.
+
+`62906.1234`/`62906.1299` is the subtle pair: each quantity alone truncates to `"0"` and would be
+a delete, but job 4 sums the RAW quantities and truncates the sum ONCE, so `0.000000012` becomes
+`0.00000001` and the level **survives**. Summing after truncating would wrongly delete it.
 
 `02-update-dust-delete` (B+600) then sets live ask `62901.55` and live bid `62897.50` to
 sub-precision quantities. Both truncate to `"0"`, which job 5 reads as a **delete** — the levels
 vanish from the UI. Intended, per the M5 decision: size below the lot precision is not
-representable liquidity. Ask `62910.25` is added in the same message as a control, so you can
-tell "the message was processed" apart from "the message was dropped".
+representable liquidity. Asks `62910.25` @ `6` and `62910.2599` @ `1.5` are added in the same
+message as a control — they must appear as **one** level `62910.25` @ `7.5`, which also proves the
+merge applies to `update` frames, not just snapshots. (On an update a quantity is a replacement
+rather than an increment, so summing collided rows is a deliberate approximation — job 4 is
+stateless and cannot know what the other collided price still rests at.)
 
 **Dead letter: 0 records** — job 4 has no dead-letter path at all, deliberately unlike job 3.
 

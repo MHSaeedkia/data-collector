@@ -10,7 +10,9 @@ import org.apache.flink.api.common.functions.RichMapFunction;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Job 4 — precision. Stateless: every level's price is truncated to
@@ -29,8 +31,19 @@ import java.util.List;
  * quantity that truncates to exactly 0 is emitted as "0" — no level is ever dropped here. Job 5
  * reads {@code quantity == 0} as "delete this level", which is the intended consequence: a size
  * below the market's lot precision is not representable liquidity, so the book should not hold a
- * level for it. This makes the function a pure per-level transform — level count in equals level
- * count out.
+ * level for it.
+ *
+ * <p><b>Price collision (user decision 2026-07-20):</b> truncating prices makes distinct wire
+ * prices collide — at {@code price_precision 2}, 1.234 and 1.235 are both 1.23. Colliding levels
+ * are MERGED into one level whose quantity is the sum, so a side never carries the same price
+ * twice. Without this the two levels raced downstream and the last one silently erased the
+ * other's liquidity. This is why level count in does NOT equal level count out.
+ *
+ * <p>The merge rule is the same on {@code snapshot} and {@code update} frames. On an update a
+ * quantity is an absolute replacement rather than an increment, so summing two colliding
+ * replacements is an approximation — but an unavoidable one: this job is stateless and does not
+ * hold the untruncated book, so nothing here can know what the other collided price still rests
+ * at. Summing conserves the size the exchange sent in that frame; last-wins discards it.
  *
  * <p>A null side is NOT an empty side: ex3 wallex sends one side per message and the other stays
  * null, so null in ⇒ null out (see [[rebaser]]).
@@ -71,16 +84,27 @@ public class PrecisionFunction extends RichMapFunction<RawOrderBookEvent, RawOrd
     /** Stand-in for a pair with no markets row: both precisions null ⇒ everything passes through. */
     private static final MarketPrecision UNCONFIGURED = new MarketPrecision(null, null);
 
-    /** Null side (ex3's absent half) passes through as null; an empty list stays empty. */
+    /**
+     * Null side (ex3's absent half) passes through as null; an empty list stays empty.
+     *
+     * <p>Levels are grouped by their TRUNCATED price and their raw quantities summed, so a side
+     * never carries the same price twice. Summing happens before quantity truncation — the sum of
+     * the exact wire quantities is truncated once, which loses the least while staying DOWN-biased.
+     */
     private static List<PriceLevel> applyLevels(List<PriceLevel> levels, MarketPrecision precision) {
         if (levels == null) {
             return null;
         }
-        List<PriceLevel> applied = new ArrayList<>(levels.size());
+        Map<String, BigDecimal> merged = new LinkedHashMap<>();
         for (PriceLevel level : levels) {
-            applied.add(new PriceLevel(
-                    Decimals.canonicalize(apply(new BigDecimal(level.getPrice()), precision.getPrice())),
-                    Decimals.canonicalize(apply(new BigDecimal(level.getQuantity()), precision.getQuantity()))));
+            String price = Decimals.canonicalize(
+                    apply(new BigDecimal(level.getPrice()), precision.getPrice()));
+            merged.merge(price, new BigDecimal(level.getQuantity()), BigDecimal::add);
+        }
+        List<PriceLevel> applied = new ArrayList<>(merged.size());
+        for (Map.Entry<String, BigDecimal> entry : merged.entrySet()) {
+            applied.add(new PriceLevel(entry.getKey(),
+                    Decimals.canonicalize(apply(entry.getValue(), precision.getQuantity()))));
         }
         return applied;
     }

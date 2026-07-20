@@ -77,9 +77,11 @@ on reading the UI:
 (null side must not wipe bids) → **0**; 03 gap → `sequence_gap` → `awaiting_snapshot` (a
 *correctly*-stepped update still rejected while diverged) → resync into a new price band → **2**;
 04 byte-identical replay AND a backwards snapshot, loud `69999`/`10000` levels so a leak is
-visible, neither rejection advancing `lastSeq` → **2**; 05 [[precision]] truncation incl. **two
-wire prices colliding into one book price** plus dust→`"0"`→delete with a control add → **0**
-(job 4 has no dead-letter by design); 06 non-book frames discarded, interleaved between snapshot
+visible, neither rejection advancing `lastSeq` → **2**; 05 [[precision]] truncation incl. **prices
+colliding into one book price and MERGING by sum** (extended 2026-07-20 with a bid-side collision,
+an update-frame collision, and a pair of dusts that survive because their raw sum is
+representable) plus dust→`"0"`→delete with a control add → **0** (job 4 has no dead-letter by
+design); 06 non-book frames discarded, interleaved between snapshot
 and update to prove drops don't disturb sequence tracking → **0** (**drop ≠ dead-letter**); 07
 wallex null-seq passthrough + half-book merge → **0**.
 

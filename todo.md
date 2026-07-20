@@ -289,17 +289,30 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       truncating to exactly 0 → EMIT `"0"` and KEEP the level.** Job 5 reads that as a
       level-delete, which is intended — a size below the market's `quantity_precision` is not
       representable liquidity. (The earlier "drop the level" answer was reversed; flooring stays
-      rejected, it would report more size than the exchange did.) Level count in == level count
-      out, which is what keeps this a plain `RichMapFunction`.
-      15 module tests green: truncation never rounds up, already-fewer-decimals unchanged,
+      rejected, it would report more size than the exchange did.)
+      **BUG FIXED 2026-07-20 (user decision): prices that COLLIDE after truncation are MERGED
+      into one level whose quantity is the SUM.** At `price_precision 2`, 1.234 and 1.235 both
+      become 1.23; the job used to emit both, and job 5's price-keyed `MapState` then kept only
+      the last, silently losing the other's liquidity. Raw quantities are summed and the sum
+      truncated ONCE (not truncate-then-sum — so colliding dusts can add up to a level that
+      survives), first-appearance order preserved, same rule on `snapshot` and `update` (on an
+      update, summing collided replacements is a deliberate approximation: the job is stateless
+      and cannot know what the other collided price still rests at). This RETIRES the old
+      "level count in == level count out" invariant — a side can now shrink.
+      21 module tests green: truncation never rounds up, already-fewer-decimals unchanged,
       precision 0, exactness on 20+ digit values, separate price/qty precisions, per-pair
       lookup, null-precision & unknown-pair passthrough, zero-quantity passthrough, dust → "0"
       (+ an all-dust side keeps every level), null-vs-empty side, both sides all levels,
-      timings
+      timings, and (2026-07-20) collision merge: sums quantities, keeps first-appearance order,
+      sums raw-before-truncating, all-dust collision → one delete, both sides, and
+      null-price-precision merging only exact wire duplicates
 - [x] Wiring: source `^ex[0-9]+-p[0-9]+-rebased-flink$` → map → sink
-      → verified: module tests 15/15 green + live smoke `smoke-precision.sh` 3/3 green
+      → verified: module tests 21/21 green + live smoke `smoke-precision.sh` 3/3 green
       2026-07-18 (raw-in whole chain job1→job4; no DB mutation needed — the seeded markets row
       is already non-identity at 2/8, and the seeded rebase row is 0/0 so job 3 stays a no-op)
+- [ ] Re-run `smoke-precision.sh` live after the 2026-07-20 collision-merge fix — the script now
+      sends 3 asks and asserts 2 come out, but has only been syntax-checked, not run.
+      The job jar also needs resubmitting for the fix to take effect on a running stack.
 
 ## Milestone 6 — Job 5: book builder (→ `ex{id}-p{id}-orderbook-snapshot-flink`)
 

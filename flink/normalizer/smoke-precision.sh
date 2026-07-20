@@ -30,6 +30,10 @@ set -euo pipefail
 # representable liquidity). Case 1 sends a dust ask alongside a real one and asserts both come
 # out, the dust one carrying "0".
 #
+# Also covered: truncating prices makes distinct wire prices COLLIDE, and colliding levels are
+# merged into one carrying the summed quantity (user decision 2026-07-20). Each case sends three
+# asks, two of which collide, and asserts two come out — this job can now change a side's length.
+#
 # Prerequisites (this is a TEST, not a deploy):
 #   - the normalizer stack is up (docker-compose-normalizer.yml)
 #   - the DB is warmed (scripts/warmup.sh) so exchange_markets resolves OKX BTC-USDT -> p1
@@ -77,8 +81,15 @@ WANT_QTY_PRECISION=8
 # rounding-up bug is unmissable (62770.98765 -> 62770.99 would be wrong; DOWN gives 62770.98).
 RAW_ASK_PRICE="62770.98765";  RAW_ASK_QTY="0.123456789"
 RAW_BID_PRICE="62769.43219";  RAW_BID_QTY="1.999999999"
-WANT_ASK_PRICE="62770.98";    WANT_ASK_QTY="0.12345678"
 WANT_BID_PRICE="62769.43";    WANT_BID_QTY="1.99999999"
+
+# A second ask that truncates to the SAME price as the first (62770.98) — the collision case.
+# The two must MERGE into one level carrying the SUM, never race and overwrite each other.
+# The expected quantity is also chosen to prove the ORDER of the two lossy steps: summing the raw
+# quantities and truncating once gives 0.234567900 -> "0.2345679", whereas truncating each first
+# and then adding would give "0.23456789". Only the former is correct.
+COLLIDE_ASK_PRICE="62770.98123"; COLLIDE_ASK_QTY="0.111111111"
+WANT_ASK_PRICE="62770.98";       WANT_ASK_QTY="0.2345679"
 
 # A second ask level whose quantity is below one unit at precision 8 — it must come out as "0"
 # with its level KEPT. This is the milestone's truncate-to-zero decision, live.
@@ -136,17 +147,21 @@ fail=0
 
 # One verbatim OKX raw payload (books-grouped envelope). ts is a STRING epoch-millis and is the
 # ONLY timestamp: OkxParser maps it to BOTH event_time and sequence_id. ts = now, so event_time
-# is the execution time and every downstream stage's timings must exceed it. The asks array
-# carries the real level FIRST and the dust level second, so the dust one is asserted by index.
+# is the execution time and every downstream stage's timings must exceed it.
+#
+# THREE asks go in and TWO must come out: the real level and the colliding one merge into
+# asks[0], the dust level stays asks[1]. That 3->2 shrink is itself the assertion that the merge
+# happened — before the merge existed this job could not change a side's length at all.
 raw_okx() {
     local action="$1" ts="$2"
     jq -cn --arg action "$action" --arg ts "$ts" \
         --arg ap "$RAW_ASK_PRICE" --arg aq "$RAW_ASK_QTY" \
+        --arg cp "$COLLIDE_ASK_PRICE" --arg cq "$COLLIDE_ASK_QTY" \
         --arg dp "$DUST_ASK_PRICE" --arg dq "$DUST_ASK_QTY" \
         --arg bp "$RAW_BID_PRICE" --arg bq "$RAW_BID_QTY" '
         {arg:{channel:"books-grouped",instId:"BTC-USDT",grouping:"1"},
          action:$action,
-         data:[{asks:[[$ap,$aq],[$dp,$dq]],bids:[[$bp,$bq]],ts:$ts}]}'
+         data:[{asks:[[$ap,$aq],[$cp,$cq],[$dp,$dq]],bids:[[$bp,$bq]],ts:$ts}]}'
 }
 
 produce() {
@@ -206,11 +221,12 @@ echo
 
 # Cases run IN ORDER on the same keyed (8,1) state in job 2 (job 4 itself is stateless).
 
-# 1. snapshot baseline -> truncated. Asserts DOWN-truncation on both sides, that the dust level
-#    is KEPT and carries quantity "0" (asks stays 2 long), that event_time is untouched,
+# 1. snapshot baseline -> truncated. Asserts DOWN-truncation on both sides, that the two asks
+#    colliding on 62770.98 MERGE into one level carrying their summed quantity (3 asks in, 2 out),
+#    that the dust level is KEPT and carries quantity "0", that event_time is untouched,
 #    and that the timing chain now extends through job 4:
 #    event_time <= pair_extract_in <= ... <= rebase_out <= precision_in <= precision_out.
-run_case "snapshot(baseline) truncated + dust zeroed" "$PRECISION_TOPIC" "$(raw_okx snapshot "$NOW")" \
+run_case "snapshot(baseline) truncated + collision merged + dust zeroed" "$PRECISION_TOPIC" "$(raw_okx snapshot "$NOW")" \
     '.exchange_id' "$EX" '.pair_id' "$PAIR" '.type' "snapshot" \
     '.sequence_id.long' "$NOW" '.event_time' "$NOW" \
     '(.asks.array | length)' "2" \
@@ -229,8 +245,9 @@ run_case "snapshot(baseline) truncated + dust zeroed" "$PRECISION_TOPIC" "$(raw_
 
 # 2. contiguous update (ts = baseline + jump) -> truncated the same way (job 4 is type-agnostic:
 #    it never inspects snapshot-vs-update, so dust becomes "0" on updates too — which is where
-#    job 5 acts on it as a level-delete).
-run_case "contiguous update truncated + dust zeroed" "$PRECISION_TOPIC" "$(raw_okx update "$((NOW+JUMP))")" \
+#    job 5 acts on it as a level-delete — and colliding prices merge by SUM on updates too, the
+#    deliberate approximation recorded in PrecisionFunction's javadoc).
+run_case "contiguous update truncated + collision merged + dust zeroed" "$PRECISION_TOPIC" "$(raw_okx update "$((NOW+JUMP))")" \
     '.type' "update" '.sequence_id.long' "$((NOW+JUMP))" '.event_time' "$((NOW+JUMP))" \
     '(.asks.array | length)' "2" \
     '.asks.array[0].price' "$WANT_ASK_PRICE" '.asks.array[0].quantity' "$WANT_ASK_QTY" \

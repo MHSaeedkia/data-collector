@@ -201,6 +201,95 @@ class PrecisionFunctionTest {
         assertThat(out.getAsks().get(0).getQuantity()).isEqualTo("0.000000001");
     }
 
+    // ---- price collision merge (user decision 2026-07-20) ------------------------
+
+    @Test
+    @DisplayName("wire prices colliding into one book price merge into one level, quantities summed")
+    void collidingPricesMerge() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(2, 8)));
+
+        RawOrderBookEvent out = process(event(1,
+                List.of(new PriceLevel("1.234", "2"), new PriceLevel("1.235", "3")),
+                null));
+
+        assertThat(out.getAsks()).hasSize(1);
+        assertThat(out.getAsks().get(0).getPrice()).isEqualTo("1.23");
+        assertThat(out.getAsks().get(0).getQuantity()).isEqualTo("5");
+    }
+
+    @Test
+    @DisplayName("merged levels keep first-appearance order and non-colliding levels are untouched")
+    void mergeKeepsOrder() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(2, 8)));
+
+        RawOrderBookEvent out = process(event(1,
+                List.of(new PriceLevel("1.234", "2"),
+                        new PriceLevel("2.500", "1"),
+                        new PriceLevel("1.239", "3")),
+                null));
+
+        assertThat(out.getAsks()).extracting(PriceLevel::getPrice).containsExactly("1.23", "2.5");
+        assertThat(out.getAsks()).extracting(PriceLevel::getQuantity).containsExactly("5", "1");
+    }
+
+    @Test
+    @DisplayName("quantities are summed RAW and the sum truncated once, so dust can add up to a real level")
+    void sumsBeforeTruncating() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(2, 8)));
+
+        RawOrderBookEvent out = process(event(1,
+                List.of(new PriceLevel("1.234", "0.000000006"),
+                        new PriceLevel("1.235", "0.000000006")),
+                null));
+
+        assertThat(out.getAsks()).hasSize(1);
+        assertThat(out.getAsks().get(0).getQuantity()).isEqualTo("0.00000001");
+    }
+
+    @Test
+    @DisplayName("colliding levels that are all dust still merge down to a single delete")
+    void allDustCollisionBecomesOneDelete() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(2, 8)));
+
+        RawOrderBookEvent out = process(event(1,
+                List.of(new PriceLevel("1.234", "0.000000001"),
+                        new PriceLevel("1.235", "0.000000002")),
+                null));
+
+        assertThat(out.getAsks()).hasSize(1);
+        assertThat(out.getAsks().get(0).getQuantity()).isEqualTo("0");
+    }
+
+    @Test
+    @DisplayName("both sides merge independently")
+    void bothSidesMerge() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(2, 8)));
+
+        RawOrderBookEvent out = process(event(1,
+                List.of(new PriceLevel("1.234", "2"), new PriceLevel("1.235", "3")),
+                List.of(new PriceLevel("9.991", "1"), new PriceLevel("9.999", "4"))));
+
+        assertThat(out.getAsks()).hasSize(1);
+        assertThat(out.getAsks().get(0).getQuantity()).isEqualTo("5");
+        assertThat(out.getBids()).hasSize(1);
+        assertThat(out.getBids().get(0).getQuantity()).isEqualTo("5");
+    }
+
+    @Test
+    @DisplayName("with no price precision configured only exact wire duplicates merge")
+    void nullPricePrecisionMergesOnlyExactDuplicates() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(null, 8)));
+
+        RawOrderBookEvent out = process(event(1,
+                List.of(new PriceLevel("1.234", "2"),
+                        new PriceLevel("1.235", "3"),
+                        new PriceLevel("1.234", "1")),
+                null));
+
+        assertThat(out.getAsks()).extracting(PriceLevel::getPrice).containsExactly("1.234", "1.235");
+        assertThat(out.getAsks()).extracting(PriceLevel::getQuantity).containsExactly("3", "3");
+    }
+
     // ---- side/shape handling ----------------------------------------------------
 
     @Test
