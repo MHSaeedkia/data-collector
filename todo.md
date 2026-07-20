@@ -412,6 +412,52 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       `ex{id}-p{id}-{side}` streams for equality window, then switch NiFi to raw-only; decide
       fate of `flink/orderbook-job/` afterwards
 
+## Milestone 9 — ex9 lbank (NEW EXCHANGE, normalizer side not implemented)
+
+Teammate commit `195a735` ("add lbank to postgres sqls", 2026-07-20) added exchange id **9 lbank**
+to `postgres/02_seed.sql` (+ 27 `exchange_markets` rows, all rebase `0,0`, status `unsubscribe`)
+and to `markets/markets.csv` (all `disable`). **That is the ONLY place lbank exists** — a repo-wide
+grep for `lbank` hits those two files and nothing else. No parser, no fixtures, no wire samples, no
+normalizer support. Job 1 will silently drop every ex9 message via the "no parser" counter until
+the work below is done.
+
+Wire symbols are lowercase-underscore (`btc_usdt`), unlike okx's `BTC-USDT`.
+
+**Already covered, do NOT redo:**
+
+- Topic patterns in all 6 jobs are regexes (`ex[0-9]+-...`), so ex9 is picked up with no code change.
+- `scripts/warmup.sh` has no status filter on its `exchange_markets` query — it will create the ex9
+  raw + stage + dead-letter topics on the next run. Re-running it IS the provisioning step.
+- lbank's markets map onto the SAME `market_id`s as okx (1, 3, 5…), so `markets` precision rows and
+  job 3's rebase rows already resolve. Jobs 3–6 need no lbank-specific work.
+
+**Blocking, in order:**
+
+- [ ] **Capture real lbank wire samples → `sample-raw-data.md` § ex9** (same reset-then-capture
+      method as the 2026-07-14 pass). This BLOCKS the parser — every other parser's shape was read
+      off the wire, never guessed, and the ordering/delete semantics below cannot be inferred from
+      lbank's docs alone.
+- [ ] Classify the feed regime from those samples — it decides job 2's behaviour, which is the one
+      thing that differs per exchange (`memory/project_raw_pipeline_decision.md`):
+      - snapshot-per-message (like ex1/2/4/5) → out-of-order drop check only; or
+      - true delta (like ex6/ex8) → needs the ordering field + its jump, and `type` snapshot/update
+      - is there an ordering field at all, or is it ex3/wallex-style with none (no protection)?
+      - is `quantity 0` a level delete on the wire? (confirm on the wire, don't assume)
+      - one book per message or a `data` array of several?
+      - what stamps `event_time` — a wire timestamp or processing time?
+- [ ] `LbankParser` + register `9, new LbankParser()` in `Parsers.byExchangeId()`; javadoc in the
+      per-exchange format the other 7 parsers use (market key, level shape, seq field + jump,
+      event time, § reference). Emit the market string EXACTLY as lbank sends it — the lookup key
+      is `"{exchange_id}|{market}"`, an exact case-sensitive match against the seeded `btc_usdt`,
+      so an uppercase wire symbol silently drops every message. Verify the case on the samples.
+- [ ] `LbankParserTest` + fixtures under `job-pair-extractor/src/test/resources/fixtures/`,
+      matching the existing per-parser test shape; extend `smoke-pair-extractor.sh`'s fixture set
+- [ ] Update `Parsers` class javadoc (it currently states the in-scope set as ex1–6 + ex8) and
+      `memory/project_pair_extractor.md` ("7 parsers (ex1–6+8)")
+- [ ] Coordinate the collection side: NiFi must actually publish lbank to `ex9-raw`, and the seeded
+      rows are `unsubscribe`/`disable` — nothing flows until someone flips them. Ask the team who
+      owns that before assuming it is done.
+
 ## Open items (decide at the flagged milestone)
 
 - [ ] Job-1 source offsets: `latest` vs `earliest` for `ex{id}-raw`

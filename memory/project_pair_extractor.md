@@ -13,6 +13,13 @@ passed for ex1 (snapshot) and ex8 (update incl. qty-"0" delete) on the local sta
 
 ## Decisions made at implementation (were open in todo.md)
 
+- **ex9 lbank is SEEDED BUT NOT IMPLEMENTED** (teammate commit `195a735`, 2026-07-20 — DB seed +
+  `markets.csv` only; a repo-wide grep for `lbank` hits nothing else). Job 1 drops every ex9
+  message via the same `dropped-no-parser` counter as ex7, so the gap is SILENT — no dead-letter,
+  no error, just absent data. Needs wire samples → `sample-raw-data.md` § ex9 → an `LbankParser`.
+  Wire symbols are lowercase-underscore (`btc_usdt`) and the lookup key is an exact case-sensitive
+  `"{exchange_id}|{market}"`, so a case mismatch would also drop silently. lbank reuses okx's
+  `market_id`s, so jobs 3–6 already resolve and need nothing. Tasks in todo.md M9.
 - **ex7-raw stays in the source pattern**; scope lives ONLY in `Parsers.byExchangeId()`
   (1–6 + 8) and `PairExtractFunction` drops unparsered exchanges via the `dropped-no-parser`
   counter. Rationale: one place to change when ex7 lands; also safely absorbs any future
