@@ -1,0 +1,5 @@
+{
+  "event": "subscribe",
+  "arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+  "connId": "a4d3ae55"
+}

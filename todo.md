@@ -379,6 +379,16 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       `memory/project_kafka_topic_strategy.md`; registry stays clutter-free)
 - [ ] `fake-data-generator/`: new mode emitting realistic RAW exchange payloads to `ex{id}-raw`
       (stand-in for NiFi during dev)
+- [x] Manual test data — DONE 2026-07-20: `flink/normalizer/manual-test-data/` — BTC-USDT/pair-1
+      ONLY and every scenario STANDALONE (both user constraints); 7 scenarios (01–06 ex8/okx +
+      07 ex3/wallex, 29 payloads), `produce.sh` + `reset.sh`, README with the expected outcome and
+      dead-letter count per scenario. Independence = self-contained data + `reset.sh` recycling the
+      4 stateful jobs downstream-first. Expectations derived from source, NOT yet run live.
+      Details: `memory/project_manual_test_data.md`
+- [ ] First live run of `manual-test-data/`: verify `reset.sh`'s Flink REST flow (jar lookup by
+      artifactId prefix → resubmit → RUNNING wait) and confirm each scenario's dead-letter count
+- [ ] Verify job 1's behaviour on a NON-JSON raw frame (bare `pong`): drop or throw? Then add the
+      case to manual-test-data S6 (deliberately left out — unverified, might wedge the job)
 - [x] Root `Makefile`: `refresh-normalizer` target — DONE 2026-07-19 (submits DOWNSTREAM-FIRST:
       consolidator, then jobs 6→1, because every source reads `latest`); `README.md` section for
       the pipeline still TODO
