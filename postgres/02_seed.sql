@@ -9,7 +9,8 @@ INSERT INTO exchanges (id, name, label) VALUES
 (5, 'bitget', 'بیت گت'),
 (6, 'bybit', 'بای بیت'),
 (7, 'ompfinex', 'او ام پی فینکس'),
-(8, 'okx', 'اوکی ایکس');
+(8, 'okx', 'اوکی ایکس'),
+(9, 'lbank', 'ال بانک');
 SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
 
 -- ===== currencies =====
@@ -446,4 +447,31 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (8, 'WLD-USDT', 47, 'unsubscribe', 0,0), -- okx
 (8, 'MNT-USDT', 49, 'unsubscribe', 0,0), -- okx
 (8, 'SHIB-USDT', 51, 'unsubscribe', 0,0), -- okx
-(8, 'BTT-USDT', 53, 'unsubscribe', 0,0); -- okx
+(8, 'BTT-USDT', 53, 'unsubscribe', 0,0), -- okx
+(9, 'btc_usdt', 1, 'unsubscribe', 0,0), -- lbank
+(9, 'eth_usdt', 3, 'unsubscribe', 0,0), -- lbank
+(9, 'xrp_usdt', 5, 'unsubscribe', 0,0), -- lbank
+(9, 'trx_usdt', 7, 'unsubscribe', 0,0), -- lbank
+(9, 'sol_usdt', 9, 'unsubscribe', 0,0), -- lbank
+(9, 'dot_usdt', 11, 'unsubscribe', 0,0), -- lbank
+(9, 'hype_usdt', 13, 'unsubscribe', 0,0), -- lbank
+(9, 'doge_usdt', 15, 'unsubscribe', 0,0), -- lbank
+(9, 'pepe_usdt', 17, 'unsubscribe', 0,0), -- lbank
+(9, 'sui_usdt', 19, 'unsubscribe', 0,0), -- lbank
+(9, 'zec_usdt', 21, 'unsubscribe', 0,0), -- lbank
+(9, 'xlm_usdt', 23, 'unsubscribe', 0,0), -- lbank
+(9, 'link_usdt', 25, 'unsubscribe', 0,0), -- lbank
+(9, 'avax_usdt', 27, 'unsubscribe', 0,0), -- lbank
+(9, 'paxg_usdt', 29, 'unsubscribe', 0,0), -- lbank
+(9, 'xaut_usdt', 31, 'unsubscribe', 0,0), -- lbank
+(9, 'near_usdt', 33, 'unsubscribe', 0,0), -- lbank
+(9, 'uni_usdt', 35, 'unsubscribe', 0,0), -- lbank
+(9, 'aave_usdt', 37, 'unsubscribe', 0,0), -- lbank
+(9, 'okb_usdt', 39, 'unsubscribe', 0,0), -- lbank
+(9, 'ada_usdt', 41, 'unsubscribe', 0,0), -- lbank
+(9, 'gram_usdt', 43, 'unsubscribe', 0,0), -- lbank
+(9, 'bnb_usdt', 45, 'unsubscribe', 0,0), -- lbank
+(9, 'wld_usdt', 47, 'unsubscribe', 0,0), -- lbank
+(9, 'mnt_usdt', 49, 'unsubscribe', 0,0), -- lbank
+(9, 'shib_usdt', 51, 'unsubscribe', 0,0), -- lbank
+(9, 'bttc_usdt', 53, 'unsubscribe', 0,0); -- lbank
