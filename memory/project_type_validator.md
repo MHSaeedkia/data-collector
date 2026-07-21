@@ -11,8 +11,8 @@ metadata:
 [[normalizer-scaffold]] conventions). Consumes `ex[0-9]+-p[0-9]+-raw-flink` (job 1's output,
 `RawOrderBookEvent`), keyed `(exchange_id, pair_id)`, and routes:
 valid → `ex{id}-p{id}-type-validated-raw-flink` (SAME `raw-order-book-event` subject),
-rejects → dead-letter `ex{id}-p{id}-rejected-flink` (`rejected-order-book-event`). 11 harness
-tests + live smoke 3/3 green.
+rejects → dead-letter `ex{id}-p{id}-rejected-flink` (`rejected-order-book-event`). 14 harness
+tests + live smoke 3/3 green. (2026-07-21: ex1 became a delta feed — see the ex1 resync note.)
 
 ## The rule set (the important decision)
 
@@ -23,17 +23,48 @@ jump>0 (verified in `BybitParser`/`OkxParser`: jump is hardcoded per parser, not
 type). So `TypeValidateFunction.processElement`, with `ValueState {Long lastSeq, Boolean
 awaitingSnapshot}`:
 
-1. **`sequence_id == null`** (ex3 wallex, the ONLY feed with no ordering field) → pass through
-   unchecked, no state touched. [[pair-extractor]] leaves ex3's `sequence_id` null on purpose.
+1. **`sequence_id == null`** (ex3 wallex; ex1 nobitex REST snapshot — see below) → no sequence to
+   order by, so ordered by **event time** instead: `lastEventTime != null && event_time <
+   lastEventTime` → reject `out_of_order` (new reason, added 2026-07-21) BEFORE touching state; else
+   pass through, set `baselinePending = true` + clear `awaitingSnapshot` (see the ex1 resync note).
 2. **`type == "snapshot"`** (a fresh baseline, but out-of-order/duplicate dropped):
    `lastSeq != null && seq <= lastSeq` → reject `stale_or_duplicate`; else accept, set
    `lastSeq = seq`, clear `awaitingSnapshot`. This is the snapshot-feed staleness check AND a
-   delta feed's re-sync in one branch.
-3. **`type == "update"`** (delta feeds ex6/ex8 only): `lastSeq == null` → reject `no_baseline`;
-   `awaitingSnapshot` → reject `awaiting_snapshot`; `seq == lastSeq + sequence_jump` → accept,
-   `lastSeq = seq`; `seq <= lastSeq` → reject `stale_or_duplicate`; else (any other forward jump)
-   → reject `sequence_gap` + set `awaitingSnapshot` (every update rejected until the next snapshot
-   re-syncs). Reasons: `stale_or_duplicate` / `sequence_gap` / `awaiting_snapshot` / `no_baseline`.
+   delta feed's re-sync in one branch. (Non-null-seq snapshots only: ex2/4/5 + ex6/ex8.)
+3. **`type == "update"`** (delta feeds ex1/ex6/ex8): FIRST `baselinePending` → adopt `lastSeq =
+   seq` unconditionally, clear the flag, accept (ex1 resync bootstrap); else `lastSeq == null` →
+   reject `no_baseline`; `awaitingSnapshot` → reject `awaiting_snapshot`; `seq == lastSeq +
+   sequence_jump` → accept, `lastSeq = seq`; `seq <= lastSeq` → reject `stale_or_duplicate`; else
+   (any other forward jump) → reject `sequence_gap` + set `awaitingSnapshot` (every update rejected
+   until the next snapshot re-syncs). Reasons: `stale_or_duplicate` / `sequence_gap` /
+   `awaiting_snapshot` / `no_baseline`.
+
+## ex1 nobitex resync (added 2026-07-21, coupled with [[pair-extractor]])
+
+ex1 flipped from a snapshot-only feed to a **REST snapshot + WS delta** feed. The REST snapshot
+carries **no offset** (`sequence_id = null`), so it can't seed `lastSeq` like ex6/ex8 snapshots
+do. Mechanism: a **third `ValueState<Boolean> baselinePending`** — the null-seq snapshot sets it,
+and the **first `update` after it adopts that update's `pub.offset` as the baseline
+unconditionally**, then normal `+sequence_jump(=1)` contiguity resumes. The design is
+**exchange-agnostic** (no hardcoded exchange_id): ex3 also sets `baselinePending`, but ex3 never
+sends updates so the flag is never consumed — harmless. ex6/ex8 snapshots have non-null seq → they
+never touch this branch, so their `no_baseline` cold-start semantics are unchanged. 14 harness
+tests (3 new for ex1). **Not yet run live** — needs NiFi's REST feed; parser + job 2 + NiFi must
+cut over together (a partial deploy makes ex1 updates reject `no_baseline`).
+
+**out-of-order guard for null-seq snapshots (added 2026-07-21, follow-up).** Bug: the null-seq
+branch re-armed `baselinePending` + emitted **unconditionally** — so replaying an OLD ex1 REST
+snapshot after newer WS deltas (snapshot → update → update → *same old snapshot again*) overwrote
+the newer book AND wrongly re-armed the resync (the next update would be adopted as a fresh baseline,
+masking a real gap). These frames carry **no sequence id**, so the only ordering signal is event
+time. Fix: a fourth state field `ValueState<Long> lastEventTime` (updated in `emit()` for every
+accepted event = last-accepted event_time, symmetric with `lastSeq`); the null-seq branch rejects
+`out_of_order` when `event_time < lastEventTime` **before** mutating state. Strict `<` (not `<=`) on
+purpose: equal-event-time frames pass, so ex3 wallex snapshots stamped the same processing-time
+millisecond aren't false-rejected (an equal-time duplicate re-applied is idempotent downstream; the
+consolidator dedups by strict `<` too). Seq-bearing snapshots (ex6/ex8) are unaffected — their old
+snapshots are already caught by the seq `<= lastSeq` check. 16 harness tests (2 new). Still not run
+live.
 
 Rejects go to the `REJECTED` side output (`OutputTag<RejectedOrderBookEvent>`, a public static on
 the function so job wiring + tests share it). No metrics counters (unlike job 1's drops — here the

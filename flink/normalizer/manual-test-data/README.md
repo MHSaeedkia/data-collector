@@ -4,7 +4,7 @@ Hand-crafted `ex{id}-raw` payloads for **manual** end-to-end testing: produce th
 topic, let all 6 normalizer jobs run, and watch the result land in the order book web UI.
 
 **Everything targets one market: BTC-USDT (`pair_id` 1).** ex8/okx uses the wire symbol
-`BTC-USDT`, ex3/wallex uses `BTCUSDT`; both resolve to `market_id` 1 in the seed.
+`BTC-USDT`, ex1/nobitex and ex3/wallex use `BTCUSDT`; all resolve to `market_id` 1 in the seed.
 
 **Every scenario is independent.** Run any one of them, on its own, in any order, as many times
 as you like. Nothing has to run first.
@@ -62,7 +62,7 @@ per reset.
 `--no-reset` skips it, for when you deliberately want to chain scenarios and watch state carry
 over.
 
-### Why the script rewrites `ts` (ex8 only)
+### Why the script rewrites the timestamp (ex8 and ex1)
 
 For okx, `ts` is simultaneously the **sequence id**, the **event time**, and the only timestamp
 on the message. The files carry a fixed synthetic base (`1800000000000`) so the timelines are
@@ -72,10 +72,17 @@ Sending it verbatim would be actively harmful, not merely odd: the consolidator 
 older than the one it has stored, so a future-dated book would poison the stored timestamp and
 every subsequent *real* event would be dropped until wall-clock caught up.
 
-So each scenario's `ts` window is shifted onto now, aligned to the 300 ms cadence, preserving
-every delta **within** that scenario — the +300 steps and the deliberate gap, duplicate and
-backwards snapshot all survive. `--verbatim` is not offered here; the shift is per-scenario and
-always correct.
+So each scenario's timestamp window is shifted onto now, preserving every delta **within** that
+scenario — for ex8 the +300 steps and the deliberate gap, duplicate and backwards snapshot all
+survive. `--verbatim` is not offered here; the shift is per-scenario and always correct.
+
+**ex1/nobitex** carries `lastUpdate` (top-level on the REST snapshot, `push.pub.data.lastUpdate`
+on the WS delta), which is **only** the event time — its ordering field is the independent
+`push.pub.offset`. So the script shifts `lastUpdate` onto now for the same consolidator-poisoning
+reason, but leaves the **offsets untouched** (they're small readable integers: `1000`, `1001`,
+…). The +1 contiguity, the deliberate gap, and the resync re-anchor all live in the offsets, so
+they are preserved exactly. Unlike ex8 there is no cadence alignment — `lastUpdate` and the
+sequence are decoupled.
 
 ex3/wallex has no ordering field at all and is stamped with processing time by job 1, so
 nothing is rewritten there.
@@ -105,6 +112,15 @@ below is checkable by eye.
 | [05](#05--precision--dust) | ex8 okx | truncation, price collision, dust delete |
 | [06](#06--noise-frames) | ex8 okx | non-book frames are discarded |
 | [07](#07--wallex-half-books-ex3) | ex3 wallex | null sequence, half-book merge |
+| [08](#08--ex1-rest-snapshot--ws-resync) | ex1 nobitex | REST snapshot arms baseline, first WS update adopts its offset; re-anchor |
+| [09](#09--ex1-update-before-snapshot) | ex1 nobitex | WS update before any REST snapshot → `no_baseline` |
+| [10](#10--ex1-sequence-gap--rest-resync) | ex1 nobitex | offset gap → `awaiting_snapshot` → REST resync |
+| [11](#11--ex1-noise-frames) | ex1 nobitex | Centrifugo non-book frames are discarded |
+| [12](#12--ex1-stale-rest-replay) | ex1 nobitex | old REST snapshot replayed after WS deltas → `out_of_order` |
+
+ex1/nobitex `ts` offsets below are shown relative to each scenario's own base `LU = 1800000000000`
+(the `lastUpdate` field); its **sequence offsets are literal** (not shifted) — see the timestamp
+note above.
 
 ---
 
@@ -290,6 +306,133 @@ with that hazard.
 
 ---
 
+## ex1/nobitex — a REST snapshot + WS delta feed
+
+Scenarios 08–12 exercise nobitex, which is **not** structurally like any of ex8/ex3. nobitex
+serves the initial book once over **REST** and then only **deltas** over WebSocket, so NiFi
+publishes **two payload shapes** to `ex1-raw`:
+
+- **REST snapshot** — top-level `"action":"snapshot"`, NiFi injects the market as `"pair"`, and it
+  carries **no offset**: job 1 stamps `type=snapshot`, `sequence_id=null`, event_time=`lastUpdate`.
+- **WS delta** — a Centrifugo push on channel `public:orderbook-BTCUSDT`, **no `action`** field:
+  job 1 stamps `type=update`, `sequence_id=push.pub.offset`, **`sequence_jump=1`** (Centrifugo
+  offsets increment by exactly one), event_time=`push.pub.data.lastUpdate`.
+
+The interesting bit is in job 2. The REST snapshot's `sequence_id` is null, so it **cannot seed
+`lastSeq`** the way an okx snapshot does. Instead a null-seq snapshot **arms a resync**: the
+**first WS update after it adopts that update's offset as the baseline unconditionally** (no gap
+check), and normal `+1` contiguity resumes from there. Scenarios 08 and 10 are built around that
+mechanism; ex8 cannot reach it because okx snapshots always carry a real sequence.
+
+> These ex1 scenarios have only been unit-verified so far. They need NiFi's REST feed live on
+> `ex1-raw` **and** the coupled job-2 resync build deployed; a partial rollout makes every ex1
+> update reject `no_baseline` (see `todo.md` M10).
+
+## 08 — ex1 REST snapshot → WS resync
+
+**`08-ex1-rest-then-ws-resync/`** — the signature nobitex path, plus a mid-stream re-anchor.
+
+| # | File | offset | Expected |
+| --- | --- | --- | --- |
+| 01 | `rest-snapshot` | — (null) | **ACCEPTED**, passes through unchecked, **arms the resync**. Baseline: 5 asks / 5 bids in the 62650 band. |
+| 02 | `ws-update` | 1000 | **ACCEPTED** — first update after the null-seq snapshot **adopts 1000 as the baseline**. ask `62652` deleted, ask `62670` added, bid `62649`→`0.55175335`, bid `62638` added. |
+| 03 | `ws-update` | 1001 | **ACCEPTED** (+1). ask `62651` deleted, ask `62680` added, bid `62638` deleted, bid `62635` added. |
+| 04 | `rest-snapshot` | — (null) | **ACCEPTED** — a fresh REST snapshot **re-arms** the resync and **replaces** the book (jumps to the 62850 band). |
+| 05 | `ws-update` | **9000** | **ACCEPTED** — first update after the re-anchor adopts `9000` **unconditionally**, even though it is nowhere near `1002`. This is the whole point: a re-anchor does **not** gap-check. |
+| 06 | `ws-update` | 9001 | **ACCEPTED** (+1 from the new baseline). |
+
+05 is the one to watch: `9000` after `1001` would be a screaming `sequence_gap` on any other feed.
+Here the preceding snapshot re-armed the baseline, so it is adopted, not rejected. If 05 lands in
+`ex1-p1-rejected-flink`, the re-anchor is broken.
+
+**Dead letter: 0 records.**
+
+## 09 — ex1 update before snapshot
+
+**`09-ex1-update-before-snapshot/`** — nobitex's version of the "no baseline yet" case. Realistic:
+the WS subscription can deliver a delta before the REST fetch has returned the initial book.
+
+| # | File | offset | Expected |
+| --- | --- | --- | --- |
+| 01 | `ws-update-no-baseline` | 1000 | **REJECTED** `no_baseline` → `ex1-p1-rejected-flink`. Nothing reaches the UI. |
+| 02 | `rest-snapshot` | — (null) | **ACCEPTED** — baseline, 62650 band, arms the resync. |
+| 03 | `ws-update` | 2000 | **ACCEPTED** — first update after the snapshot adopts `2000` as the baseline. |
+
+An update carries no book of its own; applying one with no baseline would invent liquidity. Unlike
+okx, ex1's snapshot does not seed the sequence directly — so this proves the *update* is what
+adopts the baseline, and only after a snapshot has armed it.
+
+**Dead letter: 1 record** — `no_baseline`.
+
+## 10 — ex1 sequence gap → REST resync
+
+**`10-ex1-sequence-gap/`** — Centrifugo offsets increment by exactly **1**, so any skip is a gap.
+
+| # | File | offset | step | Expected |
+| --- | --- | --- | --- | --- |
+| 01 | `rest-snapshot` | — (null) | — | baseline, 62650 band, arms the resync. |
+| 02 | `ws-update` | 1000 | adopt | **ACCEPTED** — adopts `1000` as the baseline. |
+| 03 | `ws-update-ok` | 1001 | +1 | **ACCEPTED**. |
+| 04 | `ws-update-gap` | **1005** | +4 | **REJECTED** `sequence_gap`, sets `awaitingSnapshot`. `lastSeq` stays `1001`. |
+| 05 | `ws-update-awaiting` | 1002 | +1 | **REJECTED** `awaiting_snapshot` — a *perfectly contiguous* `1002`, but the book is known-diverged, so only a snapshot can be trusted. |
+| 06 | `rest-snapshot-resync` | — (null) | — | **ACCEPTED**, clears `awaitingSnapshot`, **re-arms** the resync, **replaces** the book (63000 band). |
+| 07 | `ws-update` | 2000 | adopt | **ACCEPTED** — adopts `2000` as the new baseline. |
+| 08 | `ws-update-ok` | 2001 | +1 | **ACCEPTED**. |
+
+05 is the subtle one: `1002` *is* the correct successor to `1001`, yet it is still rejected. Once a
+gap is missed the local book no longer matches the exchange, and for ex1 only a **REST snapshot**
+(06) can re-arm the resync — a contiguous update cannot self-heal. 06 jumps to the **63000 band** so
+the replacement is unmistakable in the UI; no 62600-band level should survive it.
+
+**Dead letter: 2 records** — `sequence_gap`, then `awaiting_snapshot`.
+
+## 11 — ex1 noise frames
+
+**`11-ex1-noise-frames/`** — job 1 whitelist-parses ex1 too. nobitex's noise is Centrifugo-shaped,
+structurally unlike okx's: a bare `connect` reply, publications on other channels, and malformed
+book frames are all **silently discarded** (dropped, *not* dead-lettered, never a crash).
+
+| # | File | offset | Expected |
+| --- | --- | --- | --- |
+| 01 | `connect-ack` | — | discarded — a Centrifugo `{"connect":…}` reply, no `push`. |
+| 02 | `foreign-channel` | — | discarded — a `public:trades-BTCUSDT` push; wrong channel prefix. |
+| 03 | `rest-snapshot` | — (null) | **ACCEPTED** — baseline, 62950 band, arms the resync. |
+| 04 | `malformed-book` | — | discarded — right channel, but the publication has **no `asks`/`bids`**. |
+| 05 | `ws-update` | 1000 | **ACCEPTED** — adopts `1000`; the discarded 04 did **not** consume an offset or arm anything. |
+| 06 | `ws-update` | 1001 | **ACCEPTED** (+1). |
+
+Noise is interleaved with real frames on purpose — the discard sitting *between* the snapshot (03)
+and the first update (05) is what proves a dropped frame does not disturb baseline adoption or
+sequence tracking. A discard is **not** a rejection; that distinction is the whole scenario.
+
+**Dead letter: 0 records.** Any record here is a real failure.
+
+---
+
+## 12 — ex1 stale REST replay
+
+**`12-ex1-stale-rest-replay/`** — a REST snapshot has **no sequence offset**, so job 2 can only
+order these frames by **event time** (`lastUpdate`). This scenario replays an **old** REST snapshot
+after newer WS deltas have already advanced the book: without the event-time guard the stale
+snapshot would overwrite the newer book *and* wrongly re-arm the resync. File 04 is byte-identical
+to file 01 — the same old book, replayed.
+
+| # | File | offset | `LU` | Expected |
+| --- | --- | --- | --- | --- |
+| 01 | `rest-snapshot` | — (null) | LU+0 | **ACCEPTED** — baseline, 62650 band, arms the resync. |
+| 02 | `ws-update` | 1000 | LU+100 | **ACCEPTED** — adopts `1000` as the baseline. |
+| 03 | `ws-update-loud` | 1001 | LU+200 | **ACCEPTED** (+1) — adds a loud `60000` bid wall so a book leak is visible. |
+| 04 | `rest-snapshot-stale-replay` | — (null) | **LU+0** | **REJECTED** `out_of_order` — event time LU+0 < last accepted LU+200; must not overwrite the book or re-arm the resync. |
+| 05 | `ws-update` | 1002 | LU+300 | **ACCEPTED** (+1) — the stream continues; the stale snapshot did **not** disturb baseline or sequence state. |
+
+The oracle is the dead-letter count, exactly `1` (`out_of_order`). If the guard were missing the
+stale snapshot would be accepted (dead-letter `0`), the `60000` wall would vanish, and `1002` would
+be adopted as a fresh baseline rather than validated as `1001+1`.
+
+**Dead letter: 1 record** — `out_of_order`.
+
+---
+
 ## Where to look when something disagrees
 
 Per stage, for pair 1:
@@ -305,7 +448,7 @@ ex8-p1-orderbook-snapshot-flink   # job 5 full book
 ex8-p1-{side}                     # job 6 → consolidator → UI
 ```
 
-(Scenario 07 is the same chain under `ex3-p1-*`.)
+(Scenario 07 is the same chain under `ex3-p1-*`; scenarios 08–12 under `ex1-p1-*`.)
 
 The dead-letter topic carries the rejection reason, so 01/03/04 are checked there directly
 rather than inferred from the UI. Each scenario states its expected dead-letter count above;
@@ -320,6 +463,11 @@ those counts are per-run, so read only the records produced since your reset.
 | 05 | 0 |
 | 06 | 0 |
 | 07 | 0 |
+| 08 | 0 |
+| 09 | 1 — `no_baseline` |
+| 10 | 2 — `sequence_gap`, `awaiting_snapshot` |
+| 11 | 0 |
+| 12 | 1 — `out_of_order` |
 
 More than expected means something valid was rejected; fewer means a check is not firing.
 

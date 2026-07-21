@@ -53,6 +53,14 @@ class TypeValidateFunctionTest {
                 List.of(), List.of());
     }
 
+    /**
+     * Null-seq snapshot (ex3 wallex / ex1 nobitex REST) with an explicit event time — the field the
+     * out-of-order guard orders these by, since they carry no sequence id.
+     */
+    private static RawOrderBookEvent nullSeqSnapshot(int ex, int pair, long eventTime) {
+        return new RawOrderBookEvent(ex, pair, "snapshot", null, 0L, eventTime, List.of(), List.of());
+    }
+
     /** Delta-feed message (snapshot or update) with a nonzero jump (ex6=1, ex8=300). */
     private static RawOrderBookEvent delta(int ex, int pair, String type, long seq, long jump) {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
@@ -107,12 +115,22 @@ class TypeValidateFunctionTest {
     // ---- no ordering field (ex3 wallex) -----------------------------------------
 
     @Test
-    @DisplayName("null sequence_id (ex3): every event passes through unchecked")
-    void nullSequenceAlwaysPasses() throws Exception {
-        send(snapshotFeed(3, 1, null));
-        send(snapshotFeed(3, 1, null));
+    @DisplayName("null sequence_id (ex3): snapshots in event-time order pass through unchecked")
+    void nullSequenceInOrderPasses() throws Exception {
+        send(nullSeqSnapshot(3, 1, 100L));
+        send(nullSeqSnapshot(3, 1, 200L));
         assertThat(valid()).hasSize(2);
         assertThat(rejects()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("null sequence_id: a snapshot older than the last accepted event is rejected out_of_order")
+    void nullSeqOlderSnapshotRejected() throws Exception {
+        send(nullSeqSnapshot(3, 1, 200L));
+        send(nullSeqSnapshot(3, 1, 100L)); // out of order by event time
+        assertThat(valid()).hasSize(1);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.OUT_OF_ORDER);
     }
 
     // ---- delta feeds (jump > 0, gap/jump rule) ----------------------------------
@@ -173,6 +191,66 @@ class TypeValidateFunctionTest {
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
                         TypeValidateFunction.AWAITING_SNAPSHOT);
+    }
+
+    // ---- ex1 nobitex: null-seq REST snapshot resyncs the WS delta stream ---------
+
+    @Test
+    @DisplayName("ex1: the first update after a null-seq REST snapshot adopts its offset as the baseline, then gaps are enforced")
+    void restSnapshotResyncsThenGapChecks() throws Exception {
+        send(nullSeqSnapshot(1, 1, 499L));      // REST snapshot: no offset, flags a resync
+        send(delta(1, 1, "update", 500L, 1L)); // first WS delta -> adopts 500 as baseline
+        send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok
+        send(delta(1, 1, "update", 505L, 1L)); // gap (expected 502) -> sequence_gap
+
+        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(null, 500L, 501L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+    }
+
+    @Test
+    @DisplayName("ex1: a later REST snapshot re-anchors the baseline unconditionally, recovering from awaiting_snapshot")
+    void laterRestSnapshotReanchors() throws Exception {
+        send(nullSeqSnapshot(1, 1, 499L));      // resync
+        send(delta(1, 1, "update", 500L, 1L)); // baseline 500
+        send(delta(1, 1, "update", 505L, 1L)); // gap -> sequence_gap, awaiting
+        send(delta(1, 1, "update", 506L, 1L)); // still awaiting -> awaiting_snapshot
+        send(nullSeqSnapshot(1, 1, 899L));      // REST re-snapshot (newer) -> clears awaiting, flags resync
+        send(delta(1, 1, "update", 900L, 1L)); // adopts 900 unconditionally
+        send(delta(1, 1, "update", 901L, 1L)); // contiguous -> ok
+
+        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(null, 500L, null, 900L, 901L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
+                        TypeValidateFunction.AWAITING_SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("ex1: an update before any REST snapshot still rejects no_baseline (resync flag gates the bootstrap)")
+    void updateBeforeAnyRestSnapshotRejected() throws Exception {
+        send(delta(1, 1, "update", 500L, 1L));
+        assertThat(valid()).isEmpty();
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.NO_BASELINE);
+    }
+
+    @Test
+    @DisplayName("ex1: an OLD REST snapshot replayed after newer WS deltas is rejected out_of_order and does NOT re-arm the resync")
+    void staleRestSnapshotAfterUpdatesRejected() throws Exception {
+        send(nullSeqSnapshot(1, 1, 499L));      // resync, event time 499
+        send(delta(1, 1, "update", 500L, 1L)); // adopts 500 as baseline (event time 500)
+        send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok (event time 501)
+        send(nullSeqSnapshot(1, 1, 499L));      // OLD snapshot replayed: 499 < 501 -> out_of_order
+        send(delta(1, 1, "update", 600L, 1L)); // if the stale snapshot had wrongly re-armed the
+                                               // resync this would be ADOPTED; instead it is a gap
+
+        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(null, 500L, 501L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.OUT_OF_ORDER,
+                        TypeValidateFunction.SEQUENCE_GAP);
     }
 
     // ---- keying isolation -------------------------------------------------------

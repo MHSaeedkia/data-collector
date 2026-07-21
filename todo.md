@@ -458,6 +458,41 @@ Wire symbols are lowercase-underscore (`btc_usdt`), unlike okx's `BTC-USDT`.
       rows are `unsubscribe`/`disable` — nothing flows until someone flips them. Ask the team who
       owns that before assuming it is done.
 
+## Milestone 10 — ex1 nobitex snapshot/update split (2026-07-21)
+
+The "ex1 is a full snapshot on every WS message" assumption was WRONG — nobitex snapshots come
+over REST, WS carries only deltas. NiFi now publishes two payloads to `ex1-raw`.
+
+- [x] `NobitexParser`: branch on top-level `action=="snapshot"` (REST, market from injected `pair`
+      field, `type=snapshot`/null seq) vs Centrifugo push (WS, `type=update`/`seq=pub.offset`/
+      `jump=1`); noise still dropped. Fixtures: `ex1-snapshot.json` = REST payload, old WS message
+      → `ex1-update.json`. 4 parser tests green.
+- [x] `TypeValidateFunction`: null-seq snapshot is a resync → new `baselinePending` state, first
+      update after it adopts its offset as baseline. Exchange-agnostic (ex3 harmless, ex6/ex8
+      unchanged). 3 new harness tests green.
+- [x] `TypeValidateFunction` (2026-07-21, follow-up): null-seq snapshots had NO ordering check, so
+      an OLD ex1 REST snapshot replayed after newer WS deltas overwrote the newer book AND re-armed
+      the resync. Fix: track `lastEventTime` state; a null-seq event with `event_time < lastEventTime`
+      is rejected `out_of_order` (new reason) BEFORE it re-arms baseline. There is no sequence on
+      these frames, so event time is the only ordering signal. Exchange-agnostic (also guards ex3).
+      16 harness tests green (2 new). **Not run live.**
+- [x] Updated `smoke-pair-extractor.sh` (ex1 snapshot=null-seq + new ex1-update case) and
+      `sample-raw-data.md § ex1`.
+- [x] Manual-test scenarios 08–12 (`manual-test-data/`, 2026-07-21): 08 rest→ws resync + re-anchor
+      (0 DL), 09 update-before-snapshot → `no_baseline` (1), 10 offset gap → `awaiting_snapshot` →
+      REST resync (2), 11 Centrifugo noise drops (0), 12 stale REST replay after WS deltas →
+      `out_of_order` (1, matches the event-time guard fix). `produce.sh` extended to shift ex1
+      `lastUpdate` (offsets left literal). README documented. **Unit/dry-run verified only — needs a
+      live run.**
+- [ ] **Deploy is coupled — cut over together**: parser + job 2 + NiFi's REST feed must land at
+      once. Flipping WS to `update` before REST snapshots flow makes every ex1 update reject
+      `no_baseline`. Coordinate with the NiFi team's rollout.
+- [ ] Run `smoke-pair-extractor.sh` live once NiFi's REST snapshot is actually on `ex1-raw`
+      (parser change is unit-verified only; the resync path has never run against the live stack).
+- [ ] Confirm with NiFi: is the injected field exactly `"pair"` and always the exchange market
+      string (e.g. `BTCUSDT`, matching `exchange_markets`)? A case/format mismatch drops silently
+      (`dropped-unknown-market`), same trap as the lbank note in [[pair-extractor]].
+
 ## Open items (decide at the flagged milestone)
 
 - [ ] Job-1 source offsets: `latest` vs `earliest` for `ex{id}-raw`

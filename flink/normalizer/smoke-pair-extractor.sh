@@ -32,8 +32,10 @@ CONSUME_TIMEOUT_MS="${CONSUME_TIMEOUT_MS:-25000}"
 
 # exid : fixture (no .json) : expected type : side shape (both|bids|asks|any)
 # ex7 is postponed (no parser); ex3 sends one side per message; ex6/ex8 also carry an update.
+# ex1 nobitex has TWO streams: the REST snapshot (null seq) and the WS delta (update, jump 1).
 CASES=(
     "1:ex1-snapshot:snapshot:both"
+    "1:ex1-update:update:both"
     "2:ex2-snapshot:snapshot:both"
     "3:ex3-buy-depth:snapshot:bids"
     "3:ex3-sell-depth:snapshot:asks"
@@ -113,10 +115,11 @@ run_case() {
     [[ "$got_pair" == "$EXPECTED_PAIR_ID" ]] || errs+=("pair_id=$got_pair want $EXPECTED_PAIR_ID")
     [[ "$got_type" == "$want_type"        ]] || errs+=("type=$got_type want $want_type")
 
-    # sequence_id: ex3 (wallex) has no ordering field -> null; everyone else stamps one.
+    # sequence_id: null for feeds with no ordering field on the wire — ex3 (wallex) and the
+    # ex1 (nobitex) REST snapshot; everyone else (incl. the ex1 WS update) stamps one.
     local seq_null; seq_null=$(jq -r '.sequence_id == null' <<<"$rec")
-    if [[ "$exid" == "3" ]]; then
-        [[ "$seq_null" == "true" ]] || errs+=("sequence_id not null for ex3")
+    if [[ "$exid" == "3" || ( "$exid" == "1" && "$want_type" == "snapshot" ) ]]; then
+        [[ "$seq_null" == "true" ]] || errs+=("sequence_id not null (expected null)")
     else
         [[ "$seq_null" == "false" ]] || errs+=("sequence_id null (expected a value)")
     fi

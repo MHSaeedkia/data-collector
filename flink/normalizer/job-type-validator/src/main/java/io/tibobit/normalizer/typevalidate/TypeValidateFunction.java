@@ -17,12 +17,18 @@ import org.apache.flink.util.OutputTag;
  * stamped on the event (see [[pair-extractor]]):
  *
  * <ul>
- *   <li><b>No ordering field</b> ({@code sequence_id == null}, ex3 wallex only): pass through
- *       unchecked — nothing on the wire to order by.</li>
+ *   <li><b>No ordering field</b> ({@code sequence_id == null}): no sequence to order by, so
+ *       out-of-order is detected by <b>event time</b> instead — a null-seq snapshot older than the
+ *       last accepted event is rejected {@code out_of_order} (an old ex1 REST snapshot replayed
+ *       after newer WS deltas must not overwrite the newer book). Two exchanges land here: ex3
+ *       wallex (never sends updates) and the ex1 nobitex REST snapshot (a resync whose Centrifugo
+ *       offset is unknown). An accepted one sets {@code baselinePending} so that the next update on
+ *       the key adopts its offset as a fresh baseline (see [[pair-extractor]]); for ex3 that flag is
+ *       never consumed.</li>
  *   <li><b>Snapshot</b> ({@code type == "snapshot"}): a fresh baseline, but out-of-order/duplicate
  *       dropped — reject {@code stale_or_duplicate} if {@code sequence_id <= lastSeq}. Otherwise it
  *       re-syncs the book: store {@code lastSeq}, clear {@code awaitingSnapshot}.</li>
- *   <li><b>Update</b> ({@code type == "update"}, delta feeds ex6/ex8): needs a baseline and a
+ *   <li><b>Update</b> ({@code type == "update"}, delta feeds ex1/ex6/ex8): needs a baseline and a
  *       contiguous sequence. No baseline yet → {@code no_baseline}; still waiting to re-sync after
  *       a gap → {@code awaiting_snapshot}; {@code sequence_id == lastSeq + sequence_jump} → valid;
  *       {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other forward jump is a
@@ -45,9 +51,12 @@ public class TypeValidateFunction
     static final String SEQUENCE_GAP = "sequence_gap";
     static final String AWAITING_SNAPSHOT = "awaiting_snapshot";
     static final String NO_BASELINE = "no_baseline";
+    static final String OUT_OF_ORDER = "out_of_order";
 
     private transient ValueState<Long> lastSeq;
     private transient ValueState<Boolean> awaitingSnapshot;
+    private transient ValueState<Boolean> baselinePending;
+    private transient ValueState<Long> lastEventTime;
 
     @Override
     public void open(OpenContext openContext) {
@@ -55,6 +64,10 @@ public class TypeValidateFunction
                 new ValueStateDescriptor<>("lastSeq", Long.class));
         awaitingSnapshot = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("awaitingSnapshot", Boolean.class));
+        baselinePending = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("baselinePending", Boolean.class));
+        lastEventTime = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("lastEventTime", Long.class));
     }
 
     @Override
@@ -62,8 +75,20 @@ public class TypeValidateFunction
                                Collector<RawOrderBookEvent> out) throws Exception {
         event.getPipelineTimings().setTypeValidateIn(System.currentTimeMillis());
 
-        // ex3 wallex: no ordering field at all — nothing to validate, pass through.
+        // No ordering field (ex3 wallex; ex1 nobitex REST snapshot): there is no sequence to order
+        // by, so detect out-of-order by EVENT TIME instead. A re-sent older snapshot (e.g. ex1
+        // REST replays an old book after newer WS deltas) must be rejected — otherwise it overwrites
+        // a newer book and wrongly re-arms the resync. Only once accepted does it flag the key so the
+        // next update adopts its offset as a fresh baseline (ex3 never sends updates, so its flag is
+        // set but never consumed).
         if (event.getSequenceId() == null) {
+            Long lastEt = lastEventTime.value();
+            if (lastEt != null && event.getEventTime() < lastEt) {
+                reject(event, OUT_OF_ORDER, ctx);
+                return;
+            }
+            baselinePending.update(true);
+            awaitingSnapshot.update(false);
             emit(event, out);
             return;
         }
@@ -83,6 +108,14 @@ public class TypeValidateFunction
         }
 
         // update (delta feeds only)
+        if (Boolean.TRUE.equals(baselinePending.value())) {
+            // First update after a null-seq snapshot (ex1 REST resync): adopt its offset as the
+            // baseline unconditionally, then resume contiguity checks from there.
+            lastSeq.update(seq);
+            baselinePending.update(false);
+            emit(event, out);
+            return;
+        }
         if (last == null) {
             reject(event, NO_BASELINE, ctx);
             return;
@@ -102,7 +135,10 @@ public class TypeValidateFunction
         }
     }
 
-    private void emit(RawOrderBookEvent event, Collector<RawOrderBookEvent> out) {
+    private void emit(RawOrderBookEvent event, Collector<RawOrderBookEvent> out) throws Exception {
+        // Track the event time of the last accepted event so a later null-seq snapshot can be
+        // ordered against it (the out-of-order guard above).
+        lastEventTime.update(event.getEventTime());
         event.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
         out.collect(event);
     }

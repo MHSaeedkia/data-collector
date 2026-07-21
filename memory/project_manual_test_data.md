@@ -10,8 +10,28 @@ metadata:
 Scenario payloads for **manual** e2e testing: produce to `ex{id}-raw`, run the whole 6-job
 chain, verify in the order book web UI. Distinct from the parser fixtures in
 `job-pair-extractor/src/test/resources/fixtures/` — those are canonical wire samples, these
-exercise *behaviour* (acceptance, rejection, deletes, truncation, resync). 7 scenarios, 29
-payloads, `produce.sh` + `reset.sh` + a README with the expected outcome per message.
+exercise *behaviour* (acceptance, rejection, deletes, truncation, resync). 12 scenarios (01–06
+ex8/okx, 07 ex3/wallex, **08–12 ex1/nobitex** added 2026-07-21), `produce.sh` + `reset.sh` + a
+README with the expected outcome per message.
+
+## ex1/nobitex scenarios (08–12, added 2026-07-21, see [[pair-extractor]]/[[type-validator]])
+
+Exercise the REST-snapshot + WS-delta split. Wire symbol `BTCUSDT` → `market_id` 1. Because the
+REST snapshot is null-seq (arms `baselinePending`) and the first WS update **adopts its offset**,
+these reach a job-2 path ex8 structurally cannot: **08** rest→ws resync happy-path + a mid-stream
+re-anchor (update offset jumps `1001`→`9000`, adopted without a gap check; dead-letter 0); **09**
+WS update before any REST snapshot → `no_baseline` (1); **10** offset gap (`1005` after `1001`,
+Centrifugo jump is exactly 1) → `sequence_gap` then a contiguous `1002` still → `awaiting_snapshot`,
+REST resync recovers (2); **11** Centrifugo noise (connect reply, foreign channel, malformed book)
+all discarded, interleaved to prove a drop ≠ a reject and doesn't disturb baseline adoption (0);
+**12** (added 2026-07-21) an OLD REST snapshot (byte-identical replay) sent AFTER newer WS deltas →
+`out_of_order` (1) — a null-seq snapshot has no offset so job 2 orders it by event time; a loud
+`60000` bid wall in update `1001` makes the book leak visible if the guard regresses (see
+[[type-validator]] out-of-order fix).
+**produce.sh extended**: ex1 shifts `lastUpdate` (event time only — top-level on REST,
+`push.pub.data.lastUpdate` on WS) onto now like ex8's `ts`, but **leaves offsets untouched** (the
+sequence is the independent `push.pub.offset`; no 300 ms cadence). Same "not yet run live" caveat —
+needs NiFi's REST feed on `ex1-raw` + the coupled job-2 resync build.
 
 **Two user constraints, imposed in this order, and the second one reshaped the design:**
 

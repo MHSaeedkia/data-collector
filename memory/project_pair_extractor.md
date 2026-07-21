@@ -8,8 +8,32 @@ metadata:
 # Job 1 — pair extractor (Milestone 2, done 2026-07-15)
 
 `flink/normalizer/job-pair-extractor/` ([[normalizer-scaffold]] conventions), consumes
-`^ex[0-9]+-raw$` → emits `ex{exchange_id}-p{pair_id}-raw-flink`. 24 tests green; live smoke
+`^ex[0-9]+-raw$` → emits `ex{exchange_id}-p{pair_id}-raw-flink`. 26 tests green; live smoke
 passed for ex1 (snapshot) and ex8 (update incl. qty-"0" delete) on the local stack.
+
+## ex1 nobitex — snapshot/update split (REVISED 2026-07-21, was "only snapshots")
+
+**The original "ex1 is a full snapshot on every message" assumption was WRONG.** nobitex serves
+the initial book over REST and then only **deltas** over WebSocket. NiFi now publishes TWO
+payload shapes to `ex1-raw`, and `NobitexParser` branches on them:
+
+- **REST snapshot**: detected by top-level `"action":"snapshot"`. NiFi **injects the market as a
+  top-level `"pair"` field** (the REST body has no symbol) → `type="snapshot"`,
+  `sequence_id=null`, `sequence_jump=0`, event_time=`lastUpdate`. Levels are `[price,qty]` string
+  pairs, same as the WS side.
+- **WS delta**: the existing Centrifugo push (channel `public:orderbook-{market}`), **no `action`
+  field** → `type="update"`, `sequence_id=pub.offset`, **`sequence_jump=1`** (Centrifugo offsets
+  increment by exactly one). Was `type="snapshot"`/jump 0 before this change.
+- Noise (acks/pings/malformed) still dropped by the whitelist rule.
+
+**Coupled job-2 change** (see [[type-validator]]): the REST snapshot has no offset, so job 2
+treats a **null-seq snapshot as a resync** — the first WS update after it adopts its offset as
+the baseline (new `baselinePending` state, exchange-agnostic; ex3 also hits it harmlessly).
+**Deploy note: parser + job 2 + NiFi's REST feed must cut over together** — flipping WS to
+`update` without REST snapshots flowing makes every ex1 update reject `no_baseline`.
+
+Fixtures: `ex1-snapshot.json` is now the REST payload; the old WS Centrifugo message moved to
+`ex1-update.json` (BitpinParserTest's foreign-channel case + smoke both follow it).
 
 ## Decisions made at implementation (were open in todo.md)
 

@@ -17,7 +17,7 @@
 
 | Topic     | Exchange | Sample status                 |
 | --------- | -------- | ----------------------------- |
-| `ex1-raw` | nobitex  | ✅ captured 2026-07-14 (snapshot; always single-doc per user) |
+| `ex1-raw` | nobitex  | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-21 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
 | `ex2-raw` | bitpin   | ✅ captured 2026-07-14 (snapshot) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
@@ -30,11 +30,30 @@
 
 ## ex1-raw — nobitex
 
-**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
-message** — "we have only snapshots" (user statement). Centrifugo push envelope re-confirmed.
+**⚠ REVISED 2026-07-21 — the "only snapshots" assumption was WRONG.** nobitex serves the initial
+book over a REST API and then only **deltas** over WebSocket; we had been treating every WS
+message as a full snapshot. The NiFi team now publishes **two distinct payloads** to `ex1-raw`:
 
-Sample (pretty-printed; level arrays trimmed — the real message carried **24 levels per side**,
-so depth is NOT the fixed 50 bitpin uses; possibly variable):
+1. **REST snapshot** — NiFi tags it `"action": "snapshot"` and **injects the market as a
+   top-level `"pair"` field** (the REST body has no symbol of its own). This is the full book →
+   `type = "snapshot"`, `sequence_id = null` (no offset on the wire).
+2. **WebSocket delta** — the Centrifugo push we already consumed, **unchanged** and with **no
+   `action` field** → `type = "update"`, `sequence_id = pub.offset`, `sequence_jump = 1`
+   (Centrifugo offsets increment by exactly one per publication).
+
+Because the REST snapshot carries no offset, job 2 treats a null-seq snapshot as a **resync
+signal**: the first WS update after it adopts its offset as the baseline (see
+memory/project_type_validator.md).
+
+**REST snapshot sample** (level arrays trimmed):
+
+```json
+{"action":"snapshot","pair":"BTCUSDT","status":"ok","lastUpdate":1784614865284,"lastTradePrice":"65708.96","bids":[["65660","0.000615"],["65636","0.002543"]],"asks":[["65708.76","0.00672"],["65708.79","0.09133"]]}
+```
+
+**WebSocket delta sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — a real
+message carried **24 levels per side**, so depth is NOT the fixed 50 bitpin uses; possibly
+variable):
 
 ```json
 {
@@ -63,20 +82,20 @@ so depth is NOT the fixed 50 bitpin uses; possibly variable):
 
 Parsing notes (job 1):
 
-- **Envelope**: same Centrifugo `push` → `pub` → `data` as bitpin, but the channel format
-  differs: `public:orderbook-{market}` (here `BTCUSDT`) vs bitpin's `orderbook:{market}`.
-  NO `symbol` field inside `data` — the channel string is the ONLY market key.
-- **Levels**: `bids`/`asks` are `[price, qty]` **string** pairs ✅ (asks listed first in the
-  payload; asks price-ascending, bids price-descending). Prices may lack decimals (`"62678"`).
+- **Branch discriminator**: top-level `action == "snapshot"` ⇒ REST snapshot path; otherwise
+  try the Centrifugo `push` (WS delta); anything else is noise → dropped.
+- **REST snapshot market**: from the injected top-level `"pair"` field (`BTCUSDT`). The REST
+  body has no channel and no `symbol`.
+- **WS delta market**: from the channel `public:orderbook-{market}` (here `BTCUSDT`) — differs
+  from bitpin's `orderbook:{market}`. NO `symbol` field inside `data`; the channel is the ONLY
+  market key on the WS side.
+- **Levels** (both payloads): `bids`/`asks` are `[price, qty]` **string** pairs ✅ (asks listed
+  first; asks price-ascending, bids price-descending). Prices may lack decimals (`"62678"`).
 - **`lastTradePrice` is a string** ✅ (unlike bitpin's numeric `price`); `lastUpdate` is
-  epoch-millis as a JSON number — both metadata, not book levels.
-- **No snapshot/update discriminator** — no `event`/type field at all; snapshot regime implied
-  by the feed.
-- **No seq field in `data`**; **ordering field for the job-2 out-of-order check =
-  `pub.offset`** (REVISED 2026-07-14, user: snapshot feeds still need out-of-order
-  detection — drop any message whose ordering value is not greater than the last seen.
-  No gap/jump rule; gaps self-heal on the next snapshot). `data.lastUpdate` (epoch-millis)
-  is a fallback candidate if `pub.offset` ever proves unreliable.
+  epoch-millis as a JSON number → event time — both metadata, not book levels.
+- **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (resync).
+  The WS delta uses `pub.offset` as `sequence_id` with `sequence_jump = 1`, so job 2 does real
+  contiguity gap detection (was an out-of-order-only check when we thought it was a snapshot feed).
 - **Multi-doc records: CLOSED 2026-07-14 (user)** — ex1 records always contain ONE JSON
   document; the discarded-capture 2-newline-concatenated-docs lead was an artifact. No
   splitting logic in job 1.

@@ -43,15 +43,19 @@ class BitpinParserTest {
     }
 
     /**
-     * Given non-book frames (connect ack, ex1's foreign channel format), When parsed, Then
-     * both are silently discarded.
+     * Given non-book frames (a Centrifugo connect ack, and a well-formed publication on a
+     * channel that isn't bitpin's {@code orderbook:} prefix), When parsed, Then both are
+     * silently discarded — the channel prefix is bitpin's recognition key.
      */
     @Test
     @DisplayName("discards non-book frames")
     void discardsNonBookFrames() throws Exception {
         byte[] connectAck = "{\"connect\":{\"client\":\"abc\"}}".getBytes(StandardCharsets.UTF_8);
+        byte[] foreignChannel = ("{\"push\":{\"channel\":\"depth:BTC_USDT\",\"pub\":"
+                + "{\"data\":{\"asks\":[],\"bids\":[],\"event_time\":\"2026-07-14T05:56:09.833955Z\"},"
+                + "\"offset\":1}}}").getBytes(StandardCharsets.UTF_8);
 
         assertThat(parser.parse(connectAck)).isEmpty();
-        assertThat(parser.parse(Fixtures.bytes("ex1-snapshot.json"))).isEmpty();
+        assertThat(parser.parse(foreignChannel)).isEmpty();
     }
 }

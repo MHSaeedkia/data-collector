@@ -1,0 +1,13 @@
+{
+	"push": {
+		"channel": "public:trades-BTCUSDT",
+		"pub": {
+			"data": {
+				"price": "62650",
+				"quantity": "0.01",
+				"lastUpdate": 1800000000000
+			},
+			"offset": 5551
+		}
+	}
+}

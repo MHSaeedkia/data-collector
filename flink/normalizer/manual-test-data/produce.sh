@@ -64,19 +64,28 @@ else
     echo "==> --no-reset: running against whatever state is already there."
 fi
 
-# Only ex8 carries a ts; ex3/wallex has no ordering field (job 1 stamps processing time).
+# ex8 carries `ts` (which is ALSO its sequence id, so it aligns to the 300 ms cadence); ex1
+# carries `lastUpdate` (event time only — its sequence id is the independent `pub.offset`, left
+# untouched, so no cadence alignment). ex3/wallex has no ordering field (job 1 stamps processing
+# time). Both future-dated synthetic bases are shifted onto now so the consolidator's stored
+# event_time is not poisoned (see README, "Why the script rewrites ts").
 DELTA=0
+MUT='.'
 if [ "$EXID" = "8" ]; then
     MIN_TS="$(jq -r '.data[]?.ts // empty' "$DIR"/*.json | sort -n | head -1)"
     NOW_ALIGNED=$(( ($(date +%s) * 1000 / 300) * 300 ))
     DELTA=$(( NOW_ALIGNED - MIN_TS ))
+    MUT='if (.data? | type) == "array" then (.data[].ts) |= ((tonumber + $d) | tostring) else . end'
+elif [ "$EXID" = "1" ]; then
+    MIN_TS="$(jq -r '(.lastUpdate // .push.pub.data.lastUpdate) // empty' "$DIR"/*.json | sort -n | head -1)"
+    DELTA=$(( $(date +%s) * 1000 - MIN_TS ))
+    MUT='if .lastUpdate then .lastUpdate += $d elif (.push.pub.data.lastUpdate) then .push.pub.data.lastUpdate += $d else . end'
 fi
 
 echo "=== $(basename "$DIR") -> $TOPIC (ts shift: ${DELTA} ms) ==="
 for f in "$DIR"/*.json; do
     if [ "$DELTA" -ne 0 ]; then
-        LINE="$(jq -c --argjson d "$DELTA" \
-            'if (.data? | type) == "array" then (.data[].ts) |= ((tonumber + $d) | tostring) else . end' "$f")"
+        LINE="$(jq -c --argjson d "$DELTA" "$MUT" "$f")"
     else
         LINE="$(jq -c . "$f")"
     fi
