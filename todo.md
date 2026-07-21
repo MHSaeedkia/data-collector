@@ -7,7 +7,15 @@ stream. Full decision + rationale: `memory/project_raw_pipeline_decision.md`
 (accuracy > latency → one job per step, every intermediate topic is an audit point).
 
 (History note: todo.md was cleaned 2026-07-13 — Phases 1–5 removed, recoverable from git;
-the R3-postponed block lives on in `memory/project_orderbook_consolidator_decision.md`.)
+the R3-postponed block lives on in `memory/deprecated/project_orderbook_consolidator_decision.md`.)
+
+(Deprecation note, 2026-07-21: the consolidator is retired ahead of the aggregator work — its
+code is now `flink/DEPRECATED-orderbook-consolidator/` and its memory moved to
+`memory/deprecated/`. Pure rename only, mirroring commit 41bdd20. ⚠ DANGLING PATH REFS still
+point at the old `flink/orderbook-consolidator/` path and must be cleaned when plan Part D
+un-deploys it: `docker-compose-normalizer.yml`, `docker-compose-orderbook-consolidator.yml`,
+`Makefile` (`refresh-consolidator`), `README.md`, `scripts/install-deps.sh`,
+`flink/normalizer/manual-test-data/reset.sh`. Full plan: `plans/aggregator-gap-drop.md`.)
 
 ## Decided (2026-07-13)
 

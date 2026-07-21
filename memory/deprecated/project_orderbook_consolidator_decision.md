@@ -3,7 +3,13 @@ name: orderbook-consolidator-decision
 description: Final decision for the greenfield flink/orderbook-consolidator/ rebuild — build the Order Book Consolidator as a Java Flink DataStream job; requirements R1, R2, R4, R5, R6 for now, with R3 (per-(exchange,pair) stale_time expiry) postponed to a later phase
 metadata:
     type: project
+    status: deprecated
 ---
+
+> **DEPRECATED 2026-07-21.** The consolidator is retired: its code moved to
+> `flink/DEPRECATED-orderbook-consolidator/` and it is superseded by the new full-book
+> aggregator (`flink/normalizer/job-aggregator/`, see `plans/aggregator-gap-drop.md`). Kept for
+> history only — do not load unless explicitly asked.
 
 # Order Book Consolidator — Final Decision
 
