@@ -1,0 +1,14 @@
+io/tibobit/orderbook/model/ConsolidatedLevel.class
+io/tibobit/orderbook/model/ConsolidatedOrderBook.class
+io/tibobit/orderbook/model/OrderBookEventType.class
+io/tibobit/orderbook/source/OrderBookSourceFactory.class
+io/tibobit/orderbook/serializer/ConsolidatedOrderBookSerializer.class
+io/tibobit/orderbook/aggregation/OrderBookMerger.class
+io/tibobit/orderbook/model/OrderBookEvent.class
+io/tibobit/orderbook/sink/OrderBookSinkFactory.class
+io/tibobit/orderbook/model/PriceLevel.class
+io/tibobit/orderbook/source/PairsLoader.class
+io/tibobit/orderbook/OrderBookJob.class
+io/tibobit/orderbook/deserializer/OrderBookEventDeserializer.class
+io/tibobit/orderbook/model/ExchangeBook.class
+io/tibobit/orderbook/source/PairsLoader$Pair.class
