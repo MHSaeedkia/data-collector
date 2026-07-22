@@ -520,8 +520,13 @@ Verify FIRST (cheap, before writing code):
       and `PrecisionFunction.applyLevels` both return null for a null side. Job 3's only dead-letter
       is `no_rebase_row` (missing exchange_markets row) — the reset inherits the gap event's
       exchange/pair which job 1 already resolved, so as safe as any event. No job 3/4 change needed.
-- [ ] `RawOrderBookEvent.type` is a plain string with no Avro enum constraint (so `"reset"` is a
-      new value, not a schema change — expected free)
+- [x] ~~`RawOrderBookEvent.type` is a plain string with no Avro enum constraint~~ → **WRONG,
+      found live 2026-07-22.** `type` IS an Avro enum (`["snapshot","update"]`); serializing the
+      new `"reset"` symbol NPE'd the TaskManager (`getEnumOrdinal("reset")` == null), the job
+      FAILED, so the reset never reached job 5 and the book was never cleared. Fix: added `"reset"`
+      to the `Type` enum in `schemas/raw_order_book_event.avsc` + re-registered (BACKWARD, v2/id 7).
+      No Java rebuild (registry is the source of truth); running jobs must be resubmitted
+      (`make run-normalizer-jobs`, NOT `refresh-normalizer`) to re-fetch. See `project_type_validator.md`.
 
 ### A. Job 2 emits a reset marker on gap
 
@@ -584,6 +589,10 @@ Verify FIRST (cheap, before writing code):
 - [ ] Live smoke: run the full chain (`docker-compose-normalizer.yml`), produce scenario 10, confirm
       in kafka-ui / web UI that ex1 vanishes from the consolidated book on the gap and returns on
       resync (all ex1 scenarios are still "not yet run live" — first live run is the real check)
+- [ ] **Redo the live gap→drop test for EVERY delta feed** (the fix is exchange-agnostic — no code
+      to repeat, only verification): after resubmitting jobs for the enum fix, run snapshot→updates→
+      gap for **ex1 nobitex, ex6 bybit, ex8 okx** and confirm each drops out of `p{id}-{side}` on the
+      gap and returns on resync. As of 2026-07-22 the enum fix is registered but NO feed verified live.
 - [ ] Memory/todo: update `project_type_validator.md` (reset emission), `project_book_builder.md`
       (reset branch), add `project_aggregator.md`, update `MEMORY.md` index + this file
 

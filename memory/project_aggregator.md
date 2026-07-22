@@ -49,6 +49,12 @@ is deployed would put **two producers on the web's topics**. So that wiring is d
 cutover, where the consolidator + job 6 are removed in the SAME change (swap, never add). `run-job.sh`
 is module-driven, so `./run-job.sh job-aggregator` still runs it standalone for isolated smoke tests.
 
+**warmup.sh no longer creates the consolidator-input topics (2026-07-22).** The old per-level
+`ex{id}-p{id}-{side}` family was job 6's output = the consolidator's input; the aggregator consumes
+job 5's `orderbook-snapshot-flink` directly, so those topics have no producer/consumer in the new
+chain and their creation block was removed from `scripts/warmup.sh`. The FROZEN web-output family
+`p{id}-{side}` (the aggregator's sink) is untouched and still created there — do not confuse the two.
+
 **Why Java DataStream not SQL** (unchanged from the ratified consolidator decision, reinforced): R6
 many dynamic output topics (SQL Kafka sinks are single-topic), reset/gap-drop is imperative stateful
 retraction-like control flow, and union-never-sum is the opposite of GROUP BY's grain.

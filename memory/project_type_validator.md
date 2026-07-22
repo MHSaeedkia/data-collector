@@ -90,7 +90,32 @@ builds a new event with its own timings.
 transition; every subsequent held update returns at the `awaitingSnapshot` reject above, so no second
 reset fires until a snapshot re-syncs and a new gap occurs. Exchange-agnostic (any delta feed). Tests
 use a `validBusiness()` helper filtering resets so the existing sequence assertions are unchanged; a
-dedicated test pins the reset's fields + once-per-episode. **Not run live.**
+dedicated test pins the reset's fields + once-per-episode.
+
+**LIVE BUG on the first gap test (2026-07-22) — `type` is an Avro ENUM, not a free string.** Plan
+assumption #3 ("`RawOrderBookEvent.type` is a plain string, `"reset"` is free") was WRONG. The first
+live snapshot→2 updates→gap test crashed the TaskManager: `RawOrderBookEventSerializer.serialize`
+→ `new GenericData.EnumSymbol(typeSchema, "reset")` → Avro `getEnumOrdinal("reset")` returned null
+(NPE) because the registered `raw-order-book-event` `Type` enum was `["snapshot","update"]`. The job
+FAILED, so the reset never reached job 5 → **the book was never cleared** = exactly the user's "gap
+not cleaned" symptom (the NPE, not the logic, was the fault). Fix: added `"reset"` to the `Type`
+enum in `schemas/raw_order_book_event.avsc` (single source of truth) and re-registered to the live
+registry — adding an enum symbol is BACKWARD-compatible (dry-run `is_compatible:true`; now v2 / id 7).
+**No Java rebuild**: production reads the wire schema via `AvroSchemaLoader.loadLatest` and the Java
+model's `type` is a plain `String`. BUT serializers cache `loadLatest` once, so **the running jobs
+must be resubmitted** to pick up v2 — `make run-normalizer-jobs` (cancel+resubmit; NOT
+`refresh-normalizer`, which `down -v`s and wipes the registry/data). This is the SAME standing rule
+as the `rejected-order-book-event`/`order-book-snapshot` re-registration gotchas above.
+
+**Redo for the other delta feeds — the gap-drop mechanism is exchange-agnostic, so there is NO
+per-exchange CODE to repeat.** The reset marker → empty book ([[book-builder]]) → drop-from-union
+([[aggregator]]) path all lives in the exchange-agnostic gap branch, and the enum fix is a one-time
+global schema change. What IS per-delta-feed is the LIVE verification: repeat the
+snapshot→updates→gap live test for each delta feed — **ex1 nobitex, ex6 bybit, ex8 okx** — and
+confirm that exchange drops out of `p{id}-{side}` on the gap and returns on the next snapshot/resync.
+(Snapshot-only feeds ex2/4/5 and the no-ordering ex3 never hit the gap branch, so they never emit a
+reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+verified live yet.**
 
 ## Gotchas (all cost real debugging time 2026-07-15)
 
