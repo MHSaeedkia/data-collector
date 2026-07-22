@@ -92,8 +92,8 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ├── docker-compose-orderbook-job.yml           # full stack; Flink cluster builds orderbook-job
 ├── docker-compose-orderbook-consolidator.yml  # full stack; Flink cluster builds orderbook-consolidator
 ├── flink/
-│   ├── orderbook-job/          # Dockerfile, confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
-│   └── orderbook-consolidator/ # Dockerfile (no Postgres), confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
+│   ├── DEPRECATED-orderbook-job/          # Dockerfile, confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
+│   └── DEPRECATED-orderbook-consolidator/ # Dockerfile (no Postgres), confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
 ├── nifi/
 │   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
 ├── postgres/
@@ -109,7 +109,7 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ./scripts/warmup.sh
 
 cd flink
-./orderbook-job/run-job.sh          # or: ./orderbook-consolidator/run-job.sh
+./DEPRECATED-orderbook-job/run-job.sh          # or: ./DEPRECATED-orderbook-consolidator/run-job.sh
 
 cd ../web
 npm i && npm start

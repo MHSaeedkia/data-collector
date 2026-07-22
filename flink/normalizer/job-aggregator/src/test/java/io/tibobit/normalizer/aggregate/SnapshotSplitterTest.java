@@ -54,13 +54,13 @@ class SnapshotSplitterTest {
 
         ExchangeBook asks = out.get(0);
         assertThat(asks.getLevels())
-                .extracting(ConsolidatedLevel::getExchangeId,
-                        ConsolidatedLevel::getPrice, ConsolidatedLevel::getQuantity)
+                .extracting(AggregatedLevel::getExchangeId,
+                        AggregatedLevel::getPrice, AggregatedLevel::getQuantity)
                 .containsExactly(tuple(8, "100", "1"), tuple(8, "101", "2"));
 
         ExchangeBook bids = out.get(1);
         assertThat(bids.getLevels())
-                .extracting(ConsolidatedLevel::getPrice).containsExactly("99");
+                .extracting(AggregatedLevel::getPrice).containsExactly("99");
     }
 
     @Test

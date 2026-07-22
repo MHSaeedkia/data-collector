@@ -1,6 +1,6 @@
 {
 	"type": "record",
-	"name": "ConsolidatedOrderBookEvent",
+	"name": "AggregatedOrderBookEvent",
 	"namespace": "io.tibobit.orderbook",
 	"fields": [
 		{
@@ -28,7 +28,7 @@
 				"type": "array",
 				"items": {
 					"type": "record",
-					"name": "ConsolidatedLevel",
+					"name": "AggregatedLevel",
 					"fields": [
 						{
 							"name": "exchange_id",

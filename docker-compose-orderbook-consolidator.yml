@@ -1,7 +1,10 @@
 ---
+# DEPRECATED (Milestone 11): this standalone orderbook-consolidator stack is retired — the
+# terminal job-aggregator in docker-compose-normalizer.yml now produces the p{id}-{side} books.
+# Kept for reference only; do not run alongside the normalizer stack (shared container names).
 services:
     jobmanager:
-        build: ./flink/orderbook-consolidator
+        build: ./flink/DEPRECATED-orderbook-consolidator
         container_name: jobmanager
         hostname: jobmanager
         restart: on-failure
@@ -21,7 +24,7 @@ services:
             retries: 5
 
     taskmanager:
-        build: ./flink/orderbook-consolidator
+        build: ./flink/DEPRECATED-orderbook-consolidator
         container_name: taskmanager
         hostname: taskmanager
         restart: on-failure

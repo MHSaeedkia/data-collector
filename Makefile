@@ -3,14 +3,17 @@ refresh:
 	docker compose -f docker-compose-orderbook-job.yml down -v
 	docker compose -f docker-compose-orderbook-job.yml up --build -d
 	./scripts/warmup.sh
-	cd ./flink/orderbook-job && ./run-job.sh
+	cd ./flink/DEPRECATED-orderbook-job && ./run-job.sh
 
+# DEPRECATED (Milestone 11): the orderbook-consolidator standalone stack is retired — its role
+# is now filled by the terminal job-aggregator inside refresh-normalizer. Code kept for reference
+# under flink/DEPRECATED-orderbook-consolidator/; do not deploy alongside the normalizer stack.
 refresh-consolidator:
 	-git pull origin
 	docker compose -f docker-compose-orderbook-consolidator.yml down -v
 	docker compose -f docker-compose-orderbook-consolidator.yml up --build -d
 	./scripts/warmup.sh
-	cd ./flink/orderbook-consolidator && ./run-job.sh
+	cd ./flink/DEPRECATED-orderbook-consolidator && ./run-job.sh
 
 # Full raw pipeline: the 5 upstream normalizer jobs plus the terminal aggregator that unions their
 # per-exchange books, all on the one Flink cluster in docker-compose-normalizer.yml.
@@ -29,10 +32,11 @@ refresh-normalizer:
 	cd ./flink/normalizer && ./run-job.sh job-type-validator
 	cd ./flink/normalizer && ./run-job.sh job-pair-extractor
 
+# DEPRECATED (Milestone 11): superseded by run-normalizer-jobs (see refresh-consolidator note).
 run-consolidator-job:
 	-git pull origin
 	./scripts/cancel-flink-jobs.sh
-	cd ./flink/orderbook-consolidator && ./run-job.sh
+	cd ./flink/DEPRECATED-orderbook-consolidator && ./run-job.sh
 
 run-normalizer-jobs:
 	-git pull origin

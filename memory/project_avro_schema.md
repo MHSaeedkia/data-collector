@@ -1,16 +1,33 @@
 ---
 name: avro-schema-orderbook
-description: Avro schema design for normalized order book events (OrderBookEvent, PriceLevelEvent, ConsolidatedOrderBookEvent) in schema registry
+description: Avro schema design for normalized order book events (OrderBookEvent, PriceLevelEvent, AggregatedOrderBookEvent) in schema registry
 metadata:
     type: project
 ---
 
+> **Relocated 2026-07-22:** `orderbook_event.*` and `price_level_event.*` moved to
+> `schemas/deprecated/` (their only producers/consumers are the deprecated orderbook-job,
+> orderbook-consolidator, and job 6 level-emitter). `scripts/warmup.sh` still registers both
+> (paths repointed into `deprecated/`). The four active schemas stay in `schemas/`:
+> `raw_order_book_event`, `order_book_snapshot`, `rejected_order_book_event`, and
+> `aggregated_order_book_event`.
+>
+> **Renamed 2026-07-22 (Part D):** `consolidated_order_book_event.*` → `aggregated_order_book_event.*`,
+> record `ConsolidatedOrderBookEvent`→`AggregatedOrderBookEvent`, inner `ConsolidatedLevel`→`AggregatedLevel`,
+> subject `consolidated-order-book-event`→`aggregated-order-book-event`. The wire FIELDS are
+> unchanged (`pair_id`, `side`, `event_time`, `levels[exchange_id,price,quantity]`), so the Go web
+> decoder — which resolves the schema by Confluent wire-header **id** and maps by field name, never
+> by subject/record name — needed only comment/test-schema touch-ups. The producer is now the
+> terminal `job-aggregator` (`AggregatedOrderBook`/`AggregatedLevel`/`CrossExchangeAggregator`), not
+> the deprecated consolidator. Namespace left as `io.tibobit.orderbook` (changing it is cosmetic and
+> would alter the schema fingerprint for zero benefit).
+
 ## Schema: OrderBookEvent
 
-File: `schemas/orderbook_event.avsc`
+File: `schemas/deprecated/orderbook_event.avsc`
 Namespace: `io.tibobit.orderbook`
 Registered in schema registry; NiFi and Flink both reference it by name.
-Example payload: `schemas/orderbook_event_example.json`.
+Example payload: `schemas/deprecated/orderbook_event_example.json`.
 
 ## Field summary (in schema order)
 
@@ -66,23 +83,23 @@ Exchange APIs return price and quantity as strings to avoid floating-point preci
 
 ## Schema: PriceLevelEvent
 
-File: `schemas/price_level_event.avsc` (+ `_example.json`), record `PriceLevelEvent`, namespace
+File: `schemas/deprecated/price_level_event.avsc` (+ `_example.json`), record `PriceLevelEvent`, namespace
 `io.tibobit.orderbook`, registry subject `price-level-event`. The consolidator's **input** wire
 shape on `ex{exchange_id}-p{pair_id}-{side}` topics — one flat price level per message:
 `exchange_id:int`, `pair_id:int`, `side:enum(asks|bids)`, `event_time:timestamp-millis`,
 `price:string`, `quantity:string`. No `type`/`sequence_*`/`levels[]`/display fields — see
 [[orderbook-consolidator-decision]] for the semantics.
 
-## Schema: ConsolidatedOrderBookEvent
+## Schema: AggregatedOrderBookEvent (was ConsolidatedOrderBookEvent — renamed 2026-07-22)
 
-File: `schemas/consolidated_order_book_event.avsc`, record name `ConsolidatedOrderBookEvent`,
-namespace `io.tibobit.orderbook`. Example payload: `schemas/consolidated_order_book_event_example.json`.
-Registered in `scripts/warmup.sh` as subject `consolidated-order-book-event`, same pattern as
-`price-level-event`.
+File: `schemas/aggregated_order_book_event.avsc`, record name `AggregatedOrderBookEvent`,
+namespace `io.tibobit.orderbook`. Example payload: `schemas/aggregated_order_book_event_example.json`.
+Registered in `scripts/warmup.sh` as subject `aggregated-order-book-event`.
 
-This documents the **output** wire shape of `flink/orderbook-consolidator/`'s
-`ConsolidatedOrderBook`/`ConsolidatedLevel` model (see
-[[orderbook-consolidator-decision]]), published to `p{pair_id}-{side}` and consumed by `web/`.
+This documents the **output** wire shape produced by the terminal `flink/normalizer/job-aggregator`'s
+`AggregatedOrderBook`/`AggregatedLevel` model, published to `p{pair_id}-{side}` and consumed by `web/`.
+(The identical shape was previously produced by the now-deprecated `flink/DEPRECATED-orderbook-consolidator/` —
+see [[orderbook-consolidator-decision]].)
 That output shape is fixed/frozen — do not change it; this schema is a documentation/contract
 mirror of it, not a driver of it.
 

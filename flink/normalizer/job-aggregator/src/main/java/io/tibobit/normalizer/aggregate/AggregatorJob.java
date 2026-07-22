@@ -21,8 +21,8 @@ import java.util.regex.Pattern;
  *   Kafka input  ex{id}-p{id}-orderbook-snapshot-flink  (OrderBookSnapshot, subject order-book-snapshot)
  *     -> source (regex)
  *     -> flatMap SnapshotSplitter (one snapshot -> asks + bids ExchangeBook)
- *     -> keyBy(pair_id, side) -> CrossExchangeConsolidator (union across exchanges, sort)
- *     -> Kafka output  p{id}-{side}  (subject consolidated-order-book-event — the frozen web contract)
+ *     -> keyBy(pair_id, side) -> CrossExchangeAggregator (union across exchanges, sort)
+ *     -> Kafka output  p{id}-{side}  (subject aggregated-order-book-event — the frozen web contract)
  *
  * Consumes job 5's full per-exchange books directly, replacing job 6 (level-emitter) + the
  * deprecated orderbook-consolidator. Job 2's reset marker becomes an empty book in job 5, which
@@ -52,18 +52,18 @@ public class AggregatorJob {
                 .flatMap(new SnapshotSplitter())
                 .name("split-sides")
                 .keyBy(new PairSideKey())
-                .process(new CrossExchangeConsolidator())
-                .name("consolidate")
-                .sinkTo(KafkaSink.<ConsolidatedOrderBook>builder()
+                .process(new CrossExchangeAggregator())
+                .name("aggregate")
+                .sinkTo(KafkaSink.<AggregatedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
-                        .setRecordSerializer(KafkaRecordSerializationSchema.<ConsolidatedOrderBook>builder()
+                        .setRecordSerializer(KafkaRecordSerializationSchema.<AggregatedOrderBook>builder()
                                 // Route each record to p{pair_id}-{side} (e.g. p1-asks).
-                                .setTopicSelector((TopicSelector<ConsolidatedOrderBook>) book ->
+                                .setTopicSelector((TopicSelector<AggregatedOrderBook>) book ->
                                         "p" + book.getPairId() + "-" + book.getSide())
-                                .setValueSerializationSchema(new ConsolidatedOrderBookSerializer(schemaRegistryUrl))
+                                .setValueSerializationSchema(new AggregatedOrderBookSerializer(schemaRegistryUrl))
                                 .build())
                         .build())
-                .name("consolidated-order-book-sink");
+                .name("aggregated-order-book-sink");
 
         env.execute("normalizer-aggregator");
     }

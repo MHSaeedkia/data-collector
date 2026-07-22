@@ -11,11 +11,10 @@ the R3-postponed block lives on in `memory/deprecated/project_orderbook_consolid
 
 (Deprecation note, 2026-07-21: the consolidator is retired ahead of the aggregator work — its
 code is now `flink/DEPRECATED-orderbook-consolidator/` and its memory moved to
-`memory/deprecated/`. Pure rename only, mirroring commit 41bdd20. ⚠ DANGLING PATH REFS still
-point at the old `flink/orderbook-consolidator/` path and must be cleaned when plan Part D
-un-deploys it: `docker-compose-normalizer.yml`, `docker-compose-orderbook-consolidator.yml`,
-`Makefile` (`refresh-consolidator`), `README.md`, `scripts/install-deps.sh`,
-`flink/normalizer/manual-test-data/reset.sh`. Full plan: `plans/aggregator-gap-drop.md`.)
+`memory/deprecated/`. Pure rename only, mirroring commit 41bdd20. ✅ RESOLVED 2026-07-22 in the
+Part D cutover: all dangling `flink/orderbook-*` path refs repointed to `flink/DEPRECATED-orderbook-*`,
+job 6 moved to `flink/normalizer/DEPRECATED-job-level-emitter/` + dropped from the reactor, and the
+frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `plans/aggregator-gap-drop.md`.)
 
 ## Decided (2026-07-13)
 
@@ -513,8 +512,10 @@ until the user authorizes coding.**
 
 Verify FIRST (cheap, before writing code):
 
-- [ ] Nothing besides the consolidator consumes the frozen `ex{id}-p{id}-{side}` per-level topics
-      (believed true; confirm — gates deprecating job 6)
+- [x] Nothing besides the consolidator consumes the frozen `ex{id}-p{id}-{side}` per-level topics
+      — CONFIRMED 2026-07-22: only `PriceLevelSourceFactory` (regex `ex[0-9]+-p[0-9]+-(asks|bids)`)
+      in `flink/DEPRECATED-orderbook-consolidator/`. The web reads only `^p[0-9]+-(asks|bids)$`
+      (no `ex` prefix). Gate passes → job 6 safe to deprecate.
 - [x] Jobs 3 (rebase) + 4 (precision) forward a null-sided `type="reset"` event untouched —
       CONFIRMED by reading the code 2026-07-21: neither inspects `type`; `RebaseFunction.rebaseLevels`
       and `PrecisionFunction.applyLevels` both return null for a null side. Job 3's only dead-letter
@@ -575,12 +576,31 @@ Verify FIRST (cheap, before writing code):
 
 - [x] Rename `flink/orderbook-consolidator/` → `flink/DEPRECATED-orderbook-consolidator/` + move its
       memory to `memory/deprecated/` (done 2026-07-21, commit d3883d0 — pure rename, mirrors 41bdd20)
-- [ ] Add a DEPRECATED banner to `job-level-emitter` (mirror the `orderbook-job` pattern); KEEP the
-      code, do not delete
-- [ ] Stop deploying the consolidator + job 6: remove from the active `docker-compose-normalizer.yml`
-      and the Makefile refresh flow; clean the 6 DANGLING path refs to the old
-      `flink/orderbook-consolidator/` path (see the deprecation note at the top of this file)
-- [ ] `reset.sh`: swap the consolidator → the new aggregator in the stateful-job reset list
+- [x] Deprecate `job-level-emitter` (2026-07-22, mirrors the `orderbook-job`/consolidator dir-rename
+      pattern — no in-file banner is the repo convention): `git mv flink/normalizer/job-level-emitter
+      flink/normalizer/DEPRECATED-job-level-emitter` + removed `<module>job-level-emitter</module>`
+      from `flink/normalizer/pom.xml` so it no longer builds into the image or is submittable. Code kept.
+- [x] Stopped deploying consolidator + job 6 (2026-07-22): the active Makefile `refresh-normalizer`/
+      `run-normalizer-jobs` already submit `job-aggregator` + not job 6; `refresh-consolidator`/
+      `run-consolidator-job` marked DEPRECATED. Cleaned ALL dangling `flink/orderbook-*` path refs
+      (repointed to `flink/DEPRECATED-orderbook-*`): `Makefile`, `docker-compose-orderbook-consolidator.yml`,
+      `docker-compose-orderbook-job.yml`, `scripts/install-deps.sh`, `README.md`; updated the stale
+      `docker-compose-normalizer.yml` header + kafka-ui serde. All composes `config`-validate.
+- [x] `reset.sh` (2026-07-22): stateful reset list now `normalizer-aggregator → book-builder →
+      type-validator` (was consolidator → level-emitter → book-builder → type-validator).
+- [x] RENAMED the frozen web contract `consolidated-*` → `aggregated-*` (2026-07-22): schema files,
+      Avro record names, subject `aggregated-order-book-event`, aggregator classes
+      (`AggregatedOrderBook`/`AggregatedLevel`/`AggregatedOrderBookSerializer`/`CrossExchangeAggregator`),
+      `warmup.sh`, kafka-ui serde, web comments + test schema. Wire FIELDS unchanged → the Go decoder
+      (resolves by wire-id, maps by field name) needed only comment/test touch-ups. Full reactor
+      BUILD SUCCESS + web `go test` green. `price-level-event` warmup registration KEPT (deprecated
+      standalone consolidator stack still uses it; consistent with `schemas/deprecated/README.md`).
+- [x] Schemas cleanup (2026-07-22): moved the two stale schemas + examples to `schemas/deprecated/`
+      — `orderbook_event.*` (deprecated orderbook-job) and `price_level_event.*` (job 6 output =
+      deprecated consolidator input). `scripts/warmup.sh` paths repointed into `deprecated/`;
+      registrations KEPT (dropping the `price_level_event` one waits for job 6 un-deploy above).
+      Added `schemas/deprecated/README.md`; updated `project_avro_schema.md`. The 4 active schemas
+      stay in `schemas/`.
 
 ### Verification (whole milestone)
 

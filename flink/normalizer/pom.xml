@@ -19,7 +19,6 @@
         <module>job-rebaser</module>
         <module>job-precision</module>
         <module>job-book-builder</module>
-        <module>job-level-emitter</module>
         <module>job-aggregator</module>
     </modules>
 

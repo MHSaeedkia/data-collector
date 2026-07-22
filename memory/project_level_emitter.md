@@ -7,6 +7,13 @@ metadata:
 
 # Job 6 — level emitter (Milestone 7, done 2026-07-18)
 
+> **DEPRECATED 2026-07-22 (Part D):** job 6 is retired. Its role (feeding the consolidator
+> per-level deltas) is gone — the terminal [[aggregator]] consumes job 5's full books directly.
+> The module was moved to `flink/normalizer/DEPRECATED-job-level-emitter/` and dropped from the
+> normalizer reactor (`flink/normalizer/pom.xml`), so it no longer builds into the Flink image and
+> `run-job.sh`/`refresh-normalizer` no longer submit it. Code kept for reference; the rest of this
+> note describes it as it was. Paths below still say `flink/normalizer/job-level-emitter/`.
+
 `flink/normalizer/job-level-emitter/` (package `io.tibobit.normalizer.levelemit`,
 [[normalizer-scaffold]] conventions). Consumes `ex[0-9]+-p[0-9]+-orderbook-snapshot-flink`
 ([[book-builder]]'s output), diffs each full book against the last book it emitted, and publishes

@@ -24,7 +24,7 @@ type publisher interface {
 	Publish(topic string, b domain.Book)
 }
 
-// HandleRecord decodes a raw consolidated book, enriches it with display
+// HandleRecord decodes a raw aggregated book, enriches it with display
 // metadata, and publishes it to the hub. Malformed payloads are logged and
 // skipped rather than crashing the consume loop.
 func HandleRecord(dec decoder, reg enricher, h publisher, topic string, value []byte) {

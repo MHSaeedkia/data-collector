@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Unions every exchange's book for a pair+side into one consolidated book. Keyed by
+ * Unions every exchange's book for a pair+side into one aggregated book. Keyed by
  * {@code (pair_id, side)} (see {@link AggregatorJob}); holds the latest {@link ExchangeBook} per
  * exchange in {@code MapState<exchange_id, ExchangeBook>}.
  *
@@ -27,18 +27,18 @@ import java.util.Map;
  * </ul>
  * {@code event_time} on the output = max across the contributing exchange books. An empty
  * ExchangeBook (job 5's reset ⇒ empty book) replaces the exchange's entry and contributes no
- * levels, so that exchange drops out of the consolidated book.
+ * levels, so that exchange drops out of the aggregated book.
  *
  * <p>The sort direction is chosen per record from {@code side} (not the constructor) because one
  * operator instance serves both asks and bids keys. Ported from the deprecated orderbook-
  * consolidator's stage-2 operator — fed full books directly instead of per-level diffs.
  */
-public class CrossExchangeConsolidator
-        extends KeyedProcessFunction<String, ExchangeBook, ConsolidatedOrderBook> {
+public class CrossExchangeAggregator
+        extends KeyedProcessFunction<String, ExchangeBook, AggregatedOrderBook> {
 
     private transient MapState<Integer, ExchangeBook> booksByExchange;
-    private transient Comparator<ConsolidatedLevel> asksComparator; // price ascending
-    private transient Comparator<ConsolidatedLevel> bidsComparator; // price descending
+    private transient Comparator<AggregatedLevel> asksComparator; // price ascending
+    private transient Comparator<AggregatedLevel> bidsComparator; // price descending
 
     // State and comparators are built in open() (not the constructor): MapState is provided per
     // keyed instance, and Comparator isn't Serializable so it can't be a shipped field.
@@ -50,10 +50,10 @@ public class CrossExchangeConsolidator
                 TypeInformation.of(ExchangeBook.class));
         booksByExchange = getRuntimeContext().getMapState(descriptor);
 
-        Comparator<ConsolidatedLevel> byPriceAsc =
+        Comparator<AggregatedLevel> byPriceAsc =
                 Comparator.comparing(level -> new BigDecimal(level.getPrice()));
         // Secondary: larger quantity first, regardless of side.
-        Comparator<ConsolidatedLevel> byQuantityDesc = Comparator.<ConsolidatedLevel, BigDecimal>comparing(
+        Comparator<AggregatedLevel> byQuantityDesc = Comparator.<AggregatedLevel, BigDecimal>comparing(
                 level -> new BigDecimal(level.getQuantity())).reversed();
         asksComparator = byPriceAsc.thenComparing(byQuantityDesc);
         bidsComparator = byPriceAsc.reversed().thenComparing(byQuantityDesc);
@@ -63,12 +63,12 @@ public class CrossExchangeConsolidator
     public void processElement(
             ExchangeBook book,
             Context ctx,
-            Collector<ConsolidatedOrderBook> out) throws Exception {
+            Collector<AggregatedOrderBook> out) throws Exception {
 
         booksByExchange.put(book.getExchangeId(), book);
 
         // Union every exchange's levels (already stamped with their exchange_id); never summed.
-        List<ConsolidatedLevel> merged = new ArrayList<>();
+        List<AggregatedLevel> merged = new ArrayList<>();
         long maxEventTime = Long.MIN_VALUE;
         for (Map.Entry<Integer, ExchangeBook> entry : booksByExchange.entries()) {
             ExchangeBook exchangeBook = entry.getValue();
@@ -80,6 +80,6 @@ public class CrossExchangeConsolidator
 
         // Sort the union by side; equal-price levels from different exchanges stay separate.
         merged.sort("asks".equals(book.getSide()) ? asksComparator : bidsComparator);
-        out.collect(new ConsolidatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime));
+        out.collect(new AggregatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime));
     }
 }

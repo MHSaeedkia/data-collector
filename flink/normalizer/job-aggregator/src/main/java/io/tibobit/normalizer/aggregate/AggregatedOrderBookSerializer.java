@@ -13,15 +13,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Encodes a {@link ConsolidatedOrderBook} to Confluent-wire-format Avro bytes (schema
- * schemas/consolidated_order_book_event.avsc, subject {@code consolidated-order-book-event}) — the
+ * Encodes a {@link AggregatedOrderBook} to Confluent-wire-format Avro bytes (schema
+ * schemas/aggregated_order_book_event.avsc, subject {@code aggregated-order-book-event}) — the
  * frozen web contract. The write schema is fetched from the Schema Registry at first use — never
  * from a local/bundled copy. Ported from the deprecated orderbook-consolidator; wire shape
  * unchanged, only the schema loader is the normalizer-common one.
  */
-public class ConsolidatedOrderBookSerializer implements SerializationSchema<ConsolidatedOrderBook> {
+public class AggregatedOrderBookSerializer implements SerializationSchema<AggregatedOrderBook> {
 
-    static final String SUBJECT = "consolidated-order-book-event";
+    static final String SUBJECT = "aggregated-order-book-event";
 
     private final String schemaRegistryUrl;
 
@@ -29,12 +29,12 @@ public class ConsolidatedOrderBookSerializer implements SerializationSchema<Cons
     private transient SerializationSchema<GenericRecord> avroSerializer;
     private transient Schema schema;
 
-    public ConsolidatedOrderBookSerializer(String schemaRegistryUrl) {
+    public AggregatedOrderBookSerializer(String schemaRegistryUrl) {
         this.schemaRegistryUrl = schemaRegistryUrl;
     }
 
     @Override
-    public byte[] serialize(ConsolidatedOrderBook element) {
+    public byte[] serialize(AggregatedOrderBook element) {
         if (avroSerializer == null) {
             schema = AvroSchemaLoader.loadLatest(schemaRegistryUrl, SUBJECT);
             avroSerializer = ConfluentRegistryAvroSerializationSchema.forGeneric(SUBJECT, schema, schemaRegistryUrl);
@@ -42,12 +42,12 @@ public class ConsolidatedOrderBookSerializer implements SerializationSchema<Cons
         return avroSerializer.serialize(toGenericRecord(element, schema));
     }
 
-    static GenericRecord toGenericRecord(ConsolidatedOrderBook book, Schema schema) {
+    static GenericRecord toGenericRecord(AggregatedOrderBook book, Schema schema) {
         Schema sideSchema = schema.getField("side").schema();
         Schema levelSchema = schema.getField("levels").schema().getElementType();
 
         List<GenericRecord> levels = new ArrayList<>();
-        for (ConsolidatedLevel level : book.getLevels()) {
+        for (AggregatedLevel level : book.getLevels()) {
             levels.add(new GenericRecordBuilder(levelSchema)
                     .set("exchange_id", level.getExchangeId())
                     .set("price", level.getPrice())

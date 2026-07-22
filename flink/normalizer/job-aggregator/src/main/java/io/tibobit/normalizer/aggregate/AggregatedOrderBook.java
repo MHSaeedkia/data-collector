@@ -3,25 +3,25 @@ package io.tibobit.normalizer.aggregate;
 import java.util.List;
 
 /**
- * Output event: the consolidated book for one pair+side, all exchanges merged into a single
+ * Output event: the aggregated book for one pair+side, all exchanges merged into a single
  * price-sorted {@code levels} list. Emitted to the {@code p{pair_id}-{side}} topic (subject
- * {@code consolidated-order-book-event}) and consumed by the web UI. This wire shape is fixed — the
+ * {@code aggregated-order-book-event}) and consumed by the web UI. This wire shape is fixed — the
  * web UI depends on it — so it is copied unchanged from the deprecated orderbook-consolidator; do
  * NOT alter it.
  */
-public class ConsolidatedOrderBook {
+public class AggregatedOrderBook {
 
     private int pairId;
     private String side;
-    private List<ConsolidatedLevel> levels;
+    private List<AggregatedLevel> levels;
 
     // Max event_time across the contributing exchange books.
     private long eventTime;
 
-    public ConsolidatedOrderBook() {
+    public AggregatedOrderBook() {
     }
 
-    public ConsolidatedOrderBook(int pairId, String side, List<ConsolidatedLevel> levels, long eventTime) {
+    public AggregatedOrderBook(int pairId, String side, List<AggregatedLevel> levels, long eventTime) {
         this.pairId = pairId;
         this.side = side;
         this.levels = levels;
@@ -44,11 +44,11 @@ public class ConsolidatedOrderBook {
         this.side = side;
     }
 
-    public List<ConsolidatedLevel> getLevels() {
+    public List<AggregatedLevel> getLevels() {
         return levels;
     }
 
-    public void setLevels(List<ConsolidatedLevel> levels) {
+    public void setLevels(List<AggregatedLevel> levels) {
         this.levels = levels;
     }
 

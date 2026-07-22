@@ -14,9 +14,9 @@ set -euo pipefail
 # Drives ex8 (OKX), key (8, 1): its parser reads a single `ts` field that becomes BOTH event_time
 # AND sequence_id (jump 300), so ts = now gives an execution-time event_time and full control of
 # the sequence lifecycle. OKX BTC-USDT resolves to pair_id 1, so the live key is (8, 1) and the
-# aggregator's output is p1-asks / p1-bids (subject consolidated-order-book-event — the FROZEN web
+# aggregator's output is p1-asks / p1-bids (subject aggregated-order-book-event — the FROZEN web
 # contract). That contract carries NO pipeline_timings, so — unlike the jobs 1..5 smokes — there
-# is no timing chain to assert here; the deliverable is the consolidated levels.
+# is no timing chain to assert here; the deliverable is the aggregated levels.
 #
 # WHY THE ASSERTIONS FILTER BY exchange_id: the aggregator unions ALL exchanges' books for a
 # (pair, side) and holds MapState<exchange_id, book> that survives across cases AND across previous
@@ -30,7 +30,7 @@ set -euo pipefail
 #   3. GAP update   -> job 2 emits a type="reset" (and dead-letters the offending update), job 5
 #                      empties ex8's book, and the aggregator DROPS ex8 from the union: p1-asks and
 #                      p1-bids come out with NO ex8 levels. This is the milestone's core behaviour.
-#   4. snapshot re-sync -> ex8 re-appears in the consolidated book.
+#   4. snapshot re-sync -> ex8 re-appears in the aggregated book.
 #
 # PREREQUISITE specific to case 3: the `raw-order-book-event` Type enum in the registry MUST include
 # the "reset" symbol (schemas/raw_order_book_event.avsc) AND the jobs must have been (re)submitted
@@ -77,7 +77,7 @@ WANT_PRICE_PRECISION=2
 WANT_QTY_PRECISION=8
 
 # Raw inputs carry more decimals than the precisions allow; job 4 truncates DOWN. These are the
-# digits that must surface in the consolidated book.
+# digits that must surface in the aggregated book.
 RAW_ASK_PRICE="62770.98765";  RAW_ASK_QTY="0.123456789"
 RAW_BID_PRICE="62769.43219";  RAW_BID_QTY="1.999999999"
 WANT_ASK_PRICE="62770.98";    WANT_ASK_QTY="0.12345678"
@@ -157,8 +157,8 @@ end_offset() {
         --topic "$1" --time latest 2>/dev/null | cut -d: -f3
 }
 
-# One raw message produces exactly one consolidated event per side (job 5 emits one book -> the
-# splitter two sides -> the consolidator one event per side), so read a single record per topic.
+# One raw message produces exactly one aggregated event per side (job 5 emits one book -> the
+# splitter two sides -> the aggregator one event per side), so read a single record per topic.
 read_one() {
     local topic="$1" start="$2"
     docker exec "$SR_CONTAINER" kafka-avro-console-consumer \
@@ -168,7 +168,7 @@ read_one() {
         --timeout-ms "$CONSUME_TIMEOUT_MS" 2>/dev/null | grep -m1 '^{' || true
 }
 
-# Assertions scoped to ex8's levels within a consolidated record.
+# Assertions scoped to ex8's levels within a aggregated record.
 expect_ex8_level() {   # <record> <price> <quantity>
     local rec="$1" price="$2" quantity="$3" got
     got="$(jq -r --arg p "$price" '.levels[] | select(.exchange_id==8 and .price==$p) | .quantity' <<<"$rec" | head -1)"
@@ -202,7 +202,7 @@ NOW="$(( $(date +%s) * 1000 ))"   # epoch millis (portable) — newer than any p
 echo "Smoke-testing the chain job1->aggregator via raw ex${EX} (OKX), key ex${EX}/p${PAIR} -> ${ASKS_TOPIC}/${BIDS_TOPIC}..."
 echo
 
-# --- case 1: a snapshot puts ex8 into the consolidated book, stamped with its exchange_id ---
+# --- case 1: a snapshot puts ex8 into the aggregated book, stamped with its exchange_id ---
 errs=()
 a_start="$(end_offset "$ASKS_TOPIC")"; a_start="${a_start:-0}"
 b_start="$(end_offset "$BIDS_TOPIC")"; b_start="${b_start:-0}"
@@ -221,7 +221,7 @@ if [[ -n "$b_rec" ]]; then
     expect_field "$b_rec" '.side' "bids"
     expect_ex8_level "$b_rec" "$WANT_BID_PRICE" "$WANT_BID_QTY"
 fi
-report "snapshot -> ex8 appears in the consolidated book (exchange_id stamped)"
+report "snapshot -> ex8 appears in the aggregated book (exchange_id stamped)"
 
 # --- case 2: a contiguous update adds a second ask -> it joins ex8's union entry ---
 errs=()
@@ -233,7 +233,7 @@ if [[ -n "$a_rec" ]]; then
     expect_ex8_level "$a_rec" "$WANT_ASK_PRICE" "$WANT_ASK_QTY"
     expect_ex8_level "$a_rec" "$WANT_ASK2_PRICE" "$RAW_ASK2_QTY"
 fi
-report "update -> ex8's second ask joins the consolidated book"
+report "update -> ex8's second ask joins the aggregated book"
 
 # --- case 3: a sequence GAP -> reset -> ex8 drops out of BOTH sides of the union ---
 errs=()
@@ -248,7 +248,7 @@ if [[ -z "$a_rec" ]]; then errs+=("no event on $ASKS_TOPIC (reset never propagat
 if [[ -z "$b_rec" ]]; then errs+=("no event on $BIDS_TOPIC (reset never propagated — is 'reset' in the Type enum? are jobs resubmitted?)"); fi
 [[ -n "$a_rec" ]] && expect_ex8_absent "$a_rec"
 [[ -n "$b_rec" ]] && expect_ex8_absent "$b_rec"
-report "gap -> reset -> ex8 drops out of the consolidated book"
+report "gap -> reset -> ex8 drops out of the aggregated book"
 
 # --- case 4: a snapshot re-sync brings ex8 back ---
 errs=()
@@ -261,7 +261,7 @@ if [[ -z "$a_rec" ]]; then errs+=("no event on $ASKS_TOPIC"); fi
 if [[ -z "$b_rec" ]]; then errs+=("no event on $BIDS_TOPIC"); fi
 [[ -n "$a_rec" ]] && expect_ex8_level "$a_rec" "$WANT_ASK_PRICE" "$WANT_ASK_QTY"
 [[ -n "$b_rec" ]] && expect_ex8_level "$b_rec" "$WANT_BID_PRICE" "$WANT_BID_QTY"
-report "snapshot re-sync -> ex8 returns to the consolidated book"
+report "snapshot re-sync -> ex8 returns to the aggregated book"
 
 echo
 echo "Result: $pass passed, $fail failed."

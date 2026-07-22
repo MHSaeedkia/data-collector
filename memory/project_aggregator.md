@@ -10,10 +10,11 @@ metadata:
 Package `io.tibobit.normalizer.aggregate` (flat, [[normalizer-scaffold]] conventions). Consumes job
 5's full per-exchange books `ex[0-9]+-p[0-9]+-orderbook-snapshot-flink` (`OrderBookSnapshot`, subject
 `order-book-snapshot`), unions them across exchanges per `(pair_id, side)`, and emits the frozen
-`p{id}-{side}` `consolidated-order-book-event` the web UI already consumes. **Replaces job 6
-(level-emitter) + the deprecated orderbook-consolidator** — see plans/aggregator-gap-drop.md. 12
-tests green (9 ported consolidator stage-2 + 3 splitter). Code+tests DONE; **not run live, not yet
-deployed** (deploy wiring deferred — see below).
+`p{id}-{side}` web event — subject **`aggregated-order-book-event`** (renamed from
+`consolidated-order-book-event` in the Part D cutover, 2026-07-22; wire fields unchanged, see
+[[avro-schema-orderbook]]). **Replaces job 6 (level-emitter) + the deprecated orderbook-consolidator**
+— see plans/aggregator-gap-drop.md. 12 tests green (9 ported stage-2 + 3 splitter). Code+tests DONE,
+**deployed via the Part D cutover** (Makefile `refresh-normalizer`); **not yet run live.**
 
 ## Why this exists (the root-cause fix)
 
@@ -31,23 +32,29 @@ entry and contributes nothing ⇒ that exchange drops out of the union**. That i
   each level stamped with the snapshot's `exchange_id`. Job 5 always emits both sides (possibly
   empty); a null side is defensively treated as empty. This split lets the ported stage-2 operator
   be reused near-verbatim.
-- `CrossExchangeConsolidator` (ported verbatim, keyed `(pair_id, side)`): `MapState<exchange_id,
+- `CrossExchangeAggregator` (ported from the consolidator's stage-2, keyed `(pair_id, side)`): `MapState<exchange_id,
   ExchangeBook>`, replace-per-exchange, **union never-sum** (equal prices from different exchanges
   stay separate adjacent entries — the opposite of SQL GROUP BY, [[orderbook-aggregation]]), sort
   asks↑/bids↓ tie-break qty desc as BigDecimal ([[bigdecimal-rules]]), output `event_time` = max
   across contributing books. Sort direction chosen per-record from `side` (one operator serves both).
-- Sink: inline `KafkaSink`, per-record topic `p{pair_id}-{side}`, `ConsolidatedOrderBookSerializer`
-  (ported; now uses common `AvroSchemaLoader` + subject `consolidated-order-book-event`, the FROZEN
-  web wire shape — do NOT alter). Models `ExchangeBook`/`ConsolidatedLevel`/`ConsolidatedOrderBook`
-  ported into the module (not common — aggregator-local; the web consumes the Avro form, not the POJO).
+- Sink: inline `KafkaSink`, per-record topic `p{pair_id}-{side}`, `AggregatedOrderBookSerializer`
+  (uses common `AvroSchemaLoader` + subject `aggregated-order-book-event`, the FROZEN web wire shape —
+  do NOT alter). Models `ExchangeBook`/`AggregatedLevel`/`AggregatedOrderBook` are aggregator-local
+  (not common; the web consumes the Avro form, not the POJO).
 
-## Deploy is deliberately NOT wired yet (dual-producer hazard)
+## Deploy — cut over in Part D (2026-07-22)
 
-The aggregator writes the SAME frozen `p{id}-{side}` topics the consolidator still writes. Adding it
-to the active `docker-compose-normalizer.yml` / Makefile `refresh-normalizer` while the consolidator
-is deployed would put **two producers on the web's topics**. So that wiring is deferred to the Part D
-cutover, where the consolidator + job 6 are removed in the SAME change (swap, never add). `run-job.sh`
-is module-driven, so `./run-job.sh job-aggregator` still runs it standalone for isolated smoke tests.
+The aggregator writes the SAME frozen `p{id}-{side}` topics the consolidator used to write, so it had
+to **swap, never add** (two producers on the web's topics = corruption). The Part D cutover did the
+swap in one change: Makefile `refresh-normalizer`/`run-normalizer-jobs` now submit `job-aggregator`
+(downstream-first) and **not** job 6; `job-level-emitter` was moved to `flink/normalizer/DEPRECATED-job-level-emitter/`
+and dropped from the normalizer reactor (`flink/normalizer/pom.xml`); the standalone
+`orderbook-consolidator` stack is retired (`refresh-consolidator`/`run-consolidator-job` marked
+DEPRECATED, paths repointed to `flink/DEPRECATED-orderbook-consolidator/`); and `manual-test-data/reset.sh`
+now recycles `normalizer-aggregator` (stateful, keyed per pair+side) instead of the consolidator + job 6.
+Gate verified before the swap: the only consumer of the per-level `ex{id}-p{id}-(asks|bids)` topics was
+the consolidator (web reads only `^p[0-9]+-(asks|bids)$`). `run-job.sh` is module-driven, so
+`./run-job.sh job-aggregator` still runs it standalone for isolated smoke tests. **Not yet run live.**
 
 **warmup.sh no longer creates the consolidator-input topics (2026-07-22).** The old per-level
 `ex{id}-p{id}-{side}` family was job 6's output = the consolidator's input; the aggregator consumes

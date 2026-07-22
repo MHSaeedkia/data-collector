@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
 /**
- * Tests {@link CrossExchangeConsolidator} against its documented contract: it keeps the latest
+ * Tests {@link CrossExchangeAggregator} against its documented contract: it keeps the latest
  * {@link ExchangeBook} per exchange, unions their levels (never summed, equal prices from different
  * exchanges stay separate), sorts by side (asks ascending, bids descending, tie-broken by larger
  * quantity, compared as BigDecimal), stamps the output event_time with the max across contributing
@@ -26,16 +26,16 @@ import static org.assertj.core.api.Assertions.tuple;
  * (which builds both comparators) run, not a mock. Ported from the deprecated orderbook-consolidator
  * with an added reset (empty book ⇒ exchange drops out) test.
  */
-class CrossExchangeConsolidatorTest {
+class CrossExchangeAggregatorTest {
 
     private static final int PAIR = 7;
 
-    private KeyedOneInputStreamOperatorTestHarness<String, ExchangeBook, ConsolidatedOrderBook> harness;
+    private KeyedOneInputStreamOperatorTestHarness<String, ExchangeBook, AggregatedOrderBook> harness;
 
     @BeforeEach
     void openHarness() throws Exception {
-        KeyedProcessOperator<String, ExchangeBook, ConsolidatedOrderBook> operator =
-                new KeyedProcessOperator<>(new CrossExchangeConsolidator());
+        KeyedProcessOperator<String, ExchangeBook, AggregatedOrderBook> operator =
+                new KeyedProcessOperator<>(new CrossExchangeAggregator());
         KeySelector<ExchangeBook, String> byKey = b -> b.getPairId() + "|" + b.getSide();
         harness = new KeyedOneInputStreamOperatorTestHarness<>(
                 operator, byKey, TypeInformation.of(String.class));
@@ -51,12 +51,12 @@ class CrossExchangeConsolidatorTest {
 
     // ---- helpers ----------------------------------------------------------------
 
-    private static ConsolidatedLevel lvl(int exchangeId, String price, String qty) {
-        return new ConsolidatedLevel(exchangeId, price, qty);
+    private static AggregatedLevel lvl(int exchangeId, String price, String qty) {
+        return new AggregatedLevel(exchangeId, price, qty);
     }
 
     private static ExchangeBook book(int exchangeId, String side, long eventTime,
-                                     ConsolidatedLevel... levels) {
+                                     AggregatedLevel... levels) {
         return new ExchangeBook(PAIR, exchangeId, side, List.of(levels), eventTime);
     }
 
@@ -64,13 +64,13 @@ class CrossExchangeConsolidatorTest {
         harness.processElement(b, b.getEventTime());
     }
 
-    private ConsolidatedOrderBook lastBook() {
-        List<ConsolidatedOrderBook> all = harness.extractOutputValues();
+    private AggregatedOrderBook lastBook() {
+        List<AggregatedOrderBook> all = harness.extractOutputValues();
         assertThat(all).as("expected at least one emitted book").isNotEmpty();
         return all.get(all.size() - 1);
     }
 
-    private List<ConsolidatedLevel> lastLevels() {
+    private List<AggregatedLevel> lastLevels() {
         return lastBook().getLevels();
     }
 
@@ -81,7 +81,7 @@ class CrossExchangeConsolidatorTest {
     void asksAscending() throws Exception {
         send(book(1, "asks", 100, lvl(1, "102", "1"), lvl(1, "100", "1"), lvl(1, "101", "1")));
 
-        assertThat(lastLevels()).extracting(ConsolidatedLevel::getPrice)
+        assertThat(lastLevels()).extracting(AggregatedLevel::getPrice)
                 .containsExactly("100", "101", "102");
     }
 
@@ -90,7 +90,7 @@ class CrossExchangeConsolidatorTest {
     void bidsDescending() throws Exception {
         send(book(1, "bids", 100, lvl(1, "102", "1"), lvl(1, "100", "1"), lvl(1, "101", "1")));
 
-        assertThat(lastLevels()).extracting(ConsolidatedLevel::getPrice)
+        assertThat(lastLevels()).extracting(AggregatedLevel::getPrice)
                 .containsExactly("102", "101", "100");
     }
 
@@ -99,7 +99,7 @@ class CrossExchangeConsolidatorTest {
     void sortsNumericallyNotLexicographically() throws Exception {
         send(book(1, "asks", 100, lvl(1, "100", "1"), lvl(1, "9", "1"), lvl(1, "10", "1")));
 
-        assertThat(lastLevels()).extracting(ConsolidatedLevel::getPrice)
+        assertThat(lastLevels()).extracting(AggregatedLevel::getPrice)
                 .containsExactly("9", "10", "100"); // lexicographic would be 10, 100, 9
     }
 
@@ -112,8 +112,8 @@ class CrossExchangeConsolidatorTest {
         send(book(2, "asks", 100, lvl(2, "100", "8")));
 
         assertThat(lastLevels())
-                .extracting(ConsolidatedLevel::getExchangeId,
-                        ConsolidatedLevel::getPrice, ConsolidatedLevel::getQuantity)
+                .extracting(AggregatedLevel::getExchangeId,
+                        AggregatedLevel::getPrice, AggregatedLevel::getQuantity)
                 .containsExactly(
                         tuple(2, "100", "8"),  // larger quantity first
                         tuple(1, "100", "5")); // NOT summed to "13"
@@ -126,8 +126,8 @@ class CrossExchangeConsolidatorTest {
         send(book(2, "asks", 100, lvl(2, "100", "8")));
 
         assertThat(lastLevels())
-                .extracting(ConsolidatedLevel::getExchangeId,
-                        ConsolidatedLevel::getPrice, ConsolidatedLevel::getQuantity)
+                .extracting(AggregatedLevel::getExchangeId,
+                        AggregatedLevel::getPrice, AggregatedLevel::getQuantity)
                 .containsExactly(
                         tuple(2, "100", "8"),
                         tuple(1, "100.00", "5"));
@@ -141,7 +141,7 @@ class CrossExchangeConsolidatorTest {
         send(book(1, "asks", 100, lvl(1, "100", "5")));
         send(book(1, "asks", 200, lvl(1, "200", "9"))); // same exchange, new book
 
-        assertThat(lastLevels()).extracting(ConsolidatedLevel::getPrice)
+        assertThat(lastLevels()).extracting(AggregatedLevel::getPrice)
                 .containsExactly("200"); // old "100" replaced, not "100" + "200"
     }
 
@@ -161,13 +161,13 @@ class CrossExchangeConsolidatorTest {
     void emptyBookDropsExchangeOthersIntact() throws Exception {
         send(book(1, "asks", 100, lvl(1, "100", "1")));
         send(book(2, "asks", 100, lvl(2, "101", "1")));
-        assertThat(lastLevels()).extracting(ConsolidatedLevel::getPrice)
+        assertThat(lastLevels()).extracting(AggregatedLevel::getPrice)
                 .containsExactly("100", "101"); // both exchanges present
 
         send(book(2, "asks", 200)); // ex2 reset -> empty book, newer event_time
 
         assertThat(lastLevels())
-                .extracting(ConsolidatedLevel::getExchangeId, ConsolidatedLevel::getPrice)
+                .extracting(AggregatedLevel::getExchangeId, AggregatedLevel::getPrice)
                 .containsExactly(tuple(1, "100")); // only ex1 remains
         assertThat(lastBook().getEventTime()).isEqualTo(200); // ex2's event_time still counts
     }
