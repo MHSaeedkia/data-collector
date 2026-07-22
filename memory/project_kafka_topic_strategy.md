@@ -2,7 +2,7 @@
 name: kafka-topic-strategy
 description: Technical decision on Kafka topic naming, key, and partitioning strategy for the NiFi → Kafka → Flink order book pipeline
 metadata:
-  type: project
+    type: project
 ---
 
 ## Decision: Topic per side+pair+exchange (ID-based names)
@@ -30,19 +30,16 @@ Everything current is on the new order — `scripts/warmup.sh`, `flink/normalize
 source regex + sink topic selector), the kafka-ui serde bindings in `docker-compose.yml`, and `web/`
 (`internal/kafka/consumer.go` regex `^p[0-9]+-(asks|bids)$`).
 
-**Still on the OLD side-first naming (deliberately, unmigrated):**
-- `fake-data-generator/mian.go` — still builds `{side}-p{pair_id}-ex{exchange_id}` names; it does
-  not feed the current normalizer pipeline until updated ([[fake-data-generator]]).
 - NiFi's producer side (owned by a separate team, not in this repo) publishes verbatim raw payloads
   to `ex{id}-raw` ([[raw-pipeline-decision]]); its exact per-exchange formats are the risk tracked
   in the pair-extractor.
 
 ## What was rejected and why
 
-| Option | Rejected because |
-|---|---|
-| `asks` / `bids` as topics, pair as key | Flink streams not separated by pair |
-| `{pair}` as topic, side as key | Flink still needs `filter()` to split sides; only 2 effective partitions |
+| Option                                    | Rejected because                                                                                   |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `asks` / `bids` as topics, pair as key    | Flink streams not separated by pair                                                                |
+| `{pair}` as topic, side as key            | Flink still needs `filter()` to split sides; only 2 effective partitions                           |
 | `{pair}-{side}` as topic, exchange as key | Partition count doesn't align with exchange count per pair; varies per topic and changes over time |
 
 ## Out of scope (deferred)
@@ -56,6 +53,7 @@ Topics are pre-provisioned by `scripts/warmup.sh` from the postgres `markets` + 
 **Retention:** input topics `ex{exchange_id}-p{pair_id}-{side}` get `retention.ms=3600000` (1 hour); output topics `p{pair_id}-{side}` get `retention.ms=21600000` (6 hours), passed via `--config retention.ms=...` in `create_topic()`. Input topics are raw per-exchange firehose (short-lived, high volume); output topics are the aggregated book consumers care about (longer window for replay/late web-UI connects). **Caveat:** topic creation uses `--if-not-exists`, so retention is only applied when a topic is first created — topics already provisioned on the server before this change (2026-07-11) keep their old (unset/broker-default) retention and need `kafka-configs --alter --entity-type topics --entity-name <topic> --add-config retention.ms=...` to update in place; not yet run against the deployed server.
 
 **Tried and reverted — don't redo:**
+
 - **Parallel topic creation** (`xargs -P` around the per-topic `docker exec ... kafka-topics --create`, each paying ~1-3s JVM startup): reverted same day, commit `81c18de`; script is back to the sequential `while` loop. Reason for the revert wasn't captured at the time.
 - **Per-topic `<topic>-value` schema subjects** (Confluent `TopicNameStrategy`, one registry subject per topic so kafka-ui would auto-default to AVRO): reverted same day at user's request — with pairs × exchanges × 2 sides it cluttered the registry with dozens of duplicate subjects on top of the canonical ones. **Current stance: only the canonical fixed-name subjects exist** (`raw-order-book-event`, `order-book-snapshot`, `rejected-order-book-event`, `aggregated-order-book-event`). The kafka-ui goal was solved via serde config instead (below).
 
@@ -63,14 +61,13 @@ Topics are pre-provisioned by `scripts/warmup.sh` from the postgres `markets` + 
 
 The raw pipeline's stage topics are `ex{exchange_id}-p{pair_id}-{stage}-flink`, one family per job
 output: `raw` (job 1), `type-validated-raw` (2), `rebased` (3), `applied-precision` (4),
-`orderbook-snapshot` (5), plus `rejected-flink` — a *shared* dead-letter written by both jobs 2 and
-3. The terminal aggregator (job 6) has no `-flink` family of its own: it writes the frozen web-output
+`orderbook-snapshot` (5), plus `rejected-flink` — a _shared_ dead-letter written by both jobs 2 and 3. The terminal aggregator (job 6) has no `-flink` family of its own: it writes the frozen web-output
 topics `p{id}-{side}` (no `ex` prefix, no `-flink` suffix). The `-flink` suffix marks "intermediate,
 ours to delete"; its absence on the aggregator's output is deliberate — that is the web contract.
 
 **warmup.sh creates these BEFORE the existing input/output blocks, at the user's request.** Reason:
 every normalizer source uses `OffsetsInitializer.latest()`. A topic that doesn't exist when its job
-starts gets discovered by the source's periodic partition-discovery only *later*, and everything
+starts gets discovered by the source's periodic partition-discovery only _later_, and everything
 produced in the gap is silently lost. Provisioning up front removes the race. This is the same
 constraint that makes `make refresh-normalizer` submit jobs downstream-first.
 
@@ -92,6 +89,7 @@ KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: aggregated-order-book-ev
 ```
 
 Two gotchas that cost debugging time, worth remembering:
+
 1. **`name: SchemaRegistry` is reserved** for the single cluster-auto-configured instance — a second serde entry reusing that name crashes kafka-ui at startup (`ValidationException: Multiple serdes with same name`). Each extra instance needs a unique `name` + explicit `className`.
 2. **`schemaNameTemplate`/`url`/etc. must live under `properties.`** (`KAFKA_CLUSTERS_0_SERDE_n_PROPERTIES_SCHEMANAMETEMPLATE`), not as a top-level serde key — only `name`/`className`/`topicKeysPattern`/`topicValuesPattern` are top-level. Getting this wrong silently no-ops (defaults to `%s-value`, i.e. `TopicNameStrategy`, no error) rather than failing loudly. Correct shape confirmed against kafka-ui's own `documentation/compose/kafka-ui-serdes.yaml` example.
 

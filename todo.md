@@ -11,13 +11,7 @@ Full decision + rationale: `memory/project_raw_pipeline_decision.md`
 - [x] Structure: ONE Maven multi-module project (`common/` + one `job-*/` module per job, each
       its own shaded jar; build one via `mvn -pl <module> -am package`); existing flink projects
       stay self-contained as-is
-- [x] Pipeline (6 jobs; topic names are the ground truth):
-      1. pair extraction: `ex{id}-raw` → `ex{id}-p{id}-raw-flink`
-      2. type validation: → `ex{id}-p{id}-type-validated-raw-flink` (rejects → dead-letter)
-      3. rebase: → `ex{id}-p{id}-rebased-flink`
-      4. precision: → `ex{id}-p{id}-applied-precision-flink` (spelling "precision" assumed)
-      5. orderbook build: → `ex{id}-p{id}-orderbook-snapshot-flink`
-      6. aggregate: → `p{id}-{side}` (`aggregated-order-book-event`, the web output)
+- [x] Pipeline (6 jobs; topic names are the ground truth): 1. pair extraction: `ex{id}-raw` → `ex{id}-p{id}-raw-flink` 2. type validation: → `ex{id}-p{id}-type-validated-raw-flink` (rejects → dead-letter) 3. rebase: → `ex{id}-p{id}-rebased-flink` 4. precision: → `ex{id}-p{id}-applied-precision-flink` (spelling "precision" assumed) 5. orderbook build: → `ex{id}-p{id}-orderbook-snapshot-flink` 6. aggregate: → `p{id}-{side}` (`aggregated-order-book-event`, the web output)
 - [x] Raw format: verbatim exchange payload (no envelope); job 1 owns ALL per-exchange parsing
 - [x] **Parse point**: job 1 converts payloads into ONE common structured Avro event
       (exchange/pair ids, type, sequence fields, asks/bids levels); one shared schema serves
@@ -47,70 +41,61 @@ Full decision + rationale: `memory/project_raw_pipeline_decision.md`
 
 - [ ] Collect sample raw payloads per exchange — **RESET 2026-07-14**: the 2026-07-13 bulk
       capture was discarded (recoverable from git); rebuilding into `sample-raw-data.md`
-      **one exchange at a time**, each verified before moving on:
-      - [x] ex1 nobitex — captured 2026-07-14 (snapshot regime + Centrifugo envelope
-            re-confirmed, channel format differs from ex2; `pub.offset` = out-of-order
-            check field (REVISED 2026-07-14) + records always single-doc — see
-            sample-raw-data.md)
-      - [x] ex2 bitpin — captured 2026-07-14 (snapshot regime + Centrifugo envelope
-            re-confirmed; `pub.offset` = out-of-order check field (REVISED 2026-07-14) —
-            see sample-raw-data.md)
-      - [x] ex3 wallex — captured 2026-07-14 (per-side snapshot regime + numeric JSON
-            prices re-confirmed; NOT Centrifugo — `["{market}@{side}", [levels]]` array;
-            no seq/timestamp at all ⚠ ONLY exchange with no out-of-order protection —
-            see sample-raw-data.md)
-      - [x] ex4 ramzinex — captured 2026-07-14 (full-snapshot regime + numeric JSON prices
-            re-confirmed; Centrifugo but channel key is a NUMERIC market id `orderbook:12`;
-            7-element level arrays, `sells` sorted descending (best ask LAST); no seq —
-            `pub.offset` = out-of-order check field (REVISED 2026-07-14) — see
-            sample-raw-data.md)
-      - [x] ex5 bitget — captured 2026-07-14 (snapshot-only re-confirmed, and explicit on
-            the wire: `action: "snapshot"` — first exchange with a discriminator; NOT
-            Centrifugo — `action`/`arg`/`data` shape, `data` is an ARRAY; string levels;
-            **`seq` = out-of-order check field (REVISED 2026-07-14)** — no gap/jump rule,
-            just drop stale snapshots; `pseq` metadata — see sample-raw-data.md)
-      - [x] ex6 bybit — captured 2026-07-14 (snapshot + delta samples; regime re-confirmed:
-            snapshot/delta via `type` discriminator; NOT Centrifugo — `topic`/`ts`/`type`/
-            `data`/`cts` shape; string levels; **sequence id = `u`, jump = 1**
-            (user-confirmed, re-confirmed 2026-07-14: "bybit u gap is 1") — `data.seq` is
-            NOT contiguous, ignore for gaps; qty-"0" delete frame still to capture — see
-            sample-raw-data.md)
-      - [~] ex7 ompfinex — POSTPONED 2026-07-14 (team decision — known issue with its raw
-            data). Revisit when the raw feed is fixed.
-      - [x] ex8 okx — captured 2026-07-14 (snapshot + update samples — topic-existence caveat
-            settled, feed is live; regime: snapshot/update via `action` discriminator; bitget-
-            family envelope (`arg`/`action`/`data`-array) but grouped book `books-grouped` +
-            `grouping`, market key `arg.instId` = `BTC-USDT` with a DASH; string levels;
-            **sequence id = `ts` (string epoch-millis), jump = 300** (user-confirmed);
-            **qty-"0" delete CONFIRMED on wire** — first delete frame in the set — see
-            sample-raw-data.md).
-            Scope = **ex1–ex6 + ex8** (ex7 postponed).
-      - [x] re-verify while rebuilding — DONE 2026-07-14: three regimes ✅; Centrifugo
-            envelope on ex1/2/4 ✅; wallex/ramzinex numeric prices ✅; bitget snapshot-only ✅
-            (`seq` = out-of-order field, no gap rule); bybit `u` jump=1 ✅ (re-confirmed);
-            ex1 multi-doc records CLOSED (user: always ONE doc, no splitting); bybit `u`
-            gaps CLOSED (user: skip NiFi investigation — job 2's drop+await-snapshot gap
-            rule absorbs the upstream loss).
-            **Job-2 validation scope (REVISED 2026-07-14, user): gap/jump rules ONLY for
-            the delta feeds ex6 (`u`/1) + ex8 (`ts`/300); snapshot feeds get an
-            OUT-OF-ORDER check instead — drop any snapshot whose ordering field is not
-            greater than the last seen (ex1/2/4 `pub.offset`, ex5 `seq`; ex3 has no field
-            → no protection possible).**
+      **one exchange at a time**, each verified before moving on: - [x] ex1 nobitex — captured 2026-07-14 (snapshot regime + Centrifugo envelope
+      re-confirmed, channel format differs from ex2; `pub.offset` = out-of-order
+      check field (REVISED 2026-07-14) + records always single-doc — see
+      sample-raw-data.md) - [x] ex2 bitpin — captured 2026-07-14 (snapshot regime + Centrifugo envelope
+      re-confirmed; `pub.offset` = out-of-order check field (REVISED 2026-07-14) —
+      see sample-raw-data.md) - [x] ex3 wallex — captured 2026-07-14 (per-side snapshot regime + numeric JSON
+      prices re-confirmed; NOT Centrifugo — `["{market}@{side}", [levels]]` array;
+      no seq/timestamp at all ⚠ ONLY exchange with no out-of-order protection —
+      see sample-raw-data.md) - [x] ex4 ramzinex — captured 2026-07-14 (full-snapshot regime + numeric JSON prices
+      re-confirmed; Centrifugo but channel key is a NUMERIC market id `orderbook:12`;
+      7-element level arrays, `sells` sorted descending (best ask LAST); no seq —
+      `pub.offset` = out-of-order check field (REVISED 2026-07-14) — see
+      sample-raw-data.md) - [x] ex5 bitget — captured 2026-07-14 (snapshot-only re-confirmed, and explicit on
+      the wire: `action: "snapshot"` — first exchange with a discriminator; NOT
+      Centrifugo — `action`/`arg`/`data` shape, `data` is an ARRAY; string levels;
+      **`seq` = out-of-order check field (REVISED 2026-07-14)** — no gap/jump rule,
+      just drop stale snapshots; `pseq` metadata — see sample-raw-data.md) - [x] ex6 bybit — captured 2026-07-14 (snapshot + delta samples; regime re-confirmed:
+      snapshot/delta via `type` discriminator; NOT Centrifugo — `topic`/`ts`/`type`/
+      `data`/`cts` shape; string levels; **sequence id = `u`, jump = 1**
+      (user-confirmed, re-confirmed 2026-07-14: "bybit u gap is 1") — `data.seq` is
+      NOT contiguous, ignore for gaps; qty-"0" delete frame still to capture — see
+      sample-raw-data.md) - [~] ex7 ompfinex — POSTPONED 2026-07-14 (team decision — known issue with its raw
+      data). Revisit when the raw feed is fixed. - [x] ex8 okx — captured 2026-07-14 (snapshot + update samples — topic-existence caveat
+      settled, feed is live; regime: snapshot/update via `action` discriminator; bitget-
+      family envelope (`arg`/`action`/`data`-array) but grouped book `books-grouped` +
+      `grouping`, market key `arg.instId` = `BTC-USDT` with a DASH; string levels;
+      **sequence id = `ts` (string epoch-millis), jump = 300** (user-confirmed);
+      **qty-"0" delete CONFIRMED on wire** — first delete frame in the set — see
+      sample-raw-data.md).
+      Scope = **ex1–ex6 + ex8** (ex7 postponed). - [x] re-verify while rebuilding — DONE 2026-07-14: three regimes ✅; Centrifugo
+      envelope on ex1/2/4 ✅; wallex/ramzinex numeric prices ✅; bitget snapshot-only ✅
+      (`seq` = out-of-order field, no gap rule); bybit `u` jump=1 ✅ (re-confirmed);
+      ex1 multi-doc records CLOSED (user: always ONE doc, no splitting); bybit `u`
+      gaps CLOSED (user: skip NiFi investigation — job 2's drop+await-snapshot gap
+      rule absorbs the upstream loss).
+      **Job-2 validation scope (REVISED 2026-07-14, user): gap/jump rules ONLY for
+      the delta feeds ex6 (`u`/1) + ex8 (`ts`/300); snapshot feeds get an
+      OUT-OF-ORDER check instead — drop any snapshot whose ordering field is not
+      greater than the last seen (ex1/2/4 `pub.offset`, ex5 `seq`; ex3 has no field
+      → no protection possible).**
 - [x] **Per-step latency timings (REQUIREMENT 2026-07-15, `memory/project_raw_pipeline_decision.md`)** —
       DONE 2026-07-15. One `pipeline_timings` field per schema, wire type `["null", PipelineTimings]`
       `default: null` (nullable union chosen over non-null-record for one-token backward-compat
       default). `PipelineTimings` = 10 nullable `timestamp-millis` fields:
       `{pair_extract,type_validate,rebase,precision,book_build}_{in,out}`, duplicated
       field-for-field (same rule as `PriceLevel`/`Type`):
-  - [x] `raw_order_book_event.avsc` (jobs 1–4) + example JSON
-  - [x] `order_book_snapshot.avsc` (job 5) + example
-  - [x] `rejected_order_book_event.avsc` inlined event — field-for-field identical
-  - [x] common Java models (`PipelineTimings` POJO + field on Raw/OrderBookSnapshot) + shared
-        `PipelineTimingsRecords` serde helper; job 1 stamps `pair_extract_in/out`
-        (`_in` at `flatMap` entry, `_out` before `collect`). Jobs 2–5 inherit the field, stamp
-        their own two when built.
-  - [x] warmup.sh needs NO change — `register_schema` reads the `.avsc` files directly, so the
-        edits register as new subject versions on next warmup run
+    - [x] `raw_order_book_event.avsc` (jobs 1–4) + example JSON
+    - [x] `order_book_snapshot.avsc` (job 5) + example
+    - [x] `rejected_order_book_event.avsc` inlined event — field-for-field identical
+    - [x] common Java models (`PipelineTimings` POJO + field on Raw/OrderBookSnapshot) + shared
+          `PipelineTimingsRecords` serde helper; job 1 stamps `pair_extract_in/out`
+          (`_in` at `flatMap` entry, `_out` before `collect`). Jobs 2–5 inherit the field, stamp
+          their own two when built.
+    - [x] warmup.sh needs NO change — `register_schema` reads the `.avsc` files directly, so the
+          edits register as new subject versions on next warmup run
 - [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange.
       → verify: written agreement in `memory/project_raw_pipeline_decision.md`
       (topic creation + retention SETTLED 2026-07-14: `warmup.sh` creates `ex{id}-raw` per
@@ -135,24 +120,19 @@ Full decision + rationale: `memory/project_raw_pipeline_decision.md`
       kafka connector, avro + confluent registry deps, JUnit5/AssertJ/flink-test-utils/JaCoCo)
       → verify: `mvn validate`
       DONE 2026-07-15: `io.tibobit:normalizer-parent`; modules list starts with `common` only
-      (user decision — each job-* module is added in its own milestone M2–M7)
+      (user decision — each job-\* module is added in its own milestone M2–M7)
 - [x] `common/` module (plain jar, no shade): DONE 2026-07-15, artifactId `normalizer-common`,
-      package `io.tibobit.normalizer.*`, 18 tests green
-      - [x] Models for the shared event/book/rejection shapes (plain POJOs, no Jackson —
-            Avro GenericRecord mapping happens in serde classes)
-      - [x] `AvroSchemaLoader.loadLatest(url, subject)` — registry-only at runtime
-            (schemas NEVER bundled in shaded jars)
-      - [x] Avro serde pairs per shared shape (`toGenericRecord`/`fromGenericRecord` as pure
-            package-private statics — a testable-mapping pattern).
-            NOTE: rejected-event shape got a SERIALIZER only — nothing in the pipeline consumes
-            dead-letter topics (kafka-ui reads them); add a deserializer if a consumer appears
-      - [x] `RefreshingLookup` — periodic-refresh Postgres reference reader: loads a `Map` via
-            JDBC in `open()`, re-loads every `REFRESH_INTERVAL` on a schedule; on refresh
-            failure keep last-good snapshot + log. TDD with a fake loader fn.
-            NOTE: generic `Loader<K,V>` fn — the actual JDBC query closure is built in M2 where
-            the exchange_markets query lives
-      - [x] BigDecimal helpers: canonicalize (`stripTrailingZeros().toPlainString()`), rebase
-            (`scaleByPowerOfTen`), truncate (`setScale(p, DOWN)`) — pure, test-first
+      package `io.tibobit.normalizer.*`, 18 tests green - [x] Models for the shared event/book/rejection shapes (plain POJOs, no Jackson —
+      Avro GenericRecord mapping happens in serde classes) - [x] `AvroSchemaLoader.loadLatest(url, subject)` — registry-only at runtime
+      (schemas NEVER bundled in shaded jars) - [x] Avro serde pairs per shared shape (`toGenericRecord`/`fromGenericRecord` as pure
+      package-private statics — a testable-mapping pattern).
+      NOTE: rejected-event shape got a SERIALIZER only — nothing in the pipeline consumes
+      dead-letter topics (kafka-ui reads them); add a deserializer if a consumer appears - [x] `RefreshingLookup` — periodic-refresh Postgres reference reader: loads a `Map` via
+      JDBC in `open()`, re-loads every `REFRESH_INTERVAL` on a schedule; on refresh
+      failure keep last-good snapshot + log. TDD with a fake loader fn.
+      NOTE: generic `Loader<K,V>` fn — the actual JDBC query closure is built in M2 where
+      the exchange_markets query lives - [x] BigDecimal helpers: canonicalize (`stripTrailingZeros().toPlainString()`), rebase
+      (`scaleByPowerOfTen`), truncate (`setScale(p, DOWN)`) — pure, test-first
       → verify: `mvn -pl common -am test` green ✓ (18/18)
 - [x] One parameterized `run-job.sh` + `Dockerfile` + `Makefile` at `flink/normalizer/` root
       (module name as arg; derive jar + main class per module) → verify: script builds a chosen
@@ -222,14 +202,13 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 `memory/project_type_validator.md`. 11 unit tests + live smoke 8/8 green; job RUNNING.
 
 - [x] `TypeValidateFunction` keyed `(exchange_id, pair_id)` `KeyedProcessFunction`, `ValueState
-      {lastSeq, awaitingSnapshot}`. Rules RECONCILED with the revised job-2 scope in
+    {lastSeq, awaitingSnapshot}`. Rules RECONCILED with the revised job-2 scope in
       `project_raw_pipeline_decision.md` (the discriminator is `type` + `sequence_id==null`, NOT
       jump alone — delta-feed SNAPSHOT messages also carry jump>0, verified in the ex6/ex8 parsers):
       `sequence_id==null` (ex3) → pass through unchecked; `snapshot` → out-of-order check only
       (reject `stale_or_duplicate` if `seq <= lastSeq`, else re-sync: store seq, clear awaiting);
       `update` → `no_baseline` if lastSeq null / `awaiting_snapshot` if still waiting / valid iff
-      `seq == lastSeq + sequence_jump` / `stale_or_duplicate` if `seq <= lastSeq` / else `sequence_gap`
-      + set awaitingSnapshot. Valid → main output; rejects → `REJECTED` side output. Stamps
+      `seq == lastSeq + sequence_jump` / `stale_or_duplicate` if `seq <= lastSeq` / else `sequence_gap` + set awaitingSnapshot. Valid → main output; rejects → `REJECTED` side output. Stamps
       `type_validate_in/out` (out only on emitted). 11 harness tests cover every branch + keying
       isolation + timings.
 - [x] Wiring: `TypeValidatorJob` source (pattern `ex[0-9]+-p[0-9]+-raw-flink`,
@@ -245,7 +224,7 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       gap (`sequence_gap`) → held update (`awaiting_snapshot`) → snapshot re-sync →
       contiguous-after-resync → stale snapshot (`stale_or_duplicate`). Asserts event_time == sent ts
       AND the real timing chain `event_time ≤ pair_extract_in ≤ pair_extract_out ≤ type_validate_in ≤
-      type_validate_out` (no sentinels — both stages stamp live), plus upstream preservation on reject
+    type_validate_out` (no sentinels — both stages stamp live), plus upstream preservation on reject
       (`.event.…`, type_validate_out null). → verify: "8 passed, 0 failed" (green 2026-07-15; two-hop
       chain, cases may transiently time out on read — re-run).
 - [x] Runtime blocker fixed (same class as job 1): re-registered `rejected-order-book-event` to v2
@@ -347,14 +326,13 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 - [x] Extend `scripts/warmup.sh` — DONE 2026-07-19: `ex{id}-raw` (2026-07-14) plus the per-pair
       normalizer families `{raw,type-validated-raw,rebased,applied-precision,orderbook-snapshot}
-      -flink` at 1h and the shared `rejected-flink` dead-letter at 7d. Created BEFORE the existing
+    -flink` at 1h and the shared `rejected-flink` dead-letter at 7d. Created BEFORE the existing
       input/output blocks (sources read `latest` — a late-discovered topic loses what was produced
       in between). Sequential creation kept (parallel xargs was reverted before, don't retry)
 - [x] kafka-ui serde config in `docker-compose.yml`: `topicValuesPattern` +
       `schemaNameTemplate` binding `^p[0-9]+-(asks|bids)$` → `aggregated-order-book-event` (pattern
       from `memory/project_kafka_topic_strategy.md`; registry stays clutter-free)
-- [ ] `fake-data-generator/`: new mode emitting realistic RAW exchange payloads to `ex{id}-raw`
-      (stand-in for NiFi during dev)
+
 - [x] Manual test data — DONE 2026-07-20: `flink/normalizer/manual-test-data/` — BTC-USDT/pair-1
       ONLY and every scenario STANDALONE (both user constraints); 7 scenarios (01–06 ex8/okx +
       07 ex3/wallex, 29 payloads), `produce.sh` + `reset.sh`, README with the expected outcome and
@@ -399,13 +377,7 @@ Wire symbols are lowercase-underscore (`btc_usdt`), unlike okx's `BTC-USDT`.
       off the wire, never guessed, and the ordering/delete semantics below cannot be inferred from
       lbank's docs alone.
 - [ ] Classify the feed regime from those samples — it decides job 2's behaviour, which is the one
-      thing that differs per exchange (`memory/project_raw_pipeline_decision.md`):
-      - snapshot-per-message (like ex1/2/4/5) → out-of-order drop check only; or
-      - true delta (like ex6/ex8) → needs the ordering field + its jump, and `type` snapshot/update
-      - is there an ordering field at all, or is it ex3/wallex-style with none (no protection)?
-      - is `quantity 0` a level delete on the wire? (confirm on the wire, don't assume)
-      - one book per message or a `data` array of several?
-      - what stamps `event_time` — a wire timestamp or processing time?
+      thing that differs per exchange (`memory/project_raw_pipeline_decision.md`): - snapshot-per-message (like ex1/2/4/5) → out-of-order drop check only; or - true delta (like ex6/ex8) → needs the ordering field + its jump, and `type` snapshot/update - is there an ordering field at all, or is it ex3/wallex-style with none (no protection)? - is `quantity 0` a level delete on the wire? (confirm on the wire, don't assume) - one book per message or a `data` array of several? - what stamps `event_time` — a wire timestamp or processing time?
 - [ ] `LbankParser` + register `9, new LbankParser()` in `Parsers.byExchangeId()`; javadoc in the
       per-exchange format the other 7 parsers use (market key, level shape, seq field + jump,
       event time, § reference). Emit the market string EXACTLY as lbank sends it — the lookup key
