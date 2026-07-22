@@ -1,0 +1,50 @@
+kafka:
+  bootstrap_servers: "kafka:29092"
+
+poll_interval_seconds: 15
+
+# How often to re-read the active topic list from postgres (seconds).
+db_refresh_interval_seconds: 60
+
+# Used for DB-sourced topics whose exchange_markets.staleness_threshold_seconds is NULL.
+default_threshold_seconds: 60
+
+postgres:
+  host: postgres
+  port: 5432
+  db: markets
+  user: postgres
+  password: postgres
+
+# Manually listed topics — for anything NOT tied to a single exchange+pair
+# row in exchange_markets: consolidated outputs, raw topics, normalizer
+# stage topics, dead-letter topics, etc. Names must exactly match the
+# topic names on Kafka. These always override a same-named DB entry.
+topics:
+  p1-asks: 10
+  p1-bids: 10
+  p2-asks: 10
+  p2-bids: 10
+  p3-asks: 10
+  p3-bids: 10
+  p4-asks: 10
+  p4-bids: 10
+  p5-asks: 10
+  p5-bids: 10
+  p6-asks: 10
+  p6-bids: 10
+  p7-asks: 10
+  p7-bids: 10
+  p8-asks: 10
+  p8-bids: 10
+  p9-asks: 10
+  p9-bids: 10
+  ex1-raw: 5
+  ex2-raw: 5
+  ex3-raw: 5
+  ex4-raw: 5
+  ex5-raw: 5
+  ex6-raw: 5
+  ex7-raw: 5
+  ex8-raw: 5
+  ex9-raw: 5

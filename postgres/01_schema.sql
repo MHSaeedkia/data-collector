@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     status subscription_status NOT NULL DEFAULT 'unsubscribe',
     price_amount_rebase INT NOT NULL DEFAULT 0,
     volume_amount_rebase INT NOT NULL DEFAULT 0,
+    depth_aggregation_key INT NULL,
+    staleness_threshold_seconds INT NOT NULL DEFAULT 60,
     CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market)
 );
 
