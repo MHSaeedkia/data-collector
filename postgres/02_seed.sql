@@ -147,8 +147,6 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (1, 'UNIIRT', 36, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
 (1, 'AAVEUSDT', 37, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
 (1, 'AAVEIRT', 38, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
-(1, 'OKXUSDT', 39, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
-(1, 'OKXIRT', 40, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
 (1, 'ADAUSDT', 41, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
 (1, 'ADAIRT', 42, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
 (1, 'GRAMUSDT', 43, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
@@ -157,12 +155,10 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (1, 'BNBIRT', 46, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
 (1, 'WLDUSDT', 47, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
 (1, 'WLDIRT', 48, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
-(1, 'MNTUSDT', 49, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
-(1, 'MNTIRT', 50, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
-(1, 'SHIBUSDT', 51, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
-(1, 'SHIBIRT', 52, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
-(1, 'BTTUSDT', 53, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
-(1, 'BTTIRT', 54, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
+(1, '1K_SHIBUSDT', 51, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
+(1, '1K_SHIBIRT', 52, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
+(1, '1M_BTTUSDT', 53, 'unsubscribe', 0, 0, NULL, 60), -- nobitex
+(1, '1M_BTTIRT', 54, 'unsubscribe', -1, 0, NULL, 60), -- nobitex
 (2, 'BTC_USDT', 1, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'BTC_IRT', 2, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'ETH_USDT', 3, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
@@ -179,7 +175,6 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (2, 'HYPE_IRT', 14, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'DOGE_USDT', 15, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'DOGE_IRT', 16, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
-(2, 'PEPE_USDT', 17, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'PEPE_IRT', 18, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'SUI_USDT', 19, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'SUI_IRT', 20, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
@@ -201,8 +196,6 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (2, 'UNI_IRT', 36, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'AAVE_USDT', 37, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'AAVE_IRT', 38, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
-(2, 'OKX_USDT', 39, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
-(2, 'OKX_IRT', 40, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'ADA_USDT', 41, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'ADA_IRT', 42, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'GRAM_USDT', 43, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
@@ -213,10 +206,8 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (2, 'WLD_IRT', 48, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'MNT_USDT', 49, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'MNT_IRT', 50, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
-(2, 'SHIB_USDT', 51, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (2, 'SHIB_IRT', 52, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
-(2, 'BTT_USDT', 53, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
-(2, 'BTT_IRT', 54, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
+(2, 'BTTC_IRT', 54, 'unsubscribe', 0, 0, NULL, 60), -- bitpin
 (3, 'BTCUSDT', 1, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'BTCTMN', 2, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'ETHUSDT', 3, 'unsubscribe', 0, 0, NULL, 60), -- wallex
@@ -255,8 +246,6 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (3, 'UNITMN', 36, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'AAVEUSDT', 37, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'AAVETMN', 38, 'unsubscribe', 0, 0, NULL, 60), -- wallex
-(3, 'OKXUSDT', 39, 'unsubscribe', 0, 0, NULL, 60), -- wallex
-(3, 'OKXTMN', 40, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'ADAUSDT', 41, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'ADATMN', 42, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'GRAMUSDT', 43, 'unsubscribe', 0, 0, NULL, 60), -- wallex
@@ -269,8 +258,8 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (3, 'MNTTMN', 50, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'SHIBUSDT', 51, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (3, 'SHIBTMN', 52, 'unsubscribe', 0, 0, NULL, 60), -- wallex
-(3, 'BTTUSDT', 53, 'unsubscribe', 0, 0, NULL, 60), -- wallex
-(3, 'BTTTMN', 54, 'unsubscribe', 0, 0, NULL, 60), -- wallex
+(3, 'BTTCUSDT', 53, 'unsubscribe', 0, 0, NULL, 60), -- wallex
+(3, 'BTTCTMN', 54, 'unsubscribe', 0, 0, NULL, 60), -- wallex
 (4, '12', 1, 'unsubscribe', 0, 0, NULL, 60), -- ramzinex
 (4, '2', 2, 'unsubscribe', -1, 0, NULL, 60), -- ramzinex
 (4, '13', 3, 'unsubscribe', 0, 0, NULL, 60), -- ramzinex
@@ -338,7 +327,6 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (5, 'NEARUSDT', 33, 'unsubscribe', 0, 0, 1, 60), -- bitget
 (5, 'UNIUSDT', 35, 'unsubscribe', 0, 0, 1, 60), -- bitget
 (5, 'AAVEUSDT', 37, 'unsubscribe', 0, 0, 1, 60), -- bitget
-(5, 'OKXUSDT', 39, 'unsubscribe', 0, 0, 1, 60), -- bitget
 (5, 'ADAUSDT', 41, 'unsubscribe', 0, 0, 1, 60), -- bitget
 (5, 'GRAMUSDT', 43, 'unsubscribe', 0, 0, 1, 60), -- bitget
 (5, 'BNBUSDT', 45, 'unsubscribe', 0, 0, 1, 60), -- bitget
@@ -445,9 +433,7 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (8, 'GRAM-USDT', 43, 'unsubscribe', 0, 0, 1, 60), -- okx
 (8, 'BNB-USDT', 45, 'unsubscribe', 0, 0, 1, 60), -- okx
 (8, 'WLD-USDT', 47, 'unsubscribe', 0, 0, 1, 60), -- okx
-(8, 'MNT-USDT', 49, 'unsubscribe', 0, 0, 1, 60), -- okx
 (8, 'SHIB-USDT', 51, 'unsubscribe', 0, 0, 1, 60), -- okx
-(8, 'BTT-USDT', 53, 'unsubscribe', 0, 0, 1, 60), -- okx
 (9, 'btc_usdt', 1, 'unsubscribe', 0, 0, NULL, 60), -- lbank
 (9, 'eth_usdt', 3, 'unsubscribe', 0, 0, NULL, 60), -- lbank
 (9, 'xrp_usdt', 5, 'unsubscribe', 0, 0, NULL, 60), -- lbank
