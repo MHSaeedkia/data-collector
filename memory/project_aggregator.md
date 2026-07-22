@@ -58,3 +58,17 @@ chain and their creation block was removed from `scripts/warmup.sh`. The FROZEN 
 **Why Java DataStream not SQL** (unchanged from the ratified consolidator decision, reinforced): R6
 many dynamic output topics (SQL Kafka sinks are single-topic), reset/gap-drop is imperative stateful
 retraction-like control flow, and union-never-sum is the opposite of GROUP BY's grain.
+
+## Smoke — `smoke-aggregator.sh` (2026-07-22, replaces the stale `smoke-level-emitter.sh`)
+
+Follows the normalizer smoke rule ([[normalizer-scaffold]]): raw ex8/OKX payloads → `ex8-raw`, whole
+chain job1→aggregator (6 jobs, NOT level-emitter), assert the terminal `p1-asks`/`p1-bids`. **The
+consolidated contract has NO `pipeline_timings`** (the frozen web shape drops it), so there is no
+timing chain to assert — unlike the jobs 1–5 smokes. **Assertions filter by `exchange_id==8`**
+because the aggregator's `MapState<exchange_id, book>` unions all exchanges and survives across
+cases + across prior runs, so "p1 has exactly N levels" is not assertable; ex8's own levels are.
+4 ordered cases on one accumulating book: snapshot ⇒ ex8 appears; update ⇒ ex8's 2nd ask joins;
+**GAP ⇒ reset ⇒ ex8 absent from BOTH sides (the milestone's core check)**; snapshot re-sync ⇒ ex8
+returns. **Case 3 depends on the `"reset"` enum symbol being registered AND the jobs resubmitted**
+([[type-validator]] live-bug note) — otherwise job 2 NPEs and no p1 event arrives. Written +
+syntax-checked 2026-07-22; **NOT run live yet.**

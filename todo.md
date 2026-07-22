@@ -593,8 +593,12 @@ Verify FIRST (cheap, before writing code):
       to repeat, only verification): after resubmitting jobs for the enum fix, run snapshot→updates→
       gap for **ex1 nobitex, ex6 bybit, ex8 okx** and confirm each drops out of `p{id}-{side}` on the
       gap and returns on resync. As of 2026-07-22 the enum fix is registered but NO feed verified live.
-- [ ] Memory/todo: update `project_type_validator.md` (reset emission), `project_book_builder.md`
+- [x] Memory/todo: update `project_type_validator.md` (reset emission), `project_book_builder.md`
       (reset branch), add `project_aggregator.md`, update `MEMORY.md` index + this file
+- [x] Smoke: `smoke-aggregator.sh` added (2026-07-22), stale `smoke-level-emitter.sh` removed —
+      raw ex8→whole chain→p1-{side}, asserts ex8 by exchange_id (frozen web contract has no
+      timings), 4 cases incl. gap⇒reset⇒ex8 drops⇒resync returns. **Syntax-checked only, NOT run
+      live** — case 3 needs the `"reset"` enum registered + jobs resubmitted, same as the manual test.
 
 ## Open items (decide at the flagged milestone)
 
