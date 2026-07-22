@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# End-to-end smoke test for the aggregator job (raw pipeline TERMINAL job — replaces job 6
-# level-emitter + the deprecated orderbook-consolidator).
+# End-to-end smoke test for the aggregator job (raw pipeline TERMINAL job).
 #
 # SMOKE RULE for the normalizer pipeline (applies to every job's smoke):
 #   Send RAW exchange payloads ONLY (to ex{id}-raw). Let the WHOLE Flink chain run
@@ -38,7 +37,7 @@ set -euo pipefail
 # NPEs serializing the reset and case 3 fails with no event on p1. See project_type_validator.md.
 #
 # Prerequisites (this is a TEST, not a deploy):
-#   - the normalizer stack is up (docker-compose-normalizer.yml)
+#   - the normalizer stack is up (docker-compose.yml)
 #   - the DB is warmed (scripts/warmup.sh) so exchange_markets resolves OKX BTC-USDT -> p1
 #   - ALL SIX jobs are submitted (see the precondition check below)
 #   - no competing live OKX feed is producing onto ex8-* (this writes real (8,1) state)

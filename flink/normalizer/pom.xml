@@ -10,8 +10,7 @@
     <packaging>pom</packaging>
 
     <!-- Raw-normalization pipeline: 6 chained Flink jobs (pair-extract -> type-validate ->
-         rebase -> precision -> orderbook-build -> price-level-emit) sharing the common/ module.
-         Job modules are added one per milestone — see todo.md. -->
+         rebase -> precision -> book-build -> aggregator) sharing the common/ module. -->
     <modules>
         <module>common</module>
         <module>job-pair-extractor</module>

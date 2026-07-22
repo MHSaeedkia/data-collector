@@ -55,8 +55,8 @@ public class TypeValidateFunction
 
     /**
      * Event {@code type} of the synthetic reset marker emitted onto the main stream on a gap. Job 5
-     * turns it into an emptied book so the exchange drops out of the consolidated view instead of
-     * serving its pre-gap diverged book (see plans/aggregator-gap-drop.md).
+     * turns it into an emptied book so the exchange drops out of the aggregated view instead of
+     * serving its pre-gap diverged book.
      */
     static final String RESET = "reset";
 

@@ -30,8 +30,8 @@ import java.util.Map;
  * levels, so that exchange drops out of the aggregated book.
  *
  * <p>The sort direction is chosen per record from {@code side} (not the constructor) because one
- * operator instance serves both asks and bids keys. Ported from the deprecated orderbook-
- * consolidator's stage-2 operator — fed full books directly instead of per-level diffs.
+ * operator instance serves both asks and bids keys. Fed job 5's full per-exchange books directly,
+ * keyed by (pair_id, side).
  */
 public class CrossExchangeAggregator
         extends KeyedProcessFunction<String, ExchangeBook, AggregatedOrderBook> {

@@ -13,7 +13,6 @@ import java.io.UncheckedIOException;
  * fetches the schema from the Schema Registry, which is the single source of truth for wire
  * validation. {@link #load} reads a classpath resource and exists only for unit test fixtures,
  * which must not depend on a live Schema Registry.
- * Ported verbatim from flink/orderbook-consolidator.
  */
 public final class AvroSchemaLoader {
 

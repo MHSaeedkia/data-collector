@@ -1,10 +1,10 @@
 ---
-# DEPRECATED (Milestone 11): this standalone orderbook-consolidator stack is retired — the
-# terminal job-aggregator in docker-compose-normalizer.yml now produces the p{id}-{side} books.
-# Kept for reference only; do not run alongside the normalizer stack (shared container names).
+# Full stack for the raw-normalization pipeline: the Flink image builds from ./flink/normalizer
+# and the taskmanager has 8 slots, enough for the 5 upstream normalizer jobs PLUS the terminal
+# aggregator submitted to this one cluster via flink/normalizer/run-job.sh.
 services:
     jobmanager:
-        build: ./flink/DEPRECATED-orderbook-consolidator
+        build: ./flink/normalizer
         container_name: jobmanager
         hostname: jobmanager
         restart: on-failure
@@ -24,7 +24,7 @@ services:
             retries: 5
 
     taskmanager:
-        build: ./flink/DEPRECATED-orderbook-consolidator
+        build: ./flink/normalizer
         container_name: taskmanager
         hostname: taskmanager
         restart: on-failure
@@ -35,7 +35,7 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 4
+                taskmanager.numberOfTaskSlots: 8
         volumes:
             - data-collector-taskmanager-logs:/opt/flink/log
         networks:
@@ -126,17 +126,12 @@ services:
             # (<topic>-value), so without this kafka-ui finds no serde at all for them (empty
             # valueSerde, nothing to pick when producing). Bind each topic pattern to the one
             # canonical registry subject it actually uses instead of registering a subject per
-            # topic (see scripts/warmup.sh — only 3 canonical subjects are meant to exist).
-            KAFKA_CLUSTERS_0_SERDE_0_NAME: PriceLevelEventAvro
+            # topic (see scripts/warmup.sh).
+            KAFKA_CLUSTERS_0_SERDE_0_NAME: AggregatedOrderBookEventAvro
             KAFKA_CLUSTERS_0_SERDE_0_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-            KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^ex[0-9]+-p[0-9]+-(asks|bids)$
+            KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_URL: http://schema-registry:8082
-            KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: price-level-event
-            KAFKA_CLUSTERS_0_SERDE_1_NAME: ConsolidatedOrderBookEventAvro
-            KAFKA_CLUSTERS_0_SERDE_1_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-            KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
-            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_URL: http://schema-registry:8082
-            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_SCHEMANAMETEMPLATE: consolidated-order-book-event
+            KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: aggregated-order-book-event
         networks:
             - data-collector-net
 

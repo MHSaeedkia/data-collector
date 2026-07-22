@@ -1,6 +1,6 @@
 # Order Book Web UI
 
-Live viewer for the consolidated order book topics produced by the Flink job
+Live viewer for the aggregated order book topics produced by the Flink pipeline
 (`p{pair_id}-{side}`, e.g. `p2-asks`, `p2-bids`).
 
 A small Go server consumes those topics, resolves the IDs to human-readable labels from
@@ -55,13 +55,12 @@ module proxy; run `go mod vendor` after changing dependencies.
   and `exchanges` tables from postgres (refreshed every 10s), then enriches each book before
   pushing it to the browser. Unknown ids fall back to placeholders.
 - Record values are Confluent-wire-format Avro (magic byte + schema-registry id + Avro binary),
-  matching `flink/orderbook-consolidator`'s sink — **not JSON**. `internal/schema.Decoder`
+  matching the aggregator job's sink — **not JSON**. `internal/schema.Decoder`
   resolves each record's writer schema from the registry by id (schema-registry ids are
   immutable, so schemas are cached forever once fetched) and decodes into the internal
   `domain.RawBook` shape. Malformed/undecodable records are logged and skipped, same as before.
-- Subscribes via regex `^p\d+-(asks|bids)$`, so it reads only the consolidated **output**
-  topics — input topics (`ex{exchange_id}-p{pair_id}-{side}`) carry a leading `ex…-` and
-  don't match.
+- Subscribes via regex `^p\d+-(asks|bids)$`, so it reads only the aggregated **output**
+  topics — upstream per-exchange topics carry a leading `ex…-` and don't match.
 - Uses a fresh consumer group each start and resets to the earliest offset, so the current
   book shows on load. Fine for dev; for high-volume topics this replays history on each restart.
 - New pairs created after the server starts are picked up on restart (the regex is matched

@@ -1,13 +1,13 @@
 ---
 name: orderbook-aggregation
-description: Business rules for the consolidated order book per pair+side (union semantics, snapshot/update handling, sequence-gap rules) — and the status of the two Flink jobs implementing them
+description: Business rules for the aggregated order book per pair+side (union semantics, snapshot/update handling, sequence-gap rules) — and where they are implemented in the pipeline
 metadata:
   type: project
 ---
 
-## Requirement: consolidated order book per pair+side
+## Requirement: aggregated order book per pair+side
 
-For each `(pair, side)` we **generate a consolidated order book** that merges the order book
+For each `(pair, side)` we **generate an aggregated order book** that merges the order book
 data of all exchanges for that pair+side into a single stream, published to topic
 `p{pair_id}-{side}` (e.g. `p2-asks`, `p2-bids` — [[kafka-topic-strategy]]).
 
@@ -25,14 +25,13 @@ Rules:
 - Asks sorted ascending by price; bids descending (highest first).
 - Tie-break at equal price (different exchanges): larger quantity first.
 - Price and quantity compared as `BigDecimal` built from the wire string ([[bigdecimal-rules]]).
-- Output shape: `ConsolidatedOrderBook { pair_id, side, event_time, levels }`, each level
+- Output shape: `AggregatedOrderBookEvent { pair_id, side, event_time, levels }`, each level
   `{ exchange_id, price, quantity }` (`exchange_id` = int DB id, not the name) —
   frozen wire contract, see [[avro-schema-orderbook]].
 
 Implementation rule of thumb for the whole pipeline: **imperative / stateful / array-shaped →
 DataStream (Java); declarative / windowed / analytical → Flink SQL** (as separate jobs, e.g.
-future OHLC/VWAP analytics). Full Java-vs-SQL rationale lives in
-[[orderbook-consolidator-decision]].
+future OHLC/VWAP analytics). Full Java-vs-SQL rationale lives in [[aggregator]].
 
 ## Snapshot + update event semantics (`type` field, [[avro-schema-orderbook]])
 
@@ -60,7 +59,7 @@ Per-exchange continuity rules:
   - `seq <= lastSeq` → stale/duplicate, drop.
   - `seq != lastSeq + sequence_jump` (strict — any other forward value, gap or unexpected
     intermediate) → **resync**: clear the book's levels + set `awaitingSnapshot`, re-emit (that
-    exchange drops out of the consolidated book), wait for the next snapshot. Chosen action is
+    exchange drops out of the aggregated book), wait for the next snapshot. Chosen action is
     drop-book-and-resync (user decision — never serve a drifted book), not apply-anyway.
   - `seq == lastSeq + sequence_jump` → in order: apply deltas, advance `eventTime`/`lastSeq`.
 
@@ -70,14 +69,14 @@ These semantics are reused by job 2 (type validation) of [[raw-pipeline-decision
 
 ## Where this is implemented
 
-- **`flink/orderbook-job/`** — the original job: consumes batched `OrderBookEvent`s (JSON),
-  `OrderBookMerger` (`KeyedProcessFunction` keyed by pairId, `MapState<exchange_id, ExchangeBook>`,
-  `TreeMap<BigDecimal,…>` levels) implements all of the above including snapshot/update + gap
-  handling. **Superseded by the consolidator and still on the OLD side-first topic naming**
-  ([[kafka-topic-strategy]]); may be retired after [[raw-pipeline-decision]] cutover.
-- **`flink/orderbook-consolidator/`** — the current job: consumes flat per-level
-  `PriceLevelEvent`s (no `type`/`sequence_*` — upstream is trusted to have applied them),
-  implements the union/sort/no-summing rules — see [[orderbook-consolidator-decision]].
+These rules are split across the [[raw-pipeline-decision]] jobs:
+- **snapshot/update + sequence-gap** → job 2 [[type-validator]] (a true gap emits a `type="reset"`
+  marker instead of a silent drop).
+- **per-exchange book maintenance** (snapshot replaces, update upserts/deletes, `reset` empties) →
+  job 5 [[book-builder]], one full `OrderBookSnapshot` per event.
+- **union / sort / no-summing across exchanges** → the terminal [[aggregator]] (job 6), which
+  consumes job 5's full books and emits `AggregatedOrderBookEvent` on `p{id}-{side}`. An emptied
+  book (from a reset) drops that exchange from the union.
 
 ## Deferred: cold start / checkpointing
 

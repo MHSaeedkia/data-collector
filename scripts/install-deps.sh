@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Installs the Java 21 + Maven toolchain required to build this project's Flink jobs
-# (flink/DEPRECATED-orderbook-job/pom.xml and flink/DEPRECATED-orderbook-consolidator/pom.xml pin java.version=21).
+# (flink/normalizer pins java.version=21).
 # Idempotent — safe to re-run; only installs what's missing.
 #
 # Debian/Ubuntu's apt repos (including backports) only ship OpenJDK 17, so Java 21 comes from a

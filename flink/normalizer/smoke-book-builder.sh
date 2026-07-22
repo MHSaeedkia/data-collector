@@ -30,7 +30,7 @@ set -euo pipefail
 # feed — it is covered by the module test `nullSideKeepsOtherSideState`.
 #
 # Prerequisites (this is a TEST, not a deploy):
-#   - the normalizer stack is up (docker-compose-normalizer.yml)
+#   - the normalizer stack is up (docker-compose.yml)
 #   - the DB is warmed (scripts/warmup.sh) so exchange_markets resolves OKX BTC-USDT -> p1
 #   - ALL FIVE jobs are submitted (see the precondition check below)
 #   - no competing live OKX feed is producing onto ex8-* (this writes real (8,1) state)

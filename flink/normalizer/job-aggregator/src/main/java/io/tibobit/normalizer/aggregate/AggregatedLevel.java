@@ -5,8 +5,6 @@ package io.tibobit.normalizer.aggregate;
  * cross-exchange merge unions levels rather than summing them, each level must remember which
  * exchange it came from — equal prices from different exchanges stay as separate, adjacent entries.
  * price/quantity stay decimal strings for exact precision (see memory/project_bigdecimal_rules.md).
- *
- * <p>Ported from the deprecated orderbook-consolidator; the wire shape is unchanged.
  */
 public class AggregatedLevel {
 

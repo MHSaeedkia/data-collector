@@ -1,7 +1,6 @@
 FROM flink:2.2.0-scala_2.12-java21
 
-# Identical to flink/orderbook-consolidator/Dockerfile — one cluster image hosts BOTH the
-# consolidator job and the normalizer jobs (see docker-compose-normalizer.yml).
+# One cluster image hosts all the normalizer jobs (see docker-compose.yml).
 
 # Kafka connector (source/sink)
 RUN wget -q -P /opt/flink/lib/ \

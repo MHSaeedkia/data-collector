@@ -22,8 +22,5 @@
 		"precision_in": null,
 		"precision_out": null,
 		"book_build_in": null,
-		"book_build_out": null,
-		"level_emit_in": null,
-		"level_emit_out": null
-	}
+		"book_build_out": null	}
 }

@@ -62,7 +62,7 @@ accepted event = last-accepted event_time, symmetric with `lastSeq`); the null-s
 `out_of_order` when `event_time < lastEventTime` **before** mutating state. Strict `<` (not `<=`) on
 purpose: equal-event-time frames pass, so ex3 wallex snapshots stamped the same processing-time
 millisecond aren't false-rejected (an equal-time duplicate re-applied is idempotent downstream; the
-consolidator dedups by strict `<` too). Seq-bearing snapshots (ex6/ex8) are unaffected — their old
+aggregator dedups by strict `<` too). Seq-bearing snapshots (ex6/ex8) are unaffected — their old
 snapshots are already caught by the seq `<= lastSeq` check. 16 harness tests (2 new). Still not run
 live.
 
@@ -72,7 +72,7 @@ dead-letter topic IS the audit record). Timings: stamps `type_validate_in` on en
 `type_validate_out` before the main `collect`; rejects keep `type_validate_out` null (never emitted
 onward), `rejectedAt` records the dead-letter time.
 
-## Reset marker on gap (added 2026-07-21, plans/aggregator-gap-drop.md Part A)
+## Reset marker on gap (added 2026-07-21)
 
 The true-gap `else` branch now ALSO emits a synthetic **reset** onto the MAIN stream (not just the
 dead-letter): `type="reset"` (`RESET` constant), null seq/asks/bids, gap event's identity +

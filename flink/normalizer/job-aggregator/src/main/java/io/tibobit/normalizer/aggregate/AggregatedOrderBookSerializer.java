@@ -16,8 +16,7 @@ import java.util.List;
  * Encodes a {@link AggregatedOrderBook} to Confluent-wire-format Avro bytes (schema
  * schemas/aggregated_order_book_event.avsc, subject {@code aggregated-order-book-event}) — the
  * frozen web contract. The write schema is fetched from the Schema Registry at first use — never
- * from a local/bundled copy. Ported from the deprecated orderbook-consolidator; wire shape
- * unchanged, only the schema loader is the normalizer-common one.
+ * from a local/bundled copy. Uses the normalizer-common schema loader.
  */
 public class AggregatedOrderBookSerializer implements SerializationSchema<AggregatedOrderBook> {
 

@@ -20,10 +20,7 @@
 			"precision_in": null,
 			"precision_out": null,
 			"book_build_in": null,
-			"book_build_out": null,
-			"level_emit_in": null,
-			"level_emit_out": null
-		}
+			"book_build_out": null		}
 	},
 	"reject_reason": "sequence gap: expected 126776813, got 126776820",
 	"rejected_at": "2026-07-14T06:23:26.460Z"

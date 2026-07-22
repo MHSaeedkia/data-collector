@@ -48,9 +48,7 @@ Tracked pairs across exchanges:
 ### Start the stack
 
 ```bash
-docker compose -f docker-compose-orderbook-job.yml up -d
-# consolidator stack (run one stack at a time — they share container names/ports):
-# docker compose -f docker-compose-orderbook-consolidator.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 Services start in dependency order. NiFi takes ~90 seconds to become healthy.
@@ -89,11 +87,9 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 
 ```
 .
-├── docker-compose-orderbook-job.yml           # full stack; Flink cluster builds orderbook-job
-├── docker-compose-orderbook-consolidator.yml  # full stack; Flink cluster builds orderbook-consolidator
+├── docker-compose.yml         # full stack; Flink cluster builds flink/normalizer
 ├── flink/
-│   ├── DEPRECATED-orderbook-job/          # Dockerfile, confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
-│   └── DEPRECATED-orderbook-consolidator/ # Dockerfile (no Postgres), confluent-deps-pom.xml, Makefile, run-job.sh, pom.xml
+│   └── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
 ├── nifi/
 │   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
 ├── postgres/
@@ -108,9 +104,15 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ```
 ./scripts/warmup.sh
 
-cd flink
-./DEPRECATED-orderbook-job/run-job.sh          # or: ./DEPRECATED-orderbook-consolidator/run-job.sh
+# Submit the 6 pipeline jobs downstream-first (aggregator first). See `make refresh-normalizer`.
+cd flink/normalizer
+./run-job.sh job-aggregator
+./run-job.sh job-book-builder
+./run-job.sh job-precision
+./run-job.sh job-rebaser
+./run-job.sh job-type-validator
+./run-job.sh job-pair-extractor
 
-cd ../web
+cd ../../web
 npm i && npm start
 ```

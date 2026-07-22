@@ -35,7 +35,7 @@ import java.util.Map;
  *
  * <p><b>Prices are canonicalized before use as map keys</b> ({@code stripTrailingZeros}), because
  * MapState is hash-based: without it "10.50" and "10.5" would be two different levels for the same
- * price (a lesson from the consolidator).
+ * price (a lesson from the aggregation stage).
  *
  * <p>No checkpointing is configured anywhere on this platform yet, so after a restart a book is
  * empty until the next snapshot re-seeds it. Known, shared, not solved here.
@@ -60,7 +60,7 @@ public class BookBuildFunction
         event.getPipelineTimings().setBookBuildIn(System.currentTimeMillis());
 
         if ("reset".equals(event.getType())) {
-            // Job 2 emits a reset marker on a sequence gap (see plans/aggregator-gap-drop.md): clear
+            // Job 2 emits a reset marker on a sequence gap: clear
             // the whole book so the emitted snapshot is empty and the exchange drops out downstream,
             // rather than serving its pre-gap diverged book until the next real snapshot.
             asks.clear();

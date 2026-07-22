@@ -1,6 +1,6 @@
 ---
 name: raw-pipeline-decision
-description: FINAL decision (2026-07-13) — NiFi publishes verbatim raw exchange payloads; 6 chained Flink jobs in one Maven multi-module project normalize them into the consolidator's price_level_event input stream
+description: FINAL decision (2026-07-13) — NiFi publishes verbatim raw exchange payloads; 6 chained Flink jobs in one Maven multi-module project normalize them and aggregate across exchanges into the p{id}-{side} web output
 metadata:
   type: project
 ---
@@ -10,10 +10,9 @@ metadata:
 ## Context
 
 NiFi stops normalizing exchange data. It will publish **verbatim raw exchange payloads** to Kafka
-(one topic per exchange), and a new Flink pipeline reproduces the normalization, ending in the
-exact `price_level_event` stream on `ex{exchange_id}-p{pair_id}-{side}` topics that
-`flink/orderbook-consolidator` already consumes ([[kafka-topic-strategy]], [[avro-schema-orderbook]]).
-The consolidator and `web/` stay untouched.
+(one topic per exchange), and a new Flink pipeline reproduces the normalization and unions across
+exchanges, ending in the `p{pair_id}-{side}` `aggregated-order-book-event` stream that `web/`
+consumes ([[kafka-topic-strategy]], [[avro-schema-orderbook]], [[aggregator]]).
 
 ## Structure decisions (FINAL, 2026-07-13)
 
@@ -25,8 +24,6 @@ The consolidator and `web/` stay untouched.
    + one `job-*/` module per job, each producing its own shaded jar; build one job via
    `mvn -pl job-<x> -am package`. NOT per-job self-contained projects (would copy shared code
    3–6× and drift), NOT one-jar-many-mains (every jar carries every job's deps).
-3. **Existing projects untouched**: `flink/orderbook-consolidator/` and `flink/orderbook-job/`
-   keep their self-contained layout.
 
 ## Pipeline steps (FINAL, 2026-07-13)
 
@@ -38,11 +35,11 @@ added mid-decision as "step6/step7"). The topic names below are the ground truth
 |---|-----|----------|-------|------|
 | 0 | (NiFi, not ours) | exchanges | `ex{id}-raw` | verbatim raw exchange payload, one topic per exchange |
 | 1 | pair extraction | `ex{id}-raw` | `ex{id}-p{id}-raw-flink` | raw topic mixes many markets; parse per-exchange payload, resolve exchange symbol → `pair_id` (via `exchange_markets.market` → `market_id`), split per pair |
-| 2 | type validation | job 1 | `ex{id}-p{id}-type-validated-raw-flink` | determine snapshot vs update; apply the existing `sequence_id`/`sequence_jump` rules (stale/dup drop, gap → await snapshot — semantics as in orderbook-job Phase 3, see todo.md); **invalid events → dead-letter topic** (DECIDED via Q&A 2026-07-13; suggested name `ex{id}-p{id}-rejected-flink`, final name TBD) |
+| 2 | type validation | job 1 | `ex{id}-p{id}-type-validated-raw-flink` | determine snapshot vs update; apply the `sequence_id`/`sequence_jump` rules (stale/dup drop, gap → emit `reset` + await snapshot — see [[type-validator]]); **invalid events → dead-letter topic** `ex{id}-p{id}-rejected-flink` |
 | 3 | rebase | job 2 | `ex{id}-p{id}-rebased-flink` | rebase price & amount using `exchange_markets.price_amount_rebase` / `volume_amount_rebase` (verified in `postgres/01_schema.sql`, INT NOT NULL DEFAULT 0 — see [[db-schema]]) |
 | 4 | precision | job 3 | `ex{id}-p{id}-applied-precision-flink` | normalize precisions per `markets.price_precision` / `markets.quantity_precision` (user wrote "applied-pricision" — ASSUMED corrected spelling "precision", confirm before provisioning topics) |
 | 5 | orderbook build | job 4 | `ex{id}-p{id}-orderbook-snapshot-flink` | stateful: apply snapshot/update semantics to maintain the full per-(exchange,pair) book; emit the **full order book** on each change |
-| 6 | price-level emit | job 5 | `ex{id}-p{id}-{side}` (existing consolidator input, `price_level_event.avsc`) | flatten full books into single price-level events |
+| 6 | aggregate | job 5 | `p{id}-{side}` (`aggregated-order-book-event`, the web output) | union job 5's full per-exchange books across exchanges per (pair, side); an emptied book (from a `reset`) drops that exchange — see [[aggregator]] |
 
 ## Q&A decisions (2026-07-13)
 
@@ -50,8 +47,8 @@ added mid-decision as "step6/step7"). The topic names below are the ground truth
   per-exchange parsing. (Also finally settles the "NiFi producer format unverified" risk for the
   NEW pipeline — the old direct-to-`ex{id}-p{id}-{side}` NiFi path is being replaced.)
 - **Rejects in job 2**: dead-letter topic, fits accuracy-first goal.
-- **Snapshot flattening**: solved structurally — job 5 materializes the full book first, job 6
-  flattens from full books instead of flattening raw snapshot/update events.
+- **Snapshot handling**: solved structurally — job 5 materializes the full book first, and the
+  aggregator (job 6) unions those full books instead of stitching raw snapshot/update events.
 - **Wallex (ex3) side merge → book-build step (step 5 "orderbook build"), NOT job 1** (decided
   2026-07-15). ex3 sends full snapshots ONE side per message (`asks`/`bids` one null, the other
   set; no seq, no timestamp — [[pair-extractor]] / sample-raw-data.md § ex3). Combining the two
@@ -78,7 +75,7 @@ added mid-decision as "step6/step7"). The topic names below are the ground truth
 - **DB reference data (jobs 1/3/4)**: **periodic refresh** — reload the lookup tables from
   Postgres every N minutes inside the job (no restart needed to pick up new
   markets/rebase/precision rows). Interval TBD at implementation (suggest env-configurable,
-  default ~1min). Note: unlike the consolidator (deliberately Postgres-free), these jobs DO
+  default ~1min). Note: unlike the aggregator (deliberately Postgres-free), these jobs DO
   depend on Postgres.
 - **Non-book messages in raw topics (RULE, FINAL 2026-07-14)**: `ex{id}-raw` topics carry
   snapshot and update messages, but MAY also contain other data (e.g. subscription acks,
@@ -162,7 +159,8 @@ with the user before implementation:
    (`_in`) and when it wrote to its output topic (`_out`) — separating in-job compute from
    Kafka transit, which a single stamp could not.
 2. **Named fields, NOT an array** (user rejected the array as ambiguous + query-hostile,
-   2026-07-15). The pipeline is a FIXED, known 6 steps — model it as one nested record
+   2026-07-15). The stamped stages are a FIXED, known set (jobs 1–5; the aggregator's web output
+   drops timings) — model it as one nested record
    `PipelineTimings` with one explicitly-named nullable `timestamp-millis` field per
    step×phase, all `default: null`:
 
@@ -173,7 +171,6 @@ with the user before implementation:
      rebase_in,        rebase_out
      precision_in,     precision_out
      book_build_in,    book_build_out
-     level_emit_in,    level_emit_out
    ```
 
    Every event carries ONE `pipeline_timings` field. **Implemented wire type (2026-07-15):
@@ -187,11 +184,9 @@ with the user before implementation:
    `default: null` = backward-compatible), not the silent index-shift the array caused. A
    `map<string,…>` was also rejected — no schema guarantee of which keys exist, still needs
    key-lookup to query.
-3. **Timings run through the final hand-off** — `price_level_event.avsc` (job 6 output, the
-   frozen consolidator input) also gains the `pipeline_timings` field. Nullable/defaulted, so
-   backward-compatible on the wire (the consolidator + `web/` ignore the added field); one
-   nested field is far less intrusive on the frozen schema than 12 flat ones. This is the one
-   deliberate edit to that frozen schema.
+3. **Timings stop at job 5.** They ride the raw-pipeline schemas through `book_build`; the frozen
+   `aggregated-order-book-event` web output carries NO `pipeline_timings` (the web contract is fixed
+   and does not expose them). So end-to-end is measured to `book_build_out`, the last stamped stage.
 
 **Anchor is the existing `event_time`** (exchange-reported). `pair_extract_in` already IS
 "the time the event came from the raw topic", so NO separate top-level ingest field is added.
@@ -201,14 +196,12 @@ Derived metrics (computed by any consumer/audit — direct field paths, nothing 
 - in-job processing at a step = `<stage>_out − <stage>_in`
 - Kafka transit into a step = `<stage>_in − <prev_stage>_out`
 - cumulative latency at a step = `<stage>_out − event_time`
-- **total end-to-end** = `level_emit_out − event_time`
+- **total end-to-end** = `book_build_out − event_time`
 
 Carriers: `pipeline_timings` goes on `raw_order_book_event` (jobs 1–4), `order_book_snapshot`
-(job 5), the inlined event in `rejected_order_book_event` (kept field-for-field identical),
-and `price_level_event` (job 6). `PipelineTimings` is duplicated field-for-field across the
-avsc files (same rule as `PriceLevel`/`Type` — identical redefinitions only). Fan-out note:
-job 6 flattens one book into many price-level events; they all carry the same upstream timings
-+ job 6's own `level_emit_*`.
+(job 5), and the inlined event in `rejected_order_book_event` (kept field-for-field identical).
+`PipelineTimings` is duplicated field-for-field across the avsc files (same rule as
+`PriceLevel`/`Type` — identical redefinitions only).
 
 Implementation (each job, at wiring time): capture `<stage>_in` at the start of
 `processElement`/`map`, set `<stage>_out = now` just before `collect`. **Clock caveat**:
@@ -221,17 +214,13 @@ non-blocking).
 constructors keep an empty instance, so no call site changed); shared
 `serde/PipelineTimingsRecords` maps it to/from the nested Avro record, reused by all three
 serde (rejected inherits it via the inline event); **job 1 stamps `pair_extract_in/out`** in
-`PairExtractFunction.flatMap`. Jobs 2–6 stamp their own two when built. Read timestamps back as
+`PairExtractFunction.flatMap`. Jobs 2–5 stamp their own two when built. Read timestamps back as
 raw `Long` (the Confluent generic deserializer returns raw longs for timestamp-millis, matching
 the existing `event_time` handling). 47 tests green. Not yet re-verified against a live registry
 compat check (do at M8).
 
 ## Design notes / open items (record before implementing)
 
-- **Job 6 vanished-level handling**: emitting only the current book's levels would leave deleted
-  prices lingering in the consolidator's stage-1 MapState forever (it only removes on qty=0).
-  Job 6 likely needs state (last emitted book per key) to diff consecutive books and emit qty=0
-  events for disappeared levels. Decide at job-6 implementation time.
 - **Job 4 truncate-to-zero hazard**: truncating a small-but-nonzero quantity to the target
   precision can yield exactly 0 — which downstream means "delete this level". Decide whether
   that's acceptable or needs a floor. Flag at job-4 implementation time.
@@ -246,8 +235,6 @@ compat check (do at M8).
 - Deploy story — PROPOSED: one parameterized `run-job.sh`/`Dockerfile` at the pipeline root
   taking the module name (all modules share the same Flink base), not per-module copies.
 - Dead-letter topic — PROPOSED name `ex{id}-p{id}-rejected-flink`.
-- Whether old `flink/orderbook-job/` + the old NiFi normalization path get retired after cutover.
 
 Detailed implementation task breakdown lives in `todo.md` (rewritten 2026-07-13 to contain only
-this pipeline; prior phases 1–5 history removed — recoverable from git, and the R3-postponed
-block remains in [[orderbook-consolidator-decision]]).
+this pipeline; prior phases 1–5 history removed — recoverable from git).

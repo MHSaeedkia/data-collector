@@ -108,6 +108,5 @@ class RawOrderBookEventSerializerTest {
         assertThat(timings.get("pair_extract_in")).isEqualTo(1752473005140L);
         assertThat(timings.get("pair_extract_out")).isEqualTo(1752473005142L);
         assertThat(timings.get("type_validate_in")).isNull();
-        assertThat(timings.get("level_emit_out")).isNull();
     }
 }

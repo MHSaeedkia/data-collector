@@ -1,13 +1,13 @@
 ---
 name: orderbook-web
-description: Standalone Go web app that consumes consolidated Kafka topics (Confluent Avro) and renders a live order book in the browser
+description: Standalone Go web app that consumes aggregated Kafka topics (Confluent Avro) and renders a live order book in the browser
 metadata:
   type: project
 ---
 
 ## Live order book web UI (`web/`)
 
-Standalone **Go** app that consumes the consolidator's output topics (`p{pair_id}-{side}`, e.g.
+Standalone **Go** app that consumes the aggregator's output topics (`p{pair_id}-{side}`, e.g.
 `p2-asks`/`p2-bids`; see [[orderbook-aggregation]]) and shows a live order book in the browser.
 
 ## Stack & shape (decisions)
@@ -21,12 +21,12 @@ Standalone **Go** app that consumes the consolidator's output topics (`p{pair_id
 
 ## Wire format: Confluent Avro (not JSON)
 
-The output topics carry Confluent-wire-format Avro ([[orderbook-consolidator-decision]]).
+The output topics carry Confluent-wire-format Avro ([[aggregator]]).
 `web/internal/schema` (`Decoder`, hamba/avro) parses the wire header (byte 0 = magic `0x0`, next
 4 bytes = big-endian schema-registry id), resolves the writer schema via
 `GET {SCHEMA_REGISTRY_URL}/schemas/ids/{id}`, and **caches it forever per id** (registry ids are
 immutable — no TTL/invalidation needed). Decodes into a package-private `wireEvent`/`wireLevel`
-pair mirroring `consolidated_order_book_event.avsc` exactly, then maps into `domain.RawBook`.
+pair mirroring `aggregated_order_book_event.avsc` exactly, then maps into `domain.RawBook`.
 
 Non-obvious hamba/avro facts (confirmed by reading the library's codec source):
 - `timestamp-millis` decodes to `time.Time`, not `int64` — converted via `.UnixMilli()` to keep
@@ -90,8 +90,8 @@ Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نام
 ## Key implementation notes
 
 - Subscribes via regex `^p[0-9]+-(asks|bids)$` (franz-go `ConsumeRegex`) → matches only the
-  consolidated OUTPUT topics; input topics `ex{exchange_id}-p{pair_id}-{side}` carry a leading
-  `ex…-` so they don't match ([[kafka-topic-strategy]]). Topic strings are otherwise opaque to
+  aggregated OUTPUT topics; upstream per-exchange topics carry a leading `ex…-` so they don't
+  match ([[kafka-topic-strategy]]). Topic strings are otherwise opaque to
   hub/ingest — never parsed.
 - WebSocket served at `/ws`; static file server at `/`.
 - Fresh consumer group each start (`orderbook-web-<unixnano>`) + reset to earliest offset, so the
@@ -108,7 +108,7 @@ Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نام
 
 - `web/Dockerfile` — multi-stage: `golang:1.26-alpine` build → `alpine:3.22` runtime (non-root
   `app` user). Static `CGO_ENABLED=0` binary; embedded UI means nothing else is copied (~32 MB).
-- `web` service in `docker-compose-orderbook-consolidator.yml`: `build: ./web`, port `3000:3000`,
+- `web` service in `docker-compose.yml`: `build: ./web`, port `3000:3000`,
   `depends_on` kafka+postgres (service_healthy), env `KAFKA_BROKER=kafka:29092`,
   `DATABASE_URL=postgres://postgres:postgres@postgres:5432/markets`,
   `SCHEMA_REGISTRY_URL=http://schema-registry:8082`, on `data-collector-net`.

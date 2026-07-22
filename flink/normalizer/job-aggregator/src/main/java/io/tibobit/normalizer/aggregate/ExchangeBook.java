@@ -14,7 +14,7 @@ import java.util.List;
  * and contributes nothing, so that exchange drops out of the aggregated book.
  *
  * <p>Plain POJO (no-arg ctor + getters/setters) so Flink can ship it between operators and store it
- * in keyed MapState. Ported from the deprecated orderbook-consolidator.
+ * in keyed MapState.
  */
 public class ExchangeBook {
 

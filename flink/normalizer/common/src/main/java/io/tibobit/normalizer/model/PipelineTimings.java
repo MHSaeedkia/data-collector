@@ -7,11 +7,11 @@ package io.tibobit.normalizer.model;
  * {@code _out} just before it emits. A {@code null} field means the event has not yet reached that
  * stage. Every value is epoch milliseconds (timestamp-millis on the wire).
  *
- * <p>Not an array/map on purpose: the pipeline is a fixed 6 steps, so the stages are named fields —
+ * <p>Not an array/map on purpose: the pipeline is a fixed 5 steps, so the stages are named fields —
  * unambiguous and directly queryable. Derived deltas (all computed by consumers, never stored):
  * exchange&rarr;pipeline lag = {@code pairExtractIn - eventTime}; in-job time = {@code _out - _in};
  * Kafka transit = {@code nextStageIn - prevStageOut}; total end-to-end =
- * {@code levelEmitOut - eventTime}.
+ * {@code bookBuildOut - eventTime}.
  */
 public class PipelineTimings {
 
@@ -25,8 +25,6 @@ public class PipelineTimings {
     private Long precisionOut;
     private Long bookBuildIn;
     private Long bookBuildOut;
-    private Long levelEmitIn;
-    private Long levelEmitOut;
 
     public PipelineTimings() {
     }
@@ -109,21 +107,5 @@ public class PipelineTimings {
 
     public void setBookBuildOut(Long bookBuildOut) {
         this.bookBuildOut = bookBuildOut;
-    }
-
-    public Long getLevelEmitIn() {
-        return levelEmitIn;
-    }
-
-    public void setLevelEmitIn(Long levelEmitIn) {
-        this.levelEmitIn = levelEmitIn;
-    }
-
-    public Long getLevelEmitOut() {
-        return levelEmitOut;
-    }
-
-    public void setLevelEmitOut(Long levelEmitOut) {
-        this.levelEmitOut = levelEmitOut;
     }
 }

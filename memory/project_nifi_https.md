@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-NiFi runs **HTTPS single-user secured** at `https://<host>:8443/nifi` using the stock `apache/nifi:2.9.0` image. `nifi/Dockerfile` only adds the postgres JDBC driver — there is **no custom entrypoint** (a prior plain-HTTP `start-http.sh` approach was reverted; do not assume it exists). The nifi service (defined in both `docker-compose-orderbook-job.yml` and `docker-compose-orderbook-consolidator.yml`) maps `8443:8443` and `8081:8081`, healthcheck hits `https://$(hostname):8443/nifi-api/system-diagnostics`.
+NiFi runs **HTTPS single-user secured** at `https://<host>:8443/nifi` using the stock `apache/nifi:2.9.0` image. `nifi/Dockerfile` only adds the postgres JDBC driver — there is **no custom entrypoint** (a prior plain-HTTP `start-http.sh` approach was reverted; do not assume it exists). The nifi service (defined in `docker-compose.yml`) maps `8443:8443` and `8081:8081`, healthcheck hits `https://$(hostname):8443/nifi-api/system-diagnostics`.
 
 **SNI gotcha (non-obvious):** apache/nifi 2.x Jetty enforces a strict SNI / host-header allowlist via `SecureRequestCustomizer`. By default only `localhost`/`127.0.0.1`/the container hostname are accepted. Hitting NiFi by raw server IP (e.g. `https://192.168.150.104:8443/nifi`) returns `HTTP 400 Invalid SNI` — `localhost` works, the IP does not, which is the tell. It is a host-allowlist rejection, not a broken TLS cert.
 

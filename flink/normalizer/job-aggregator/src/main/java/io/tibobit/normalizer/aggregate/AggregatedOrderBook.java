@@ -6,8 +6,7 @@ import java.util.List;
  * Output event: the aggregated book for one pair+side, all exchanges merged into a single
  * price-sorted {@code levels} list. Emitted to the {@code p{pair_id}-{side}} topic (subject
  * {@code aggregated-order-book-event}) and consumed by the web UI. This wire shape is fixed — the
- * web UI depends on it — so it is copied unchanged from the deprecated orderbook-consolidator; do
- * NOT alter it.
+ * web UI depends on it — do NOT alter it.
  */
 public class AggregatedOrderBook {
 

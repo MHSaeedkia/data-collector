@@ -19,8 +19,8 @@ the Flink job + [[orderbook-web]] without running NiFi.
   per [[avro-schema-orderbook]]; `type` always `"snapshot"`) to the **OLD topic naming**
   `{side}-p{pair_id}-ex{exchange_id}` (e.g. `asks-p2-ex1`). It was deliberately NOT updated for the
   2026-07-12 topic-name flip (`ex{exchange_id}-p{pair_id}-{side}`) nor the Avro migration — so it
-  only feeds the old `flink/orderbook-job` pipeline; the consolidator's regex won't even match its
-  topics until it's updated (see [[kafka-topic-strategy]]).
+  does NOT feed the current normalizer pipeline; it must be updated to the new topic naming +
+  raw Avro before it can drive the pipeline (see [[kafka-topic-strategy]]).
 - Pairs/exchanges are **hardcoded** in `var` blocks (`Pair{ID,Base,Quote}`, `Exchange{ID,Name}`),
   NOT loaded from postgres — keep these IDs consistent with the DB if you want web enrichment to
   resolve to real labels. Default seed: pair `{ID:2, BTC/USDT}`, exchanges `{1 nobitex, 2 bitpin}`.

@@ -1,20 +1,10 @@
 # Todo — Raw Data Normalization Pipeline
 
 NiFi stops normalizing and instead publishes VERBATIM raw exchange payloads to `ex{id}-raw`
-(one topic per exchange); a chain of 6 Flink jobs reproduces the normalization, ending in the
-existing `ex{exchange_id}-p{pair_id}-{side}` / `price_level_event.avsc` consolidator input
-stream. Full decision + rationale: `memory/project_raw_pipeline_decision.md`
+(one topic per exchange); a chain of 6 Flink jobs reproduces the normalization and unions across
+exchanges, ending in the `p{pair_id}-{side}` / `aggregated-order-book-event` web output stream.
+Full decision + rationale: `memory/project_raw_pipeline_decision.md`
 (accuracy > latency → one job per step, every intermediate topic is an audit point).
-
-(History note: todo.md was cleaned 2026-07-13 — Phases 1–5 removed, recoverable from git;
-the R3-postponed block lives on in `memory/deprecated/project_orderbook_consolidator_decision.md`.)
-
-(Deprecation note, 2026-07-21: the consolidator is retired ahead of the aggregator work — its
-code is now `flink/DEPRECATED-orderbook-consolidator/` and its memory moved to
-`memory/deprecated/`. Pure rename only, mirroring commit 41bdd20. ✅ RESOLVED 2026-07-22 in the
-Part D cutover: all dangling `flink/orderbook-*` path refs repointed to `flink/DEPRECATED-orderbook-*`,
-job 6 moved to `flink/normalizer/DEPRECATED-job-level-emitter/` + dropped from the reactor, and the
-frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `plans/aggregator-gap-drop.md`.)
 
 ## Decided (2026-07-13)
 
@@ -27,7 +17,7 @@ frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `pla
       3. rebase: → `ex{id}-p{id}-rebased-flink`
       4. precision: → `ex{id}-p{id}-applied-precision-flink` (spelling "precision" assumed)
       5. orderbook build: → `ex{id}-p{id}-orderbook-snapshot-flink`
-      6. price-level emit: → existing `ex{id}-p{id}-{side}` topics
+      6. aggregate: → `p{id}-{side}` (`aggregated-order-book-event`, the web output)
 - [x] Raw format: verbatim exchange payload (no envelope); job 1 owns ALL per-exchange parsing
 - [x] **Parse point**: job 1 converts payloads into ONE common structured Avro event
       (exchange/pair ids, type, sequence fields, asks/bids levels); one shared schema serves
@@ -43,7 +33,7 @@ frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `pla
 
 - Project dir: `flink/normalizer/`; base package `io.tibobit.normalizer`
 - Module names: `common`, `job-pair-extractor`, `job-type-validator`, `job-rebaser`,
-  `job-precision-normalizer`, `job-book-builder`, `job-level-emitter`
+  `job-precision`, `job-book-builder`, `job-aggregator`
 - Dead-letter topic: `ex{id}-p{id}-rejected-flink`
 - Deploy: ONE parameterized `run-job.sh` + `Dockerfile` at the pipeline root taking the module
   name (all jobs share the same Flink base image), NOT per-module copies
@@ -109,19 +99,16 @@ frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `pla
 - [x] **Per-step latency timings (REQUIREMENT 2026-07-15, `memory/project_raw_pipeline_decision.md`)** —
       DONE 2026-07-15. One `pipeline_timings` field per schema, wire type `["null", PipelineTimings]`
       `default: null` (nullable union chosen over non-null-record for one-token backward-compat
-      default). `PipelineTimings` = 12 nullable `timestamp-millis` fields:
-      `{pair_extract,type_validate,rebase,precision,book_build,level_emit}_{in,out}`, duplicated
+      default). `PipelineTimings` = 10 nullable `timestamp-millis` fields:
+      `{pair_extract,type_validate,rebase,precision,book_build}_{in,out}`, duplicated
       field-for-field (same rule as `PriceLevel`/`Type`):
   - [x] `raw_order_book_event.avsc` (jobs 1–4) + example JSON
   - [x] `order_book_snapshot.avsc` (job 5) + example
   - [x] `rejected_order_book_event.avsc` inlined event — field-for-field identical
-  - [x] `price_level_event.avsc` (job 6, frozen consolidator input) — nullable/defaulted,
-        backward-compatible so consolidator/`web/` decode unchanged (⚠ NOT re-verified against a
-        live registry's compat check yet — do at M8 provisioning)
   - [x] common Java models (`PipelineTimings` POJO + field on Raw/OrderBookSnapshot) + shared
         `PipelineTimingsRecords` serde helper; job 1 stamps `pair_extract_in/out`
-        (`_in` at `flatMap` entry, `_out` before `collect`). Jobs 2–6 inherit the field, stamp
-        their own two when built. 47 tests green (5 new).
+        (`_in` at `flatMap` entry, `_out` before `collect`). Jobs 2–5 inherit the field, stamp
+        their own two when built.
   - [x] warmup.sh needs NO change — `register_schema` reads the `.avsc` files directly, so the
         edits register as new subject versions on next warmup run
 - [ ] Coordinate the NiFi contract: verbatim payload bytes, topic `ex{id}-raw` per exchange.
@@ -145,18 +132,18 @@ frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `pla
 ## Milestone 1 — Scaffold `flink/normalizer/`
 
 - [x] Parent `pom.xml` (packaging `pom`, modules list, shared dependencyManagement: Flink,
-      kafka connector, avro + confluent registry deps, JUnit5/AssertJ/flink-test-utils/JaCoCo —
-      versions copied from `flink/orderbook-consolidator/pom.xml`) → verify: `mvn validate`
+      kafka connector, avro + confluent registry deps, JUnit5/AssertJ/flink-test-utils/JaCoCo)
+      → verify: `mvn validate`
       DONE 2026-07-15: `io.tibobit:normalizer-parent`; modules list starts with `common` only
       (user decision — each job-* module is added in its own milestone M2–M7)
 - [x] `common/` module (plain jar, no shade): DONE 2026-07-15, artifactId `normalizer-common`,
       package `io.tibobit.normalizer.*`, 18 tests green
       - [x] Models for the shared event/book/rejection shapes (plain POJOs, no Jackson —
-            Avro GenericRecord mapping happens in serde classes, consolidator pattern)
-      - [x] `AvroSchemaLoader.loadLatest(url, subject)` — registry-only at runtime (port from
-            consolidator; schemas NEVER bundled in shaded jars)
+            Avro GenericRecord mapping happens in serde classes)
+      - [x] `AvroSchemaLoader.loadLatest(url, subject)` — registry-only at runtime
+            (schemas NEVER bundled in shaded jars)
       - [x] Avro serde pairs per shared shape (`toGenericRecord`/`fromGenericRecord` as pure
-            package-private statics — the consolidator's testable-mapping pattern).
+            package-private statics — a testable-mapping pattern).
             NOTE: rejected-event shape got a SERIALIZER only — nothing in the pipeline consumes
             dead-letter topics (kafka-ui reads them); add a deserializer if a consumer appears
       - [x] `RefreshingLookup` — periodic-refresh Postgres reference reader: loads a `Map` via
@@ -171,16 +158,13 @@ frozen web contract renamed `consolidated-*` → `aggregated-*`. Full plan: `pla
       (module name as arg; derive jar + main class per module) → verify: script builds a chosen
       module and prints the submit command against a local cluster
       DONE 2026-07-15: main class comes from the jar manifest (each job module's shade config),
-      jar located by glob excluding shade's `original-*`; Dockerfile identical to the
-      consolidator's (one cluster image hosts all jobs); full submit path verified in M2 when
-      the first job module exists
-- [x] `docker-compose-normalizer.yml` at repo root (Flink cluster + kafka + schema-registry +
-      postgres + kafka-ui, mirroring the consolidator compose incl. `restart: on-failure`,
-      log-dir volumes, named volumes) → verify: `docker compose config` passes ✓
-      DONE 2026-07-15 (user decision): it is the FULL replacement stack — identical to the
-      consolidator compose (same container names/ports/volumes, only one compose runs at a
-      time) except Flink image builds from ./flink/normalizer and taskmanager has 8 slots so
-      the ONE cluster hosts consolidator + all 6 normalizer jobs
+      jar located by glob excluding shade's `original-*`; one cluster image hosts all jobs;
+      full submit path verified in M2 when the first job module exists
+- [x] `docker-compose.yml` at repo root (Flink cluster + kafka + schema-registry +
+      postgres + kafka-ui, with `restart: on-failure`, log-dir volumes, named volumes)
+      → verify: `docker compose config` passes ✓
+      DONE 2026-07-15 (user decision): it is the FULL stack — Flink image builds from
+      ./flink/normalizer and taskmanager has 8 slots so the ONE cluster hosts all 6 normalizer jobs
 
 ## Milestone 2 — Job 1: pair extractor (`ex{id}-raw` → `ex{id}-p{id}-raw-flink`)
 
@@ -201,7 +185,7 @@ TDD throughout (`memory/project_tdd_workflow.md`): tests first, fixtures from Mi
       DONE 2026-07-15: `ExchangeMarketsLoader` (plain JDBC, key `"{exchange_id}|{market}"`);
       drops counted via Flink metrics (dropped-no-parser/-unparseable/-unknown-market)
 - [x] Source: `KafkaSource<byte[]>` pattern `^ex[0-9]+-raw$`, earliest-or-latest decision
-      (propose `latest`, consistent with consolidator), Kafka metadata needed: topic name (for
+      (propose `latest`, consistent with the aggregator), Kafka metadata needed: topic name (for
       exchange_id) — use a `KafkaRecordDeserializationSchema` that captures topic.
       NOTE: pattern also matches the postponed `ex7-raw` — decide at implementation whether to
       exclude it from the pattern or drop-with-counter on missing parser
@@ -325,7 +309,7 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 
 - [x] `BookBuildFunction` keyed `(exchange_id, pair_id)` `KeyedProcessFunction`, `MapState` per
       side keyed by canonicalized price (`stripTrailingZeros().toPlainString()` — MapState is
-      hash-based, won't collapse scales, consolidator lesson): snapshot → replace book
+      hash-based, won't collapse scales, aggregation lesson): snapshot → replace book
       wholesale; update → `quantity > 0` upsert / `== 0` delete (BigDecimal `signum()`);
       emit the FULL book (both sides + `last_sequence_id` + `event_time`) on every change.
       Sequence rules are NOT re-checked (job 2 already validated; topics are single-partition
@@ -359,34 +343,6 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       merger): book is empty after restart until the next snapshot; recorded, not solved
       (see the checkpointing open item below)
 
-## Milestone 7 — Job 6: level emitter (→ existing `ex{id}-p{id}-{side}`, `price_level_event.avsc`)
-
-- [x] `LevelDiffFunction` keyed `(exchange_id, pair_id)`, state = last emitted book per side (one
-      `MapState` per side, canonicalized price → canonicalized quantity): changed/added price →
-      `price_level_event` upsert; vanished price → `quantity="0"`; unchanged book → emit nothing.
-      Diff approach CONFIRMED at implementation start by reading the consolidator's
-      `PerExchangeBookBuilder` (`signum()==0` → `levels.remove(price)`, unknown-price delete is a
-      no-op). 13 tests: first-book-emits-all, unchanged-emits-nothing, added, changed-quantity,
-      vanished→0, emptied-side, sides-diffed-independently, not-re-deleted, re-added, identity+
-      event_time, canonicalization, timings, per-key isolation
-- [x] Sink: per-record topic selector `ex{exchange_id}-p{pair_id}-{side}` on the EXISTING
-      `price-level-event` subject; new `PriceLevelEvent` model + serializer in `common` (side is an
-      Avro ENUM, not a string). Registry gotcha: the subject was stale v1 without
-      `pipeline_timings` — compatibility-checked FIRST (it is frozen and live), then registered
-      v2/id 10
-      → verified: 13/13 module tests + live smoke `smoke-level-emitter.sh` 3/3 green 2026-07-18
-      (assertions are per-level, not per-count, with a clock-derived price band — a diff job's
-      output depends on its own previous runs)
-- [ ] AFTER M7 (user, 2026-07-18): **compare job 5's book against the book the consolidator
-      builds from job 6's levels** for the same `(exchange_id, pair_id)`. They are built two
-      different ways — job 5 accumulates from raw events, the consolidator re-accumulates from
-      our emitted diffs — so any divergence means job 6's diff lost or invented a level. This is
-      the real end-to-end correctness check for M7; not blocking the milestone, do it once the
-      chain is live.
-- [ ] Still open from M7's original verify line: watch a consolidated book in the `web/` UI end to
-      end with the consolidator running unchanged (the smoke asserts the topic contract, not the
-      UI)
-
 ## Milestone 8 — Infra, provisioning, cutover
 
 - [x] Extend `scripts/warmup.sh` — DONE 2026-07-19: `ex{id}-raw` (2026-07-14) plus the per-pair
@@ -394,9 +350,9 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
       -flink` at 1h and the shared `rejected-flink` dead-letter at 7d. Created BEFORE the existing
       input/output blocks (sources read `latest` — a late-discovered topic loses what was produced
       in between). Sequential creation kept (parallel xargs was reverted before, don't retry)
-- [ ] kafka-ui serde config in `docker-compose-normalizer.yml`: `topicValuesPattern` +
-      `schemaNameTemplate` per new topic family → the 3 new canonical subjects (pattern from
-      `memory/project_kafka_topic_strategy.md`; registry stays clutter-free)
+- [x] kafka-ui serde config in `docker-compose.yml`: `topicValuesPattern` +
+      `schemaNameTemplate` binding `^p[0-9]+-(asks|bids)$` → `aggregated-order-book-event` (pattern
+      from `memory/project_kafka_topic_strategy.md`; registry stays clutter-free)
 - [ ] `fake-data-generator/`: new mode emitting realistic RAW exchange payloads to `ex{id}-raw`
       (stand-in for NiFi during dev)
 - [x] Manual test data — DONE 2026-07-20: `flink/normalizer/manual-test-data/` — BTC-USDT/pair-1
@@ -410,14 +366,12 @@ DONE 2026-07-15 (`job-type-validator`, package `io.tibobit.normalizer.typevalida
 - [ ] Verify job 1's behaviour on a NON-JSON raw frame (bare `pong`): drop or throw? Then add the
       case to manual-test-data S6 (deliberately left out — unverified, might wedge the job)
 - [x] Root `Makefile`: `refresh-normalizer` target — DONE 2026-07-19 (submits DOWNSTREAM-FIRST:
-      consolidator, then jobs 6→1, because every source reads `latest`); `README.md` section for
+      aggregator, then jobs 5→1, because every source reads `latest`); `README.md` section for
       the pipeline still TODO
 - [ ] Server deploy: build + submit all 6 jobs (`sudo`, Temurin 21 —
-      `memory/project_ubuntu_server_env.md`); NOTE all composes share container names/ports —
-      revisit "one stack at a time" rule, the normalizer must run ALONGSIDE the consolidator
-- [ ] Cutover plan: run new pipeline in parallel with NiFi's current normalized output, compare
-      `ex{id}-p{id}-{side}` streams for equality window, then switch NiFi to raw-only; decide
-      fate of `flink/orderbook-job/` afterwards
+      `memory/project_ubuntu_server_env.md`)
+- [ ] Cutover plan: run the new pipeline in parallel with NiFi's current normalized output,
+      compare the `p{id}-{side}` output stream for an equality window, then switch NiFi to raw-only
 
 ## Milestone 9 — ex9 lbank (NEW EXCHANGE, normalizer side not implemented)
 
@@ -500,125 +454,76 @@ over REST, WS carries only deltas. NiFi now publishes two payloads to `ex1-raw`.
       string (e.g. `BTCUSDT`, matching `exchange_markets`)? A case/format mismatch drops silently
       (`dropped-unknown-market`), same trap as the lbank note in [[pair-extractor]].
 
-## Milestone 11 — gap-driven book drop via a new full-book aggregator (2026-07-21)
+## Milestone 11 — gap-driven book drop via the terminal aggregator (2026-07-21)
 
-Full plan + rationale: `plans/aggregator-gap-drop.md`. Problem: on a sequence gap job 2 only
-dead-letters the offending update and emits nothing downstream, so the consolidator keeps serving
-that exchange's pre-gap diverged book (regresses the `orderbook-job` "gap ⇒ drop the exchange"
-decision, `memory/project_orderbook_aggregation.md`). Fix: job 2 emits a `type="reset"` marker →
-job 5 empties that exchange's book → a NEW terminal aggregator (consuming job 5's full books
-directly) drops it from the union. Deprecates the consolidator + job 6. **NOT started — on hold
-until the user authorizes coding.**
+Problem: on a sequence gap job 2 only dead-letters the offending update and emits nothing
+downstream, so a diverged exchange book keeps being served (never drop a drifted book —
+`memory/project_orderbook_aggregation.md`). Fix: job 2 emits a `type="reset"` marker → job 5
+empties that exchange's book → the terminal aggregator (consuming job 5's full books directly)
+drops it from the union.
 
-Verify FIRST (cheap, before writing code):
+Verified first (before writing code):
 
-- [x] Nothing besides the consolidator consumes the frozen `ex{id}-p{id}-{side}` per-level topics
-      — CONFIRMED 2026-07-22: only `PriceLevelSourceFactory` (regex `ex[0-9]+-p[0-9]+-(asks|bids)`)
-      in `flink/DEPRECATED-orderbook-consolidator/`. The web reads only `^p[0-9]+-(asks|bids)$`
-      (no `ex` prefix). Gate passes → job 6 safe to deprecate.
 - [x] Jobs 3 (rebase) + 4 (precision) forward a null-sided `type="reset"` event untouched —
-      CONFIRMED by reading the code 2026-07-21: neither inspects `type`; `RebaseFunction.rebaseLevels`
-      and `PrecisionFunction.applyLevels` both return null for a null side. Job 3's only dead-letter
-      is `no_rebase_row` (missing exchange_markets row) — the reset inherits the gap event's
-      exchange/pair which job 1 already resolved, so as safe as any event. No job 3/4 change needed.
-- [x] ~~`RawOrderBookEvent.type` is a plain string with no Avro enum constraint~~ → **WRONG,
-      found live 2026-07-22.** `type` IS an Avro enum (`["snapshot","update"]`); serializing the
-      new `"reset"` symbol NPE'd the TaskManager (`getEnumOrdinal("reset")` == null), the job
-      FAILED, so the reset never reached job 5 and the book was never cleared. Fix: added `"reset"`
-      to the `Type` enum in `schemas/raw_order_book_event.avsc` + re-registered (BACKWARD, v2/id 7).
-      No Java rebuild (registry is the source of truth); running jobs must be resubmitted
-      (`make run-normalizer-jobs`, NOT `refresh-normalizer`) to re-fetch. See `project_type_validator.md`.
+      CONFIRMED 2026-07-21: neither inspects `type`; `RebaseFunction.rebaseLevels` and
+      `PrecisionFunction.applyLevels` both return null for a null side. Job 3's only dead-letter is
+      `no_rebase_row`; the reset inherits the gap event's exchange/pair (already resolved by job 1),
+      so as safe as any event. No job 3/4 change needed.
+- [x] ~~`RawOrderBookEvent.type` is a plain string with no Avro enum constraint~~ → **WRONG, found
+      live 2026-07-22.** `type` IS an Avro enum; serializing the new `"reset"` symbol NPE'd the
+      TaskManager (`getEnumOrdinal("reset")` == null). Fix: added `"reset"` to the `Type` enum in
+      `schemas/raw_order_book_event.avsc` + re-registered (BACKWARD, v2/id 7). No Java rebuild
+      (registry is the source of truth); running jobs must be resubmitted (`make run-normalizer-jobs`,
+      NOT `refresh-normalizer`) to re-fetch. See `project_type_validator.md`.
 
 ### A. Job 2 emits a reset marker on gap
 
 - [x] `TypeValidateFunction.processElement`, the true-gap `else` branch: ALSO emits a synthetic
-      reset `RawOrderBookEvent` via `emitReset()` — `type=RESET` (`"reset"`, new package-private
-      constant), `sequence_id=null`, `asks=null`, `bids=null`, same `exchange_id`/`pair_id`,
-      `event_time` from the gap event. Uses a FRESH `PipelineTimings` (not the gap event's) so
-      stamping `type_validate_out` on the reset doesn't leak onto the still-dead-lettered event.
-      Once per episode (only the not-awaiting→awaiting transition reaches the branch). Offending
-      update STILL dead-lettered. Done 2026-07-21.
-- [x] Test `gapEmitsResetMarkerOncePerEpisode` (reset on main output, correct fields, dead-letters
-      the update, no 2nd reset while awaiting) + 4 existing gap tests switched to a `validBusiness()`
+      reset `RawOrderBookEvent` via `emitReset()` — `type=RESET` (`"reset"`), `sequence_id=null`,
+      `asks=null`, `bids=null`, same `exchange_id`/`pair_id`, `event_time` from the gap event. Uses
+      a FRESH `PipelineTimings` so stamping `type_validate_out` on the reset doesn't leak onto the
+      still-dead-lettered event. Once per episode. Offending update STILL dead-lettered. Done 2026-07-21.
+- [x] Test `gapEmitsResetMarkerOncePerEpisode` + 4 existing gap tests switched to a `validBusiness()`
       helper that filters resets. 17 tests green.
 
 ### B. Job 5 turns a reset into an emptied book
 
-- [x] `BookBuildFunction`: branch for `type == "reset"` → `asks.clear()` + `bids.clear()` (else the
-      existing snapshot/update path), then the shared emit produces an empty `OrderBookSnapshot`.
-      Done 2026-07-21.
-- [x] Test `resetEmptiesBook` (both sides empty + state truly cleared: a following update builds on
-      the empty book). 16 tests green.
+- [x] `BookBuildFunction`: branch for `type == "reset"` → `asks.clear()` + `bids.clear()`, then the
+      shared emit produces an empty `OrderBookSnapshot`. Done 2026-07-21.
+- [x] Test `resetEmptiesBook` (both sides empty + state truly cleared). 16 tests green.
 
-### C. New aggregator module (`flink/normalizer/job-aggregator/`) — DONE 2026-07-21 (code+tests)
+### C. Terminal aggregator module (`flink/normalizer/job-aggregator/`) — DONE 2026-07-21
 
 - [x] Module scaffolded, flat package `io.tibobit.normalizer.aggregate`, main `AggregatorJob`
-      (`env.execute("normalizer-aggregator")`); registered in `flink/normalizer/pom.xml`. Shaded jar
-      builds, Main-Class correct.
+      (`env.execute("normalizer-aggregator")`); registered in `flink/normalizer/pom.xml`.
 - [x] Source: `KafkaSource<OrderBookSnapshot>` regex `ex[0-9]+-p[0-9]+-orderbook-snapshot-flink`,
-      `OrderBookSnapshotDeserializer` (common), `OffsetsInitializer.latest()`
+      `OffsetsInitializer.latest()`
 - [x] Split: `SnapshotSplitter` flatMap → two per-side `ExchangeBook`s (asks, bids), levels stamped
       with exchange_id; null side treated as empty
-- [x] `CrossExchangeConsolidator` ported (union never-sum; sort asks↑/bids↓ tie-break qty desc) keyed
-      `(pair_id, side)`; empty `ExchangeBook` (reset ⇒ empty book) replaces the entry + contributes
-      nothing ⇒ exchange drops out. Models `ExchangeBook`/`ConsolidatedLevel`/`ConsolidatedOrderBook`
-      + `ConsolidatedOrderBookSerializer` ported (serializer now uses common `AvroSchemaLoader`)
-- [x] Sink: inline `KafkaSink` dynamic topic `p{id}-{side}`, subject `consolidated-order-book-event`
+- [x] `CrossExchangeAggregator` keyed `(pair_id, side)` — union never-sum; sort asks↑/bids↓ tie-break
+      qty desc; empty `ExchangeBook` (reset ⇒ empty book) replaces the entry + contributes nothing ⇒
+      exchange drops out. Models `ExchangeBook`/`AggregatedLevel`/`AggregatedOrderBook` +
+      `AggregatedOrderBookSerializer` (uses common `AvroSchemaLoader`)
+- [x] Sink: inline `KafkaSink` dynamic topic `p{id}-{side}`, subject `aggregated-order-book-event`
       (FROZEN web contract — unchanged)
-- [x] Tests: ported stage-2 tests (9) + `SnapshotSplitter` tests (3), incl. "empty book ⇒ exchange
-      removed from union, others intact". 12 green. `run-job.sh` is module-driven (no change);
-      `./run-job.sh job-aggregator` runs it standalone.
-- [ ] **DEFERRED to Part D (cutover):** wiring into the active `docker-compose-normalizer.yml` +
-      Makefile `refresh-normalizer`. Auto-deploying the aggregator while the consolidator is still
-      deployed would put TWO producers on the frozen `p{id}-{side}` topics — must swap, not add.
+- [x] Tests: aggregate operator tests (9) + `SnapshotSplitter` tests (3), incl. "empty book ⇒
+      exchange removed from union, others intact". 12 green.
+- [x] Deployed: Makefile `refresh-normalizer`/`run-normalizer-jobs` submit `job-aggregator`
+      downstream-first; `reset.sh` recycles `normalizer-aggregator → book-builder → type-validator`.
 
-### D. Deprecate consolidator + job 6 (level-emitter)
+### Verification (whole milestone) — still pending live
 
-- [x] Rename `flink/orderbook-consolidator/` → `flink/DEPRECATED-orderbook-consolidator/` + move its
-      memory to `memory/deprecated/` (done 2026-07-21, commit d3883d0 — pure rename, mirrors 41bdd20)
-- [x] Deprecate `job-level-emitter` (2026-07-22, mirrors the `orderbook-job`/consolidator dir-rename
-      pattern — no in-file banner is the repo convention): `git mv flink/normalizer/job-level-emitter
-      flink/normalizer/DEPRECATED-job-level-emitter` + removed `<module>job-level-emitter</module>`
-      from `flink/normalizer/pom.xml` so it no longer builds into the image or is submittable. Code kept.
-- [x] Stopped deploying consolidator + job 6 (2026-07-22): the active Makefile `refresh-normalizer`/
-      `run-normalizer-jobs` already submit `job-aggregator` + not job 6; `refresh-consolidator`/
-      `run-consolidator-job` marked DEPRECATED. Cleaned ALL dangling `flink/orderbook-*` path refs
-      (repointed to `flink/DEPRECATED-orderbook-*`): `Makefile`, `docker-compose-orderbook-consolidator.yml`,
-      `docker-compose-orderbook-job.yml`, `scripts/install-deps.sh`, `README.md`; updated the stale
-      `docker-compose-normalizer.yml` header + kafka-ui serde. All composes `config`-validate.
-- [x] `reset.sh` (2026-07-22): stateful reset list now `normalizer-aggregator → book-builder →
-      type-validator` (was consolidator → level-emitter → book-builder → type-validator).
-- [x] RENAMED the frozen web contract `consolidated-*` → `aggregated-*` (2026-07-22): schema files,
-      Avro record names, subject `aggregated-order-book-event`, aggregator classes
-      (`AggregatedOrderBook`/`AggregatedLevel`/`AggregatedOrderBookSerializer`/`CrossExchangeAggregator`),
-      `warmup.sh`, kafka-ui serde, web comments + test schema. Wire FIELDS unchanged → the Go decoder
-      (resolves by wire-id, maps by field name) needed only comment/test touch-ups. Full reactor
-      BUILD SUCCESS + web `go test` green. `price-level-event` warmup registration KEPT (deprecated
-      standalone consolidator stack still uses it; consistent with `schemas/deprecated/README.md`).
-- [x] Schemas cleanup (2026-07-22): moved the two stale schemas + examples to `schemas/deprecated/`
-      — `orderbook_event.*` (deprecated orderbook-job) and `price_level_event.*` (job 6 output =
-      deprecated consolidator input). `scripts/warmup.sh` paths repointed into `deprecated/`;
-      registrations KEPT (dropping the `price_level_event` one waits for job 6 un-deploy above).
-      Added `schemas/deprecated/README.md`; updated `project_avro_schema.md`. The 4 active schemas
-      stay in `schemas/`.
-
-### Verification (whole milestone)
-
-- [ ] Manual-test-data: extend `10-ex1-sequence-gap` to assert the consolidated `p1-{side}` book
-      DROPS ex1's levels at the gap and RESTORES them after the REST resync
-- [ ] Live smoke: run the full chain (`docker-compose-normalizer.yml`), produce scenario 10, confirm
-      in kafka-ui / web UI that ex1 vanishes from the consolidated book on the gap and returns on
-      resync (all ex1 scenarios are still "not yet run live" — first live run is the real check)
-- [ ] **Redo the live gap→drop test for EVERY delta feed** (the fix is exchange-agnostic — no code
-      to repeat, only verification): after resubmitting jobs for the enum fix, run snapshot→updates→
-      gap for **ex1 nobitex, ex6 bybit, ex8 okx** and confirm each drops out of `p{id}-{side}` on the
-      gap and returns on resync. As of 2026-07-22 the enum fix is registered but NO feed verified live.
-- [x] Memory/todo: update `project_type_validator.md` (reset emission), `project_book_builder.md`
-      (reset branch), add `project_aggregator.md`, update `MEMORY.md` index + this file
-- [x] Smoke: `smoke-aggregator.sh` added (2026-07-22), stale `smoke-level-emitter.sh` removed —
-      raw ex8→whole chain→p1-{side}, asserts ex8 by exchange_id (frozen web contract has no
-      timings), 4 cases incl. gap⇒reset⇒ex8 drops⇒resync returns. **Syntax-checked only, NOT run
-      live** — case 3 needs the `"reset"` enum registered + jobs resubmitted, same as the manual test.
+- [ ] Manual-test-data: extend `10-ex1-sequence-gap` to assert the `p1-{side}` book DROPS ex1's
+      levels at the gap and RESTORES them after the REST resync
+- [ ] Live smoke: run the full chain (`docker-compose.yml`), produce scenario 10, confirm in
+      kafka-ui / web UI that ex1 vanishes from the aggregated book on the gap and returns on resync
+- [ ] **Redo the live gap→drop test for EVERY delta feed** (the fix is exchange-agnostic — only
+      verification): after resubmitting jobs for the enum fix, run snapshot→updates→gap for **ex1
+      nobitex, ex6 bybit, ex8 okx** and confirm each drops out of `p{id}-{side}` on the gap and
+      returns on resync. As of 2026-07-22 the enum fix is registered but NO feed verified live.
+- [ ] Live run of `smoke-aggregator.sh` (raw ex8→whole chain→p1-{side}, 4 cases incl.
+      gap⇒reset⇒ex8 drops⇒resync returns) — syntax-checked only; case 3 needs the `"reset"` enum
+      registered + jobs resubmitted.
 
 ## Open items (decide at the flagged milestone)
 

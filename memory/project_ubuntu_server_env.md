@@ -1,15 +1,15 @@
 ---
 name: server-build-env
-description: Java/Maven toolchain fixes on the deploy server (Debian 12) needed for `make refresh-consolidator` / `run-job.sh` to build the Flink jobs
+description: Java/Maven toolchain fixes on the deploy server (Debian 12) needed for `make refresh-normalizer` / `run-job.sh` to build the Flink jobs
 metadata:
   type: project
 ---
 
 Deploy server (`ssh tibobit-data-collector`, Debian 12 "bookworm", x86_64) had **no Java and no
-Maven installed at all** — `refresh-consolidator`'s `run-job.sh` step (`mvn -f pom.xml package`)
+Maven installed at all** — `refresh-normalizer`'s `run-job.sh` step (`mvn -f pom.xml package`)
 failed with `mvn: command not found`. Fixed 2026-07-07:
 
-- `flink/orderbook-consolidator/pom.xml` (and `orderbook-job/pom.xml`) pin `java.version=21`.
+- `flink/normalizer` pins `java.version=21`.
   Debian 12 bookworm's apt repo (and its `bookworm-backports`, confirmed both empty of it on this
   server's mirror `repo.tibobit.ir`) only ships **openjdk-17**, not 21 — Debian doesn't backport
   OpenJDK major versions like this.
@@ -23,7 +23,7 @@ failed with `mvn: command not found`. Fixed 2026-07-07:
   `PATH`, which now resolves to Temurin 21 via the alternatives above.
 - **The whole `/opt/data-collector` checkout is root-owned** (0755, no group/world write) and
   `m_gholami` is NOT in the `docker` group, so `docker compose` (used by the same Makefile target)
-  requires `sudo` — meaning the intended invocation is `sudo make refresh-consolidator`, which runs
+  requires `sudo` — meaning the intended invocation is `sudo make refresh-normalizer`, which runs
   `mvn` as root too. Confirmed `sudo mvn -f pom.xml package -q -DskipTests` builds clean and
   `sudo ./run-job.sh` builds, uploads, submits, and reaches Flink `RUNNING` end-to-end. Running
   `mvn` as the unprivileged user directly on the root-owned tree fails with a *different* error
@@ -38,4 +38,4 @@ and skips reinstalling. Also self-installs its own light prerequisites (`curl`, 
 missing, rather than just erroring out — only `apt-get` itself is a hard requirement (can't
 bootstrap the package manager). Verified 2026-07-07 by copying it to the server and re-running
 twice: correctly no-ops every dep since all were already installed. If a fresh server ever needs
-provisioning, run this script before `make refresh` / `make refresh-consolidator`.
+provisioning, run this script before `make refresh-normalizer`.

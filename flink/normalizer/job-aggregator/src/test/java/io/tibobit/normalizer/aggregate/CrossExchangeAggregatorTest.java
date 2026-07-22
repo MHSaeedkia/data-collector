@@ -23,8 +23,8 @@ import static org.assertj.core.api.Assertions.tuple;
  *
  * <p>Driven through Flink's {@link KeyedOneInputStreamOperatorTestHarness} — keyed exactly as the
  * job, {@code (pair_id, side)} — so real keyed MapState and the {@code open(OpenContext)} lifecycle
- * (which builds both comparators) run, not a mock. Ported from the deprecated orderbook-consolidator
- * with an added reset (empty book ⇒ exchange drops out) test.
+ * (which builds both comparators) run, not a mock. Covers union/sort plus the reset case
+ * (empty book ⇒ exchange drops out).
  */
 class CrossExchangeAggregatorTest {
 

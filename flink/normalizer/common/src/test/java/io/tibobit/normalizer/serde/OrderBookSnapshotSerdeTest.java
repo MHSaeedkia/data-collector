@@ -68,7 +68,7 @@ class OrderBookSnapshotSerdeTest {
 
     /**
      * Given a book carrying timings accumulated through jobs 1–5, When round-tripped, Then the
-     * set stages survive and the not-yet-run level-emit stage stays null.
+     * set stages survive and the not-yet-run stages stay null.
      */
     @Test
     @DisplayName("round-trips pipeline_timings through the book builder's output")
@@ -81,7 +81,6 @@ class OrderBookSnapshotSerdeTest {
 
         assertThat(out.getPipelineTimings().getPairExtractIn()).isEqualTo(140L);
         assertThat(out.getPipelineTimings().getBookBuildOut()).isEqualTo(182L);
-        assertThat(out.getPipelineTimings().getLevelEmitOut()).isNull();
     }
 
     /**

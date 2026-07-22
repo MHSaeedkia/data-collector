@@ -89,7 +89,6 @@ class RawOrderBookEventDeserializerTest {
         assertThat(out.getPipelineTimings().getPairExtractIn()).isEqualTo(140L);
         assertThat(out.getPipelineTimings().getPairExtractOut()).isEqualTo(142L);
         assertThat(out.getPipelineTimings().getTypeValidateIn()).isNull();
-        assertThat(out.getPipelineTimings().getLevelEmitOut()).isNull();
     }
 
     /**

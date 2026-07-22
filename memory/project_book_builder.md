@@ -30,11 +30,11 @@ the WHOLE book as an `OrderBookSnapshot` on every event → `ex{id}-p{id}-orderb
   liquidity this side" and clears it. Decided against doing this in job 1 ([[pair-extractor]]).
 - **Prices are canonicalized before being used as MapState keys** (`stripTrailingZeros`), because
   MapState is hash-based and would otherwise hold "10.50" and "10.5" as two levels of the same
-  price — the consolidator lesson ([[bigdecimal-rules]]).
+  price — the aggregation lesson ([[bigdecimal-rules]]).
 - **Sides are sorted on the way out** (asks ascending, bids descending — the platform convention
   from [[orderbook-aggregation]]). MapState iteration order is undefined, so without this the
   emitted book would be nondeterministic; that costs nothing to fix here and makes both the smoke
-  and any human reading the topic sane. Job 6 diffs by price and does not depend on the order.
+  and any human reading the topic sane. The aggregator keys by price and does not depend on the order.
 - **No sequence re-validation and no dead-letter.** Job 2 already enforced the rules and the
   topics are single-partition, so ordering holds; anything arriving here is by definition valid.
   `last_sequence_id` is just the event's `sequence_id` passed through — no extra state — and stays
@@ -43,7 +43,7 @@ the WHOLE book as an `OrderBookSnapshot` on every event → `ex{id}-p{id}-orderb
   platform, so after a restart a book is empty until the next snapshot re-seeds it. Same known
   gap as the old merger; recorded, not fixed (it is a platform-wide conversation — todo.md).
 
-## Reset branch (added 2026-07-21, plans/aggregator-gap-drop.md Part B)
+## Reset branch (added 2026-07-21)
 
 `type == "reset"` (job 2's gap marker, see [[type-validator]]) → `asks.clear()` + `bids.clear()`,
 then falls through to the SAME emit path, so the emitted `OrderBookSnapshot` comes out empty. Reuses

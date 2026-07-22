@@ -8,7 +8,7 @@ set -euo pipefail
 # the routing/parse contract (exchange_id, pair_id, type, sequence_id, side shape).
 #
 # Prerequisites (this is a TEST, not a deploy):
-#   - the normalizer stack is up (docker-compose-normalizer.yml)
+#   - the normalizer stack is up (docker-compose.yml)
 #   - the DB is warmed (scripts/warmup.sh) so exchange_markets resolves each fixture's market
 #   - the job is already submitted:  ./run-job.sh job-pair-extractor
 #

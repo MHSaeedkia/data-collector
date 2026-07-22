@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # ts handling: for okx, `ts` is the sequence id AND the event time. Files carry a fixed
 # synthetic base so the timeline is readable and diffable, but that base is FUTURE-dated
-# relative to real time — sending it verbatim would poison the consolidator's stored
+# relative to real time — sending it verbatim would poison the aggregator's stored
 # timestamp (it drops events older than stored) and every later real event would be dropped
 # until wall-clock caught up. So each scenario's ts window is shifted onto now, aligned to the
 # 300 ms cadence, preserving every delta within the scenario (the +300 steps, the deliberate
@@ -67,7 +67,7 @@ fi
 # ex8 carries `ts` (which is ALSO its sequence id, so it aligns to the 300 ms cadence); ex1
 # carries `lastUpdate` (event time only — its sequence id is the independent `pub.offset`, left
 # untouched, so no cadence alignment). ex3/wallex has no ordering field (job 1 stamps processing
-# time). Both future-dated synthetic bases are shifted onto now so the consolidator's stored
+# time). Both future-dated synthetic bases are shifted onto now so the aggregator's stored
 # event_time is not poisoned (see README, "Why the script rewrites ts").
 DELTA=0
 MUT='.'

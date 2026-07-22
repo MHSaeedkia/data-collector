@@ -48,7 +48,7 @@ Fixtures: `ex1-snapshot.json` is now the REST payload; the old WS Centrifugo mes
   (1–6 + 8) and `PairExtractFunction` drops unparsered exchanges via the `dropped-no-parser`
   counter. Rationale: one place to change when ex7 lands; also safely absorbs any future
   `ex{n}-raw` topic (warmup.sh is DB-driven, so new subscribed exchanges get topics).
-- **Offsets: `latest`** (consistent with the consolidator — live feed, no replay).
+- **Offsets: `latest`** (consistent with the aggregator — live feed, no replay).
 - **event_time stamping per exchange** (job 2 and audits read this): ex1 `data.lastUpdate`,
   ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts`, ex6 `cts`
   (matching-engine time — chosen over outer `ts` as the analog of okx's data ts; revisit if

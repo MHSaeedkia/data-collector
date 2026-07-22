@@ -41,12 +41,11 @@ The reset is the load-bearing half. All scenarios share `pair_id` 1, so the *onl
 separating one run from the next is job state — and scenario 01 exists precisely to test the
 "no baseline yet" branch, which cannot be reproduced any other way.
 
-`reset.sh` cancels and resubmits the four **stateful** jobs, downstream-first:
+`reset.sh` cancels and resubmits the three **stateful** jobs, downstream-first:
 
 | Job | State it holds |
 | --- | --- |
-| `orderbook-consolidator` | per-exchange book + last `event_time` |
-| `normalizer-level-emitter` | its copy of "what we already told the consolidator" |
+| `normalizer-aggregator` | per-exchange book + last `event_time`, keyed per `(pair, side)` |
 | `normalizer-book-builder` | the order book itself (`MapState` per side) |
 | `normalizer-type-validator` | `{lastSeq, awaitingSnapshot}` |
 
@@ -68,7 +67,7 @@ For okx, `ts` is simultaneously the **sequence id**, the **event time**, and the
 on the message. The files carry a fixed synthetic base (`1800000000000`) so the timelines are
 readable and diffable — but that base sits in the **future** relative to real time.
 
-Sending it verbatim would be actively harmful, not merely odd: the consolidator drops events
+Sending it verbatim would be actively harmful, not merely odd: the aggregator drops events
 older than the one it has stored, so a future-dated book would poison the stored timestamp and
 every subsequent *real* event would be dropped until wall-clock caught up.
 
@@ -78,7 +77,7 @@ survive. `--verbatim` is not offered here; the shift is per-scenario and always 
 
 **ex1/nobitex** carries `lastUpdate` (top-level on the REST snapshot, `push.pub.data.lastUpdate`
 on the WS delta), which is **only** the event time — its ordering field is the independent
-`push.pub.offset`. So the script shifts `lastUpdate` onto now for the same consolidator-poisoning
+`push.pub.offset`. So the script shifts `lastUpdate` onto now for the same aggregator-poisoning
 reason, but leaves the **offsets untouched** (they're small readable integers: `1000`, `1001`,
 …). The +1 contiguity, the deliberate gap, and the resync re-anchor all live in the offsets, so
 they are preserved exactly. Unlike ex8 there is no cadence alignment — `lastUpdate` and the
@@ -91,7 +90,7 @@ nothing is rewritten there.
 
 ## Before you start
 
-- normalizer stack up (`docker-compose-normalizer.yml`), all 6 jobs + the consolidator submitted
+- normalizer stack up (`docker-compose.yml`), all 6 jobs submitted (aggregator downstream-first)
 - `scripts/warmup.sh` run (topics + registry subjects + DB seed)
 - order book web UI open on BTC/USDT
 
@@ -294,7 +293,7 @@ and not just the validator reset — a previous run's asks would otherwise still
 job 5's state.
 
 **Wallex prices all end in `.5`** (`62942.5`, `62952.5`, …). That is so they stay attributable
-if you ever run this alongside an ex8 scenario with `--no-reset`: the consolidator unions the
+if you ever run this alongside an ex8 scenario with `--no-reset`: the aggregator unions the
 two exchanges on pair 1, and the `.5` levels interleave with — never collide with — ex8's
 integer bands. Synthetic on purpose; two real exchanges would quote overlapping prices. To
 verify ex3 in isolation, read `ex3-p1-*` directly.
@@ -444,8 +443,8 @@ ex8-p1-type-validated-raw-flink   # job 2 accepted
 ex8-p1-rejected-flink             # job 2 rejected — carries the reason string
 ex8-p1-rebased-flink              # job 3
 ex8-p1-applied-precision-flink    # job 4 (scenario 05 shows up here)
-ex8-p1-orderbook-snapshot-flink   # job 5 full book
-ex8-p1-{side}                     # job 6 → consolidator → UI
+ex8-p1-orderbook-snapshot-flink   # job 5 full book (consumed by the aggregator)
+p1-{side}                         # aggregator output (union of all exchanges) → UI
 ```
 
 (Scenario 07 is the same chain under `ex3-p1-*`; scenarios 08–12 under `ex1-p1-*`.)

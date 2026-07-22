@@ -50,9 +50,9 @@ Two halves, both required:
 - **Data**: each scenario opens with its own baseline snapshot and its own self-contained `ts`
   timeline starting at its own `B+300`. Nothing references a book or sequence established
   elsewhere. (Scenarios 03 and 04 needed a leading snapshot added when they were split out.)
-- **`reset.sh`**: cancels + resubmits the four **stateful** jobs before each run —
-  `orderbook-consolidator`, `normalizer-level-emitter`, `normalizer-book-builder`,
-  `normalizer-type-validator`. pair-extractor/rebaser/precision are stateless, left alone.
+- **`reset.sh`**: cancels + resubmits the three **stateful** jobs before each run —
+  `normalizer-aggregator`, `normalizer-book-builder`, `normalizer-type-validator`.
+  pair-extractor/rebaser/precision are stateless, left alone.
 
 The reset is the load-bearing half: scenario 01 tests the `no_baseline` branch, which is
 unreproducible without a fresh [[type-validator]]. Scenario 07 step 1 ("no asks yet") is why
@@ -60,7 +60,7 @@ the reset must include [[book-builder]] and not just the validator.
 
 Reset details that cost thought:
 - **No checkpointing anywhere on this platform ⇒ cancel+resubmit IS the state reset.**
-- **Downstream-first order** (consolidator → 6 → 5 → 2), same rule as `make refresh-normalizer`:
+- **Downstream-first order** (aggregator → 5 → 2), same rule as `make refresh-normalizer`:
   sources read `latest`, so an upstream job restarted first emits into a topic nobody reads yet.
 - Resubmits via the **already-uploaded jar** (`GET /jars` → newest by artifactId prefix →
   `POST /jars/{id}/run`), so no Maven rebuild; jobs must have been submitted once before.
@@ -75,7 +75,7 @@ Reset details that cost thought:
 For okx `ts` is simultaneously sequence id, event time, and the only timestamp
 ([[pair-extractor]] `OkxParser` stamps event_time = ts). Files carry synthetic base
 `1800000000000`, which is in the **FUTURE** vs real time (2026 ≈ 1.784e12). Sending verbatim is
-actively harmful, not just odd: the consolidator drops events older than stored, so a
+actively harmful, not just odd: the aggregator drops events older than stored, so a
 future-dated book poisons the stored timestamp and every subsequent *real* event is dropped
 until wall-clock catches up.
 
@@ -110,7 +110,7 @@ Market 1 is `price_precision 2 / quantity_precision 8`, rebase `0/0` for both ex
 
 Scenario 07's wallex prices all end in `.5` and interleave with (never collide with) ex8's
 integer bands, so levels stay attributable if scenarios are ever chained with `--no-reset`
-(the consolidator unions ex8 + ex3 on p1). Synthetic on purpose.
+(the aggregator unions ex8 + ex3 on p1). Synthetic on purpose.
 
 ## Status / known gap
 

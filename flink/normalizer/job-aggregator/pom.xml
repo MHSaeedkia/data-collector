@@ -13,8 +13,8 @@
     <artifactId>job-aggregator</artifactId>
 
     <!-- Terminal job: consumes job 5's full per-exchange books (order-book-snapshot), unions them
-         across exchanges per (pair, side) and emits the consolidated p{id}-{side} event the web UI
-         consumes. Replaces job 6 + the deprecated orderbook-consolidator. -->
+         across exchanges per (pair, side) and emits the aggregated p{id}-{side} event the web UI
+         consumes. -->
 
     <dependencies>
         <dependency>
@@ -31,7 +31,7 @@
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
         </dependency>
-        <!-- Used directly by ConsolidatedOrderBookSerializer (also transitive via common). -->
+        <!-- Used directly by AggregatedOrderBookSerializer (also transitive via common). -->
         <dependency>
             <groupId>org.apache.avro</groupId>
             <artifactId>avro</artifactId>

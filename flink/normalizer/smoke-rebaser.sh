@@ -28,7 +28,7 @@ set -euo pipefail
 # That branch is covered by RebaseFunctionTest instead.
 #
 # Prerequisites (this is a TEST, not a deploy):
-#   - the normalizer stack is up (docker-compose-normalizer.yml)
+#   - the normalizer stack is up (docker-compose.yml)
 #   - the DB is warmed (scripts/warmup.sh) so exchange_markets resolves OKX BTC-USDT -> p1
 #   - ALL THREE jobs are submitted: ./run-job.sh job-pair-extractor
 #                                   ./run-job.sh job-type-validator

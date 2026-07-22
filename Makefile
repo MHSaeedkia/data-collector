@@ -1,29 +1,11 @@
-refresh:
-	-git pull origin
-	docker compose -f docker-compose-orderbook-job.yml down -v
-	docker compose -f docker-compose-orderbook-job.yml up --build -d
-	./scripts/warmup.sh
-	cd ./flink/DEPRECATED-orderbook-job && ./run-job.sh
-
-# DEPRECATED (Milestone 11): the orderbook-consolidator standalone stack is retired — its role
-# is now filled by the terminal job-aggregator inside refresh-normalizer. Code kept for reference
-# under flink/DEPRECATED-orderbook-consolidator/; do not deploy alongside the normalizer stack.
-refresh-consolidator:
-	-git pull origin
-	docker compose -f docker-compose-orderbook-consolidator.yml down -v
-	docker compose -f docker-compose-orderbook-consolidator.yml up --build -d
-	./scripts/warmup.sh
-	cd ./flink/DEPRECATED-orderbook-consolidator && ./run-job.sh
-
 # Full raw pipeline: the 5 upstream normalizer jobs plus the terminal aggregator that unions their
-# per-exchange books, all on the one Flink cluster in docker-compose-normalizer.yml.
+# per-exchange books, all on the one Flink cluster in docker-compose.yml.
 # Jobs are submitted DOWNSTREAM-FIRST because every source reads from `latest`: a job started
 # after its upstream would miss whatever the upstream produced in between.
-# job-aggregator replaces the deprecated orderbook-consolidator + job-level-emitter (job 6).
 refresh-normalizer:
 	-git pull origin
-	docker compose -f docker-compose-normalizer.yml down -v
-	docker compose -f docker-compose-normalizer.yml up --build -d
+	docker compose -f docker-compose.yml down -v
+	docker compose -f docker-compose.yml up --build -d
 	./scripts/warmup.sh
 	cd ./flink/normalizer && ./run-job.sh job-aggregator
 	cd ./flink/normalizer && ./run-job.sh job-book-builder
@@ -31,12 +13,6 @@ refresh-normalizer:
 	cd ./flink/normalizer && ./run-job.sh job-rebaser
 	cd ./flink/normalizer && ./run-job.sh job-type-validator
 	cd ./flink/normalizer && ./run-job.sh job-pair-extractor
-
-# DEPRECATED (Milestone 11): superseded by run-normalizer-jobs (see refresh-consolidator note).
-run-consolidator-job:
-	-git pull origin
-	./scripts/cancel-flink-jobs.sh
-	cd ./flink/DEPRECATED-orderbook-consolidator && ./run-job.sh
 
 run-normalizer-jobs:
 	-git pull origin
