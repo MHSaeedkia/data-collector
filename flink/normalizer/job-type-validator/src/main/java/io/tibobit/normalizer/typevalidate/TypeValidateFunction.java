@@ -53,6 +53,13 @@ public class TypeValidateFunction
     static final String NO_BASELINE = "no_baseline";
     static final String OUT_OF_ORDER = "out_of_order";
 
+    /**
+     * Event {@code type} of the synthetic reset marker emitted onto the main stream on a gap. Job 5
+     * turns it into an emptied book so the exchange drops out of the consolidated view instead of
+     * serving its pre-gap diverged book (see plans/aggregator-gap-drop.md).
+     */
+    static final String RESET = "reset";
+
     private transient ValueState<Long> lastSeq;
     private transient ValueState<Boolean> awaitingSnapshot;
     private transient ValueState<Boolean> baselinePending;
@@ -131,8 +138,26 @@ public class TypeValidateFunction
             reject(event, STALE_OR_DUPLICATE, ctx);
         } else {
             awaitingSnapshot.update(true);
+            emitReset(event, out);
             reject(event, SEQUENCE_GAP, ctx);
         }
+    }
+
+    /**
+     * Emits a synthetic {@link #RESET} marker on the main stream carrying the gap event's identity
+     * and event time but no book (null sides, null sequence). Reached only on the not-awaiting →
+     * awaiting transition, so it fires exactly once per gap episode — subsequent updates return at
+     * the {@code awaitingSnapshot} reject above. A fresh {@link
+     * io.tibobit.normalizer.model.PipelineTimings} (not the gap event's) is used so stamping
+     * {@code type_validate_out} here does not leak onto the event that is still being dead-lettered.
+     */
+    private void emitReset(RawOrderBookEvent gap, Collector<RawOrderBookEvent> out) {
+        RawOrderBookEvent reset = new RawOrderBookEvent(
+                gap.getExchangeId(), gap.getPairId(), RESET, null, 0L, gap.getEventTime(),
+                null, null);
+        reset.getPipelineTimings().setTypeValidateIn(gap.getPipelineTimings().getTypeValidateIn());
+        reset.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
+        out.collect(reset);
     }
 
     private void emit(RawOrderBookEvent event, Collector<RawOrderBookEvent> out) throws Exception {

@@ -147,6 +147,23 @@ class BookBuildFunctionTest {
         pricesOf(out.getAsks()).containsExactly("10");
     }
 
+    // ---- reset (gap-driven book drop) --------------------------------------------
+
+    @Test
+    @DisplayName("a reset empties both sides and clears state, so the exchange drops out")
+    void resetEmptiesBook() throws Exception {
+        process(event("snapshot", levels("10", "1", "11", "2"), levels("9", "3")));
+
+        OrderBookSnapshot out = process(event("reset", null, null, null));
+
+        assertThat(out.getAsks()).isEmpty();
+        assertThat(out.getBids()).isEmpty();
+
+        // state is truly cleared: a following update builds on an empty book, not the pre-gap one
+        OrderBookSnapshot after = process(event("update", levels("12", "5"), null));
+        pricesOf(after.getAsks()).containsExactly("12");
+    }
+
     // ---- price identity ----------------------------------------------------------
 
     @Test

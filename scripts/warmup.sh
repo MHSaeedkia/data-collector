@@ -104,7 +104,6 @@ create_topic() {
 # Normalizer topics — the raw pipeline's intermediate stages, one family per job output.
 # Created FIRST because every normalizer source reads from `latest`: a topic that does not exist
 # when its job starts is discovered late, and whatever was produced in between is lost.
-# Job 6's output is the existing ex{id}-p{id}-{side} family below, so it has no entry here.
 NORMALIZER_STAGES=(
     raw-flink                    # job 1 pair-extractor  out
     type-validated-raw-flink     # job 2 type-validator  out
@@ -126,13 +125,6 @@ distinct_exchanges=$(echo "$pairs" | cut -d'|' -f2 | sort -un)
 while IFS='|' read -r exchange_id; do
     create_topic "ex${exchange_id}-raw" "$RAW_RETENTION_MS"
 done <<< "$distinct_exchanges"
-
-# Input topics — one per exchange+pair+side (NiFi produces, Flink source consumes).
-while IFS='|' read -r pair_id exchange_id exchange_name; do
-    for side in asks bids; do
-        create_topic "ex${exchange_id}-p${pair_id}-${side}" "$INPUT_RETENTION_MS"
-    done
-done <<< "$pairs"
 
 # Output topics — one per pair+side (Flink aggregation writes the consolidated book here).
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)

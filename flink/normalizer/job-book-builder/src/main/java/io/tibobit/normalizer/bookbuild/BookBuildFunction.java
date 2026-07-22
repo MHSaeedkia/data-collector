@@ -59,9 +59,17 @@ public class BookBuildFunction
                                Collector<OrderBookSnapshot> out) throws Exception {
         event.getPipelineTimings().setBookBuildIn(System.currentTimeMillis());
 
-        boolean replace = "snapshot".equals(event.getType());
-        applySide(asks, event.getAsks(), replace);
-        applySide(bids, event.getBids(), replace);
+        if ("reset".equals(event.getType())) {
+            // Job 2 emits a reset marker on a sequence gap (see plans/aggregator-gap-drop.md): clear
+            // the whole book so the emitted snapshot is empty and the exchange drops out downstream,
+            // rather than serving its pre-gap diverged book until the next real snapshot.
+            asks.clear();
+            bids.clear();
+        } else {
+            boolean replace = "snapshot".equals(event.getType());
+            applySide(asks, event.getAsks(), replace);
+            applySide(bids, event.getBids(), replace);
+        }
 
         OrderBookSnapshot book = new OrderBookSnapshot(
                 event.getExchangeId(), event.getPairId(), event.getEventTime(),

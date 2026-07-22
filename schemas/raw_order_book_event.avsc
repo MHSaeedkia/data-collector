@@ -16,7 +16,7 @@
 			"type": {
 				"type": "enum",
 				"name": "Type",
-				"symbols": ["snapshot", "update"]
+				"symbols": ["snapshot", "update", "reset"]
 			}
 		},
 		{

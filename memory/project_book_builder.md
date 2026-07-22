@@ -43,6 +43,15 @@ the WHOLE book as an `OrderBookSnapshot` on every event → `ex{id}-p{id}-orderb
   platform, so after a restart a book is empty until the next snapshot re-seeds it. Same known
   gap as the old merger; recorded, not fixed (it is a platform-wide conversation — todo.md).
 
+## Reset branch (added 2026-07-21, plans/aggregator-gap-drop.md Part B)
+
+`type == "reset"` (job 2's gap marker, see [[type-validator]]) → `asks.clear()` + `bids.clear()`,
+then falls through to the SAME emit path, so the emitted `OrderBookSnapshot` comes out empty. Reuses
+the existing sorted-emit rather than a bespoke empty-book construction (an emptied `MapState` sorts to
+empty lists). Without this branch a reset would carry null sides → `applySide` leaves state untouched
+→ the stale book would be re-emitted, which is exactly the bug being fixed. The emptied book makes the
+exchange drop out of the downstream aggregator. Matched by `resetEmptiesBook`. **Not run live.**
+
 ## Gotchas
 
 - **The registered `order-book-snapshot` subject was stale (v1, no `pipeline_timings`)** and had

@@ -74,6 +74,13 @@ class TypeValidateFunctionTest {
         return harness.extractOutputValues();
     }
 
+    /** Main-output events excluding the synthetic reset markers a gap now emits (Part A). */
+    private List<RawOrderBookEvent> validBusiness() {
+        return valid().stream()
+                .filter(e -> !TypeValidateFunction.RESET.equals(e.getType()))
+                .collect(Collectors.toList());
+    }
+
     private List<RejectedOrderBookEvent> rejects() {
         ConcurrentLinkedQueue<StreamRecord<RejectedOrderBookEvent>> q =
                 harness.getSideOutput(TypeValidateFunction.REJECTED);
@@ -186,8 +193,36 @@ class TypeValidateFunctionTest {
         send(delta(6, 1, "snapshot", 20L, 1L)); // re-sync -> accepted, clears awaiting
         send(delta(6, 1, "update", 21L, 1L));   // contiguous again -> ok
 
-        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(10L, 11L, 20L, 21L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
+                        TypeValidateFunction.AWAITING_SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("delta feed: a gap emits exactly one reset marker on the main output AND still dead-letters the update")
+    void gapEmitsResetMarkerOncePerEpisode() throws Exception {
+        send(delta(6, 1, "snapshot", 10L, 1L));
+        send(delta(6, 1, "update", 11L, 1L)); // ok
+        send(delta(6, 1, "update", 15L, 1L)); // gap -> reset + dead-letter
+        send(delta(6, 1, "update", 16L, 1L)); // still awaiting -> NO second reset
+
+        List<RawOrderBookEvent> resets = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .collect(Collectors.toList());
+        assertThat(resets).hasSize(1);
+
+        RawOrderBookEvent reset = resets.get(0);
+        assertThat(reset.getExchangeId()).isEqualTo(6);
+        assertThat(reset.getPairId()).isEqualTo(1);
+        assertThat(reset.getSequenceId()).isNull();
+        assertThat(reset.getAsks()).isNull();
+        assertThat(reset.getBids()).isNull();
+        assertThat(reset.getEventTime()).isEqualTo(15L); // event_time from the gap event
+        assertThat(reset.getPipelineTimings().getTypeValidateOut()).isNotNull();
+
+        // the offending update is still dead-lettered; the held update is a plain awaiting reject
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
                         TypeValidateFunction.AWAITING_SNAPSHOT);
@@ -203,7 +238,7 @@ class TypeValidateFunctionTest {
         send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok
         send(delta(1, 1, "update", 505L, 1L)); // gap (expected 502) -> sequence_gap
 
-        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(null, 500L, 501L);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
@@ -220,7 +255,7 @@ class TypeValidateFunctionTest {
         send(delta(1, 1, "update", 900L, 1L)); // adopts 900 unconditionally
         send(delta(1, 1, "update", 901L, 1L)); // contiguous -> ok
 
-        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(null, 500L, null, 900L, 901L);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
@@ -246,7 +281,7 @@ class TypeValidateFunctionTest {
         send(delta(1, 1, "update", 600L, 1L)); // if the stale snapshot had wrongly re-armed the
                                                // resync this would be ADOPTED; instead it is a gap
 
-        assertThat(valid()).extracting(RawOrderBookEvent::getSequenceId)
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(null, 500L, 501L);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.OUT_OF_ORDER,

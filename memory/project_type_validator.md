@@ -72,6 +72,26 @@ dead-letter topic IS the audit record). Timings: stamps `type_validate_in` on en
 `type_validate_out` before the main `collect`; rejects keep `type_validate_out` null (never emitted
 onward), `rejectedAt` records the dead-letter time.
 
+## Reset marker on gap (added 2026-07-21, plans/aggregator-gap-drop.md Part A)
+
+The true-gap `else` branch now ALSO emits a synthetic **reset** onto the MAIN stream (not just the
+dead-letter): `type="reset"` (`RESET` constant), null seq/asks/bids, gap event's identity +
+event_time. Job 5 turns it into an emptied book so the exchange **drops out** of the aggregated view
+instead of serving its pre-gap diverged book until the next snapshot — restoring the old
+monolithic-merger "gap ⇒ clear the book" guarantee ([[orderbook-aggregation]]). The offending update
+is **still dead-lettered** unchanged.
+
+**Why a fresh `PipelineTimings` on the reset, not the gap event's:** the same gap event is
+simultaneously dead-lettered (where `type_validate_out` must stay null). Reusing its timings object
+and stamping `_out` for the reset would leak onto the rejected copy — they'd alias. So `emitReset`
+builds a new event with its own timings.
+
+**Emitted once per gap episode** for free: the branch is only reached on the not-awaiting→awaiting
+transition; every subsequent held update returns at the `awaitingSnapshot` reject above, so no second
+reset fires until a snapshot re-syncs and a new gap occurs. Exchange-agnostic (any delta feed). Tests
+use a `validBusiness()` helper filtering resets so the existing sequence assertions are unchanged; a
+dedicated test pins the reset's fields + once-per-episode. **Not run live.**
+
 ## Gotchas (all cost real debugging time 2026-07-15)
 
 - **`rejected-order-book-event` registry subject was STALE (v1, no `pipeline_timings`)** → the

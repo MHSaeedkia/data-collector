@@ -501,6 +501,92 @@ over REST, WS carries only deltas. NiFi now publishes two payloads to `ex1-raw`.
       string (e.g. `BTCUSDT`, matching `exchange_markets`)? A case/format mismatch drops silently
       (`dropped-unknown-market`), same trap as the lbank note in [[pair-extractor]].
 
+## Milestone 11 — gap-driven book drop via a new full-book aggregator (2026-07-21)
+
+Full plan + rationale: `plans/aggregator-gap-drop.md`. Problem: on a sequence gap job 2 only
+dead-letters the offending update and emits nothing downstream, so the consolidator keeps serving
+that exchange's pre-gap diverged book (regresses the `orderbook-job` "gap ⇒ drop the exchange"
+decision, `memory/project_orderbook_aggregation.md`). Fix: job 2 emits a `type="reset"` marker →
+job 5 empties that exchange's book → a NEW terminal aggregator (consuming job 5's full books
+directly) drops it from the union. Deprecates the consolidator + job 6. **NOT started — on hold
+until the user authorizes coding.**
+
+Verify FIRST (cheap, before writing code):
+
+- [ ] Nothing besides the consolidator consumes the frozen `ex{id}-p{id}-{side}` per-level topics
+      (believed true; confirm — gates deprecating job 6)
+- [x] Jobs 3 (rebase) + 4 (precision) forward a null-sided `type="reset"` event untouched —
+      CONFIRMED by reading the code 2026-07-21: neither inspects `type`; `RebaseFunction.rebaseLevels`
+      and `PrecisionFunction.applyLevels` both return null for a null side. Job 3's only dead-letter
+      is `no_rebase_row` (missing exchange_markets row) — the reset inherits the gap event's
+      exchange/pair which job 1 already resolved, so as safe as any event. No job 3/4 change needed.
+- [ ] `RawOrderBookEvent.type` is a plain string with no Avro enum constraint (so `"reset"` is a
+      new value, not a schema change — expected free)
+
+### A. Job 2 emits a reset marker on gap
+
+- [x] `TypeValidateFunction.processElement`, the true-gap `else` branch: ALSO emits a synthetic
+      reset `RawOrderBookEvent` via `emitReset()` — `type=RESET` (`"reset"`, new package-private
+      constant), `sequence_id=null`, `asks=null`, `bids=null`, same `exchange_id`/`pair_id`,
+      `event_time` from the gap event. Uses a FRESH `PipelineTimings` (not the gap event's) so
+      stamping `type_validate_out` on the reset doesn't leak onto the still-dead-lettered event.
+      Once per episode (only the not-awaiting→awaiting transition reaches the branch). Offending
+      update STILL dead-lettered. Done 2026-07-21.
+- [x] Test `gapEmitsResetMarkerOncePerEpisode` (reset on main output, correct fields, dead-letters
+      the update, no 2nd reset while awaiting) + 4 existing gap tests switched to a `validBusiness()`
+      helper that filters resets. 17 tests green.
+
+### B. Job 5 turns a reset into an emptied book
+
+- [x] `BookBuildFunction`: branch for `type == "reset"` → `asks.clear()` + `bids.clear()` (else the
+      existing snapshot/update path), then the shared emit produces an empty `OrderBookSnapshot`.
+      Done 2026-07-21.
+- [x] Test `resetEmptiesBook` (both sides empty + state truly cleared: a following update builds on
+      the empty book). 16 tests green.
+
+### C. New aggregator module (`flink/normalizer/job-aggregator/`) — DONE 2026-07-21 (code+tests)
+
+- [x] Module scaffolded, flat package `io.tibobit.normalizer.aggregate`, main `AggregatorJob`
+      (`env.execute("normalizer-aggregator")`); registered in `flink/normalizer/pom.xml`. Shaded jar
+      builds, Main-Class correct.
+- [x] Source: `KafkaSource<OrderBookSnapshot>` regex `ex[0-9]+-p[0-9]+-orderbook-snapshot-flink`,
+      `OrderBookSnapshotDeserializer` (common), `OffsetsInitializer.latest()`
+- [x] Split: `SnapshotSplitter` flatMap → two per-side `ExchangeBook`s (asks, bids), levels stamped
+      with exchange_id; null side treated as empty
+- [x] `CrossExchangeConsolidator` ported (union never-sum; sort asks↑/bids↓ tie-break qty desc) keyed
+      `(pair_id, side)`; empty `ExchangeBook` (reset ⇒ empty book) replaces the entry + contributes
+      nothing ⇒ exchange drops out. Models `ExchangeBook`/`ConsolidatedLevel`/`ConsolidatedOrderBook`
+      + `ConsolidatedOrderBookSerializer` ported (serializer now uses common `AvroSchemaLoader`)
+- [x] Sink: inline `KafkaSink` dynamic topic `p{id}-{side}`, subject `consolidated-order-book-event`
+      (FROZEN web contract — unchanged)
+- [x] Tests: ported stage-2 tests (9) + `SnapshotSplitter` tests (3), incl. "empty book ⇒ exchange
+      removed from union, others intact". 12 green. `run-job.sh` is module-driven (no change);
+      `./run-job.sh job-aggregator` runs it standalone.
+- [ ] **DEFERRED to Part D (cutover):** wiring into the active `docker-compose-normalizer.yml` +
+      Makefile `refresh-normalizer`. Auto-deploying the aggregator while the consolidator is still
+      deployed would put TWO producers on the frozen `p{id}-{side}` topics — must swap, not add.
+
+### D. Deprecate consolidator + job 6 (level-emitter)
+
+- [x] Rename `flink/orderbook-consolidator/` → `flink/DEPRECATED-orderbook-consolidator/` + move its
+      memory to `memory/deprecated/` (done 2026-07-21, commit d3883d0 — pure rename, mirrors 41bdd20)
+- [ ] Add a DEPRECATED banner to `job-level-emitter` (mirror the `orderbook-job` pattern); KEEP the
+      code, do not delete
+- [ ] Stop deploying the consolidator + job 6: remove from the active `docker-compose-normalizer.yml`
+      and the Makefile refresh flow; clean the 6 DANGLING path refs to the old
+      `flink/orderbook-consolidator/` path (see the deprecation note at the top of this file)
+- [ ] `reset.sh`: swap the consolidator → the new aggregator in the stateful-job reset list
+
+### Verification (whole milestone)
+
+- [ ] Manual-test-data: extend `10-ex1-sequence-gap` to assert the consolidated `p1-{side}` book
+      DROPS ex1's levels at the gap and RESTORES them after the REST resync
+- [ ] Live smoke: run the full chain (`docker-compose-normalizer.yml`), produce scenario 10, confirm
+      in kafka-ui / web UI that ex1 vanishes from the consolidated book on the gap and returns on
+      resync (all ex1 scenarios are still "not yet run live" — first live run is the real check)
+- [ ] Memory/todo: update `project_type_validator.md` (reset emission), `project_book_builder.md`
+      (reset branch), add `project_aggregator.md`, update `MEMORY.md` index + this file
+
 ## Open items (decide at the flagged milestone)
 
 - [ ] Job-1 source offsets: `latest` vs `earliest` for `ex{id}-raw`
