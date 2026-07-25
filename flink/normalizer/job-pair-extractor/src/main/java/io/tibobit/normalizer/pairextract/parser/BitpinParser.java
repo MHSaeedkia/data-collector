@@ -7,10 +7,25 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * ex2 bitpin — Centrifugo, channel {@code orderbook:{market}}, full snapshot on every
- * message, levels are [price, qty] string pairs. Ordering field for job 2's out-of-order
- * check = pub.offset (jump 0 = snapshot feed); event time = data.event_time (ISO-8601).
- * See sample-raw-data.md § ex2.
+ * ex2 bitpin — TWO raw streams share the {@code ex2-raw} topic (2026-07-25, same shape as ex1;
+ * see sample-raw-data.md § ex2):
+ *
+ * <ul>
+ *   <li><b>REST snapshot</b>: NiFi tags the initial full book with {@code "action":"snapshot"}
+ *       and injects the market as a top-level {@code "pair"} field. Levels are [price, qty]
+ *       string pairs, no ordering field → {@code type="snapshot"}, {@code sequence_id=null};
+ *       event time = {@code event_time} as <b>epoch millis</b> (a JSON number — NOT the
+ *       ISO-8601 string the WS side uses under the same field name, user 2026-07-25). Job 2
+ *       treats a null-seq snapshot as a resync signal, so the first WS update after it adopts
+ *       the offset as the baseline.</li>
+ *   <li><b>WebSocket update</b>: the Centrifugo publication we already consumed — channel
+ *       {@code orderbook:{market}}. These are DELTAS, not snapshots (the old assumption was
+ *       wrong) → {@code type="update"}, {@code sequence_id=pub.offset}, {@code sequence_jump=1}
+ *       (Centrifugo offsets increment by one per publication); event time =
+ *       {@code data.event_time}.</li>
+ * </ul>
+ *
+ * Anything else (connect acks, pings, malformed frames) is dropped by the whitelist rule.
  */
 public class BitpinParser implements RawExchangeParser {
 
@@ -18,7 +33,32 @@ public class BitpinParser implements RawExchangeParser {
 
     @Override
     public List<ParsedBookEvent> parse(byte[] payload) throws Exception {
-        JsonNode push = Centrifugo.push(Json.MAPPER.readTree(payload));
+        JsonNode root = Json.MAPPER.readTree(payload);
+
+        // REST snapshot: NiFi stamps action=snapshot and injects the market as `pair`.
+        if ("snapshot".equals(root.path("action").asText())) {
+            return parseRestSnapshot(root);
+        }
+
+        // Otherwise a WebSocket delta (Centrifugo push) — or noise, which parseWsUpdate drops.
+        return parseWsUpdate(root);
+    }
+
+    private List<ParsedBookEvent> parseRestSnapshot(JsonNode root) {
+        if (!root.path("pair").isTextual()
+                || !root.path("asks").isArray() || !root.path("bids").isArray()
+                || !root.path("event_time").isIntegralNumber()) {
+            return List.of();
+        }
+        RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "snapshot",
+                null, 0L, root.get("event_time").asLong(),
+                Levels.fromStringPairs(root.get("asks")),
+                Levels.fromStringPairs(root.get("bids")));
+        return List.of(new ParsedBookEvent(root.get("pair").asText(), event));
+    }
+
+    private List<ParsedBookEvent> parseWsUpdate(JsonNode root) {
+        JsonNode push = Centrifugo.push(root);
         if (push == null || !push.get("channel").asText().startsWith(CHANNEL_PREFIX)) {
             return List.of();
         }
@@ -28,8 +68,8 @@ public class BitpinParser implements RawExchangeParser {
             return List.of();
         }
         String market = push.get("channel").asText().substring(CHANNEL_PREFIX.length());
-        RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "snapshot",
-                push.get("pub").get("offset").asLong(), 0L,
+        RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "update",
+                push.get("pub").get("offset").asLong(), 1L,
                 Instant.parse(data.get("event_time").asText()).toEpochMilli(),
                 Levels.fromStringPairs(data.get("asks")),
                 Levels.fromStringPairs(data.get("bids")));

@@ -95,6 +95,13 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
 - **7 live exchanges, not 3**: 1=nobitex, 2=bitpin, 3=wallex, 4=ramzinex, 5=bitget, 6=bybit,
   7=ompfinex (server `exchanges` table; 8=okx exists in DB, no topic yet). The market key inside
   each payload's channel/topic string == `exchange_markets.market` exactly.
+- **⚠ The regime classification below is PARTLY SUPERSEDED** — `ex1` (2026-07-21) and `ex2`
+  (2026-07-25) were BOTH re-classified from full-snapshot-every-msg to **REST snapshot + WS
+  delta**: their WS messages are deltas (`type=update`, `pub.offset`, jump 1) and the full book
+  arrives over REST tagged `action:"snapshot"` with an injected `pair` (null seq → job-2 resync).
+  So they are delta feeds subject to the gap/jump rule, NOT the out-of-order-only check described
+  in (b) below. Only **ex4 + ex5** remain true snapshot feeds. See [[pair-extractor]] /
+  [[type-validator]] and `sample-raw-data.md`. The rest of this record stands as written.
 - **Three regimes**: full-snapshot-every-msg (**ex1 nobitex + ex2 bitpin + ex4 ramzinex +
   ex5 bitget RE-CONFIRMED 2026-07-14** post-reset, samples + parsing notes in
   `sample-raw-data.md` — ex1/ex2/ex4 Centrifugo but different channel keys (ex4's is a

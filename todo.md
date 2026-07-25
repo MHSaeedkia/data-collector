@@ -491,11 +491,61 @@ Verified first (before writing code):
       kafka-ui / web UI that ex1 vanishes from the aggregated book on the gap and returns on resync
 - [ ] **Redo the live gap→drop test for EVERY delta feed** (the fix is exchange-agnostic — only
       verification): after resubmitting jobs for the enum fix, run snapshot→updates→gap for **ex1
-      nobitex, ex6 bybit, ex8 okx** and confirm each drops out of `p{id}-{side}` on the gap and
-      returns on resync. As of 2026-07-22 the enum fix is registered but NO feed verified live.
+      nobitex, ex2 bitpin (added 2026-07-25, M12), ex6 bybit, ex8 okx** and confirm each drops out
+      of `p{id}-{side}` on the gap and returns on resync. As of 2026-07-22 the enum fix is
+      registered but NO feed verified live.
 - [ ] Live run of `smoke-aggregator.sh` (raw ex8→whole chain→p1-{side}, 4 cases incl.
       gap⇒reset⇒ex8 drops⇒resync returns) — syntax-checked only; case 3 needs the `"reset"` enum
       registered + jobs resubmitted.
+
+## Milestone 12 — ex2 bitpin snapshot/update split (2026-07-25)
+
+Same wrong assumption as ex1, same fix: "bitpin is a full snapshot on every WS message" was WRONG —
+bitpin snapshots come over REST, WS carries only deltas. NiFi publishes two payloads to `ex2-raw`.
+Scope confirmed with the user: **ex2 ONLY** this pass (ex3/ex4/ex5 regimes unchanged).
+
+- [x] `BitpinParser`: branch on top-level `action=="snapshot"` (REST, market from injected `pair`
+      field, `type=snapshot`/null seq/jump 0) vs Centrifugo push (WS,
+      `type=update`/`seq=pub.offset`/`jump=1`); noise still dropped. Fixtures:
+      `ex2-snapshot.json` = REST payload, old WS message → `ex2-update.json`. 4 parser tests
+      green (28 module tests total).
+- [x] **⚠ `event_time` has two wire types** (user correction 2026-07-25, after the first pass
+      assumed one): REST `event_time` = **epoch millis, a JSON number** (`asLong`, like ex1's
+      `lastUpdate`); WS `data.event_time` = **ISO-8601 string** (`Instant.parse`). Same field
+      name, different type — the branches keep separate timestamp handling and the required-field
+      checks (`isIntegralNumber` vs `isTextual`) enforce it.
+- [x] `NobitexParserTest` / `RamzinexParserTest` foreign-frame cases repointed to `ex2-update.json`
+      (they meant the Centrifugo WS frame). Both parsers now also assert they reject the OTHER
+      exchange's REST snapshot — with REST `event_time` numeric, ex1 and ex2 REST payloads are
+      identical except the timestamp field NAME (`lastUpdate` vs `event_time`), which is the only
+      thing each snapshot branch can key off. Do not relax those checks to `action` alone.
+- [x] Updated `smoke-pair-extractor.sh` (ex2 snapshot=null-seq + new `ex2-update` case) and
+      `sample-raw-data.md § ex2` (+ the regime table row).
+- [x] **No job-2 change needed** — the `baselinePending` resync and the null-seq `out_of_order`
+      guard added for ex1 (M10) are exchange-agnostic; ex2 inherits both for free.
+- [ ] **Deploy is coupled — cut over together**: parser + NiFi's ex2 REST feed must land at once.
+      Flipping WS to `update` before REST snapshots flow makes every ex2 update reject
+      `no_baseline` (same trap as M10's ex1 note).
+- [ ] Run `smoke-pair-extractor.sh` live once NiFi's REST snapshot is on `ex2-raw` (parser change
+      is unit-verified only).
+- [ ] Confirm the live NiFi payload matches the assumed contract: injected field is exactly
+      `"pair"` with the value `BTC_USDT` (underscore, per the user 2026-07-25 — the lookup key
+      `"2|{market}"` is exact, a `BTCUSDT` mismatch drops silently as `dropped-unknown-market`),
+      and REST `event_time` really is a bare epoch-millis number (a quoted `"1784008564112"` or an
+      ISO string would fail `isIntegralNumber` and drop the whole snapshot as unparseable).
+- [x] Manual-test scenarios for ex2: `manual-test-data/13..17-ex2-*`, a one-for-one mirror of ex1's
+      08–12 (resync + re-anchor / no_baseline / gap → REST resync / noise / stale replay). Every
+      file was run through `BitpinParser` before being documented, so the README's per-file
+      expectations are parser-verified, not assumed. `produce.sh` gained an ex2 shift branch —
+      it must move BOTH timestamp shapes (numeric REST + ISO WS) by the same amount, so all ex2
+      bases sit on a whole second and the shift stays exact in either unit; scenario 17 is the
+      only thing proving those two units land on a common scale.
+- [ ] Run the 5 new ex2 scenarios live (needs NiFi's REST feed + the coupled deploy above). Watch
+      scenario 16 file 05 in particular — a REST snapshot with a **string** `event_time`, which is
+      the live NiFi contract risk. If the real feed quotes the timestamp, every ex2 snapshot is
+      dropped at job 1 with NO dead-letter record; the only trace is the drop counter.
+- [ ] ex2 is now a delta feed, so it joins the M11 live gap→drop verification list
+      (**ex1, ex2, ex6, ex8**).
 
 ## Open items (decide at the flagged milestone)
 

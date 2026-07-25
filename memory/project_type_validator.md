@@ -113,8 +113,11 @@ per-exchange CODE to repeat.** The reset marker → empty book ([[book-builder]]
 global schema change. What IS per-delta-feed is the LIVE verification: repeat the
 snapshot→updates→gap live test for each delta feed — **ex1 nobitex, ex6 bybit, ex8 okx** — and
 confirm that exchange drops out of `p{id}-{side}` on the gap and returns on the next snapshot/resync.
-(Snapshot-only feeds ex2/4/5 and the no-ordering ex3 never hit the gap branch, so they never emit a
-reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+**ex2 bitpin joined this list 2026-07-25** — it was re-classified from snapshot-only to
+REST-snapshot + WS-delta exactly like ex1, and needed NO job-2 code change (the `baselinePending`
+resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extractor]].
+(Remaining snapshot-only feeds ex4/ex5 and the no-ordering ex3 never hit the gap branch, so they
+never emit a reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
 verified live yet.**
 
 ## Gotchas (all cost real debugging time 2026-07-15)

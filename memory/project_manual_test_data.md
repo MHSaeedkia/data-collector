@@ -1,6 +1,6 @@
 ---
 name: manual-test-data
-description: 2026-07-20 — BTC-USDT-only manual e2e test scenarios for the normalizer chain (7 independent scenarios, ex8+ex3); why independence needs a 4-job state reset and why ts is shifted per scenario
+description: 2026-07-20 — BTC-USDT-only manual e2e test scenarios for the normalizer chain (17 independent scenarios, ex8+ex3+ex1+ex2); why independence needs a 3-job state reset and why the timestamp is shifted per scenario
 metadata:
     type: project
 ---
@@ -10,9 +10,9 @@ metadata:
 Scenario payloads for **manual** e2e testing: produce to `ex{id}-raw`, run the whole 6-job
 chain, verify in the order book web UI. Distinct from the parser fixtures in
 `job-pair-extractor/src/test/resources/fixtures/` — those are canonical wire samples, these
-exercise *behaviour* (acceptance, rejection, deletes, truncation, resync). 12 scenarios (01–06
-ex8/okx, 07 ex3/wallex, **08–12 ex1/nobitex** added 2026-07-21), `produce.sh` + `reset.sh` + a
-README with the expected outcome per message.
+exercise *behaviour* (acceptance, rejection, deletes, truncation, resync). 17 scenarios (01–06
+ex8/okx, 07 ex3/wallex, **08–12 ex1/nobitex** added 2026-07-21, **13–17 ex2/bitpin** added
+2026-07-25), `produce.sh` + `reset.sh` + a README with the expected outcome per message.
 
 ## ex1/nobitex scenarios (08–12, added 2026-07-21, see [[pair-extractor]]/[[type-validator]])
 
@@ -32,6 +32,36 @@ all discarded, interleaved to prove a drop ≠ a reject and doesn't disturb base
 `push.pub.data.lastUpdate` on WS) onto now like ex8's `ts`, but **leaves offsets untouched** (the
 sequence is the independent `push.pub.offset`; no 300 ms cadence). Same "not yet run live" caveat —
 needs NiFi's REST feed on `ex1-raw` + the coupled job-2 resync build.
+
+## ex2/bitpin scenarios (13–17, added 2026-07-25)
+
+A deliberate one-for-one mirror of 08–12 (13↔08 resync+re-anchor, 14↔09 `no_baseline`, 15↔10 gap,
+16↔11 noise, 17↔12 stale replay), because ex2 turned out to have ex1's exact regime — see
+[[pair-extractor]]. Wire symbol **`BTC_USDT`** (underscore; `BTCUSDT` would drop silently as an
+unknown market), channel prefix `orderbook:` (colon), *not* ex1's `public:orderbook-`. Bands are
+62700/62900/63100/62800 with 2-decimal prices, so ex2 levels stay attributable if scenarios are
+ever chained with ex1's integer-priced ones. Dead-letter oracle: 0/1/2/0/1, same as 08–12.
+
+**Two things here are genuinely ex2-only and cost the thought:**
+
+- **`event_time` has two wire types under one name** — epoch millis (number) on REST, ISO-8601
+  string on WS. So `produce.sh`'s ex2 branch must shift *both* shapes by the same amount, in
+  different units. Solved by putting every ex2 base on a **whole second** (`ET = 1800000000000` =
+  `2027-01-15T08:00:00Z`, +1s steps): DELTA is then a whole-second multiple and the shift is exact
+  as millis and as `fromdateiso8601`-seconds alike. Sub-second realism is lost (the real feed sends
+  microseconds); acceptable — that precision is covered by the parser fixture, and jq cannot
+  round-trip fractional ISO anyway. **Scenario 17 is the only test that proves the two units land
+  on a common scale** — if they ever diverged, the stale replay would be accepted.
+- **Scenario 16 file 05** is a REST snapshot whose `event_time` is a *string*: correct in every
+  other respect, dropped at job 1. This is the live NiFi contract risk made runnable — if the real
+  feed quotes the timestamp, every ex2 snapshot disappears with **no dead-letter record**, only a
+  drop counter. It carries a `60000.00` bid wall so acceptance would be unmissable in the UI. It is
+  the one ex2 file `produce.sh` deliberately does **not** shift (it's dropped anyway).
+
+Every one of the 29 files was run through `BitpinParser` before the README's per-file expectations
+were written (temporary test, since deleted), so the market/type/seq/jump/event-time column of that
+README is parser-verified. The *pipeline* expectations carry the same "not run live" caveat as
+08–12, plus the coupled-deploy trap (todo.md M12).
 
 **Two user constraints, imposed in this order, and the second one reshaped the design:**
 
