@@ -43,8 +43,7 @@ INSERT INTO currencies (id, "name") VALUES
 (26, 'WLD'),
 (27, 'MNT'),
 (28, 'SHIB'),
-(29, 'BTT'),
-(30, 'TON');
+(29, 'BTT');
 SELECT setval(pg_get_serial_sequence('currencies', 'id'), (SELECT MAX(id) FROM currencies));
 
 -- ===== markets =====
@@ -102,9 +101,7 @@ INSERT INTO markets (id, base_id, quote_id, price_precision, quantity_precision,
 (51, 28, 1, 2, 8, 2, 8), -- SHIB/USDT
 (52, 28, 2, 2, 8, 2, 8), -- SHIB/IRT
 (53, 29, 1, 2, 8, 2, 8), -- BTT/USDT
-(54, 29, 2, 2, 8, 2, 8), -- BTT/IRT
-(55, 30, 1, 2, 8, 2, 8), -- TON/USDT
-(56, 30, 2, 2, 8, 2, 8); -- TON/IRT
+(54, 29, 2, 2, 8, 2, 8); -- BTT/IRT
 SELECT setval(pg_get_serial_sequence('markets', 'id'), (SELECT MAX(id) FROM markets));
 
 -- ===== exchange_markets =====
@@ -296,6 +293,7 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (4, '34', 36, 'unsubscribe', -1, 0, NULL, 60), -- ramzinex
 (4, '37', 37, 'unsubscribe', 0, 0, NULL, 60), -- ramzinex
 (4, '36', 38, 'unsubscribe', -1, 0, NULL, 60), -- ramzinex
+(4, '287', 40, 'unsubscribe', -1, 0, NULL, 60), -- ramzinex
 (4, '158', 41, 'unsubscribe', 0, 0, NULL, 60), -- ramzinex
 (4, '33', 42, 'unsubscribe', -1, 0, NULL, 60), -- ramzinex
 (4, '434', 43, 'unsubscribe', 0, 0, NULL, 60), -- ramzinex
@@ -395,8 +393,12 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (7, '111', 36, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (7, '71', 37, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
 (7, '70', 38, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
+(7, '371', 39, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
+(7, '372', 40, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (7, '22', 41, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
 (7, '10', 42, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
+(7, '142', 43, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
+(7, '141', 44, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (7, '19', 45, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
 (7, '6', 46, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (7, '266', 47, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
@@ -407,8 +409,6 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (7, '30', 52, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (7, '196', 53, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
 (7, '195', 54, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
-(7, '142', 55, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
-(7, '141', 56, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (8, 'BTC-USDT', 1, 'unsubscribe', 0, 0, 1, 60), -- okx
 (8, 'ETH-USDT', 3, 'unsubscribe', 0, 0, 1, 60), -- okx
 (8, 'XRP-USDT', 5, 'unsubscribe', 0, 0, 1, 60), -- okx
