@@ -18,7 +18,7 @@ import (
 
 const magicByte = 0x0
 
-// wireLevel/wireEvent mirror consolidated_order_book_event.avsc for
+// wireLevel/wireEvent mirror aggregated_order_book_event.avsc for
 // decoding. EventTime is time.Time because hamba/avro maps the
 // timestamp-millis logical type to time.Time, not int64.
 type wireLevel struct {

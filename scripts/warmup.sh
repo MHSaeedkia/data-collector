@@ -7,18 +7,13 @@ POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-markets}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://localhost:8082}"
-AVRO_SCHEMA_SUBJECT="${AVRO_SCHEMA_SUBJECT:-orderbook-event}"
-JSON_SCHEMA_SUBJECT="${JSON_SCHEMA_SUBJECT:-orderbook-event-json}"
-PRICE_LEVEL_SCHEMA_SUBJECT="${PRICE_LEVEL_SCHEMA_SUBJECT:-price-level-event}"
-CONSOLIDATED_ORDER_BOOK_SCHEMA_SUBJECT="${CONSOLIDATED_ORDER_BOOK_SCHEMA_SUBJECT:-consolidated-order-book-event}"
+AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT="${AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT:-aggregated-order-book-event}"
 RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-event}"
 ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
 REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-AVRO_SCHEMA_FILE="$SCRIPT_DIR/../schemas/orderbook_event.avsc"
-PRICE_LEVEL_SCHEMA_FILE="$SCRIPT_DIR/../schemas/price_level_event.avsc"
-CONSOLIDATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/consolidated_order_book_event.avsc"
+AGGREGATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/aggregated_order_book_event.avsc"
 RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
 ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
 REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
@@ -55,9 +50,7 @@ register_schema() {
 
 # --- Schema Registry ---
 
-register_schema "$AVRO_SCHEMA_SUBJECT" "AVRO" "$AVRO_SCHEMA_FILE"
-register_schema "$PRICE_LEVEL_SCHEMA_SUBJECT" "AVRO" "$PRICE_LEVEL_SCHEMA_FILE"
-register_schema "$CONSOLIDATED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$CONSOLIDATED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$AGGREGATED_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
 register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
@@ -104,7 +97,6 @@ create_topic() {
 # Normalizer topics — the raw pipeline's intermediate stages, one family per job output.
 # Created FIRST because every normalizer source reads from `latest`: a topic that does not exist
 # when its job starts is discovered late, and whatever was produced in between is lost.
-# Job 6's output is the existing ex{id}-p{id}-{side} family below, so it has no entry here.
 NORMALIZER_STAGES=(
     raw-flink                    # job 1 pair-extractor  out
     type-validated-raw-flink     # job 2 type-validator  out
@@ -127,14 +119,7 @@ while IFS='|' read -r exchange_id; do
     create_topic "ex${exchange_id}-raw" "$RAW_RETENTION_MS"
 done <<< "$distinct_exchanges"
 
-# Input topics — one per exchange+pair+side (NiFi produces, Flink source consumes).
-while IFS='|' read -r pair_id exchange_id exchange_name; do
-    for side in asks bids; do
-        create_topic "ex${exchange_id}-p${pair_id}-${side}" "$INPUT_RETENTION_MS"
-    done
-done <<< "$pairs"
-
-# Output topics — one per pair+side (Flink aggregation writes the consolidated book here).
+# Output topics — one per pair+side (Flink aggregation writes the aggregated book here).
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do

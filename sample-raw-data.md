@@ -18,7 +18,7 @@
 | Topic     | Exchange | Sample status                 |
 | --------- | -------- | ----------------------------- |
 | `ex1-raw` | nobitex  | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-21 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
-| `ex2-raw` | bitpin   | ✅ captured 2026-07-14 (snapshot) |
+| `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
 | `ex5-raw` | bitget   | ✅ captured 2026-07-14 (snapshot; `seq` used for out-of-order check only) |
@@ -102,10 +102,35 @@ Parsing notes (job 1):
 
 ## ex2-raw — bitpin
 
-**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
-message** — "always we have snapshot" (user statement). Centrifugo push envelope re-confirmed.
+**⚠ REVISED 2026-07-25 — the "full snapshot on every message" assumption was WRONG**, exactly as
+it was for ex1. bitpin serves the initial book over a REST API and then only **deltas** over
+WebSocket; we had been treating every WS message as a full snapshot. NiFi publishes **two
+distinct payloads** to `ex2-raw`:
 
-Sample (pretty-printed; level arrays trimmed — the real message carried **50 levels per side**):
+1. **REST snapshot** — NiFi tags it `"action": "snapshot"` and **injects the market as a
+   top-level `"pair"` field** (the REST body has no symbol of its own). This is the full book →
+   `type = "snapshot"`, `sequence_id = null` (no offset on the wire).
+2. **WebSocket delta** — the Centrifugo push we already consumed, **unchanged** and with **no
+   `action` field** → `type = "update"`, `sequence_id = pub.offset`, `sequence_jump = 1`
+   (Centrifugo offsets increment by exactly one per publication).
+
+Because the REST snapshot carries no offset, job 2 treats a null-seq snapshot as a **resync
+signal**: the first WS update after it adopts its offset as the baseline (see
+memory/project_type_validator.md) — the same exchange-agnostic path ex1 uses.
+
+**REST snapshot sample** (level arrays trimmed):
+
+```json
+{"action":"snapshot","pair":"BTC_USDT","event_time":1784008564112,"asks":[["62714.50","0.01387100"],["62720.77","0.00970970"]],"bids":[["62672.30","0.01003106"],["62655.92","0.01368489"]]}
+```
+
+**⚠ The injected `pair` must be the DB market string `BTC_USDT`** (underscore), matching
+`exchange_markets.market` for ex2 and the WS channel suffix — job 1's lookup key
+`"2|{market}"` is exact and case-sensitive, so `BTCUSDT` would drop silently as
+`dropped-unknown-market`. Confirmed with the user 2026-07-25.
+
+**WebSocket delta sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — the real
+message carried **50 levels per side**):
 
 ```json
 {
@@ -138,18 +163,29 @@ Sample (pretty-printed; level arrays trimmed — the real message carried **50 l
 
 Parsing notes (job 1):
 
-- **Envelope**: Centrifugo `push` → `pub` → `data`; market key is in `push.channel`
-  (`orderbook:{market}`, here `BTC_USDT`) and duplicated in `data.symbol`.
-- **Levels**: `bids`/`asks` are `[price, qty]` **string** pairs ✅ (BigDecimal-from-string,
-  no numeric-literal hazard for the levels). Bids sorted price-descending, asks ascending.
+- **Branch discriminator**: top-level `action == "snapshot"` ⇒ REST snapshot path; otherwise
+  try the Centrifugo `push` (WS delta); anything else is noise → dropped.
+- **REST snapshot market**: from the injected top-level `"pair"` field. The REST body has no
+  channel and no `symbol`.
+- **WS delta market**: from `push.channel` (`orderbook:{market}`, here `BTC_USDT`) and
+  duplicated in `data.symbol`.
+- **Levels** (both payloads): `bids`/`asks` are `[price, qty]` **string** pairs ✅
+  (BigDecimal-from-string, no numeric-literal hazard for the levels). Bids sorted
+  price-descending, asks ascending.
 - **⚠ `data.price` is a JSON number** (last price, not a book level) — irrelevant to the book,
   but if ever read, it needs `USE_BIG_DECIMAL_FOR_FLOATS`.
-- **No snapshot/update discriminator** — `event` is always `market_data`; snapshot regime is
-  implied by the feed, not flagged per message.
-- **No seq field in `data`**; **ordering field for the job-2 out-of-order check =
-  `pub.offset`** (REVISED 2026-07-14, user — drop stale/out-of-order snapshots; no
-  gap/jump rule). `event_time` (ISO string) is a fallback candidate.
-- `volume_ask`/`volume_bid`, `event_time`: metadata, not book levels.
+- **`event` is always `market_data`** on the WS side — it is NOT a snapshot/update
+  discriminator; the REST `action` field is.
+- **⚠ `event_time` is the event time on BOTH payloads but in DIFFERENT wire types** (user
+  2026-07-25): the WS `data.event_time` is an **ISO-8601 string** with microseconds
+  (`Instant.parse`), the REST `event_time` is **epoch millis as a JSON number** (read verbatim).
+  Same field name, two types — don't share a code path. It is the ONLY ordering signal on the
+  REST snapshot, which is what job 2's null-seq `out_of_order` guard reads.
+- **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (resync).
+  The WS delta uses `pub.offset` as `sequence_id` with `sequence_jump = 1`, so job 2 does real
+  contiguity gap detection (was an out-of-order-only check when we thought it was a snapshot
+  feed).
+- `volume_ask`/`volume_bid`: metadata, not book levels.
 
 ## ex3-raw — wallex
 

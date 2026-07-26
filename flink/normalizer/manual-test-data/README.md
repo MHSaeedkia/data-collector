@@ -4,7 +4,9 @@ Hand-crafted `ex{id}-raw` payloads for **manual** end-to-end testing: produce th
 topic, let all 6 normalizer jobs run, and watch the result land in the order book web UI.
 
 **Everything targets one market: BTC-USDT (`pair_id` 1).** ex8/okx uses the wire symbol
-`BTC-USDT`, ex1/nobitex and ex3/wallex use `BTCUSDT`; all resolve to `market_id` 1 in the seed.
+`BTC-USDT`, ex1/nobitex and ex3/wallex use `BTCUSDT`, ex2/bitpin uses `BTC_USDT`; all resolve to
+`market_id` 1 in the seed. The market string is matched **exactly** — a bitpin payload carrying
+`BTCUSDT` instead of `BTC_USDT` is dropped silently as an unknown market, not dead-lettered.
 
 **Every scenario is independent.** Run any one of them, on its own, in any order, as many times
 as you like. Nothing has to run first.
@@ -41,12 +43,11 @@ The reset is the load-bearing half. All scenarios share `pair_id` 1, so the *onl
 separating one run from the next is job state — and scenario 01 exists precisely to test the
 "no baseline yet" branch, which cannot be reproduced any other way.
 
-`reset.sh` cancels and resubmits the four **stateful** jobs, downstream-first:
+`reset.sh` cancels and resubmits the three **stateful** jobs, downstream-first:
 
 | Job | State it holds |
 | --- | --- |
-| `orderbook-consolidator` | per-exchange book + last `event_time` |
-| `normalizer-level-emitter` | its copy of "what we already told the consolidator" |
+| `normalizer-aggregator` | per-exchange book + last `event_time`, keyed per `(pair, side)` |
 | `normalizer-book-builder` | the order book itself (`MapState` per side) |
 | `normalizer-type-validator` | `{lastSeq, awaitingSnapshot}` |
 
@@ -62,13 +63,13 @@ per reset.
 `--no-reset` skips it, for when you deliberately want to chain scenarios and watch state carry
 over.
 
-### Why the script rewrites the timestamp (ex8 and ex1)
+### Why the script rewrites the timestamp (ex8, ex1 and ex2)
 
 For okx, `ts` is simultaneously the **sequence id**, the **event time**, and the only timestamp
 on the message. The files carry a fixed synthetic base (`1800000000000`) so the timelines are
 readable and diffable — but that base sits in the **future** relative to real time.
 
-Sending it verbatim would be actively harmful, not merely odd: the consolidator drops events
+Sending it verbatim would be actively harmful, not merely odd: the aggregator drops events
 older than the one it has stored, so a future-dated book would poison the stored timestamp and
 every subsequent *real* event would be dropped until wall-clock caught up.
 
@@ -78,11 +79,21 @@ survive. `--verbatim` is not offered here; the shift is per-scenario and always 
 
 **ex1/nobitex** carries `lastUpdate` (top-level on the REST snapshot, `push.pub.data.lastUpdate`
 on the WS delta), which is **only** the event time — its ordering field is the independent
-`push.pub.offset`. So the script shifts `lastUpdate` onto now for the same consolidator-poisoning
+`push.pub.offset`. So the script shifts `lastUpdate` onto now for the same aggregator-poisoning
 reason, but leaves the **offsets untouched** (they're small readable integers: `1000`, `1001`,
 …). The +1 contiguity, the deliberate gap, and the resync re-anchor all live in the offsets, so
 they are preserved exactly. Unlike ex8 there is no cadence alignment — `lastUpdate` and the
 sequence are decoupled.
+
+**ex2/bitpin** is ex1's structure with one wrinkle: its event time is called `event_time` on both
+shapes but arrives in **two different wire types** — **epoch millis** (a JSON number) on the REST
+snapshot, an **ISO-8601 string** on the WS delta. The script shifts both, and every ex2 base is on
+a **whole second** so the same shift is exact in millis and in ISO seconds alike; the two shapes
+therefore stay correctly ordered relative to each other, which scenario 17 depends on. Offsets are
+left literal, as for ex1.
+
+One ex2 frame is deliberately **not** shifted: scenario 16's snapshot whose `event_time` is a
+string. Job 1 drops it, which is the entire point of the file, so its timestamp is irrelevant.
 
 ex3/wallex has no ordering field at all and is stamped with processing time by job 1, so
 nothing is rewritten there.
@@ -91,14 +102,14 @@ nothing is rewritten there.
 
 ## Before you start
 
-- normalizer stack up (`docker-compose-normalizer.yml`), all 6 jobs + the consolidator submitted
+- normalizer stack up (`docker-compose.yml`), all 6 jobs submitted (aggregator downstream-first)
 - `scripts/warmup.sh` run (topics + registry subjects + DB seed)
 - order book web UI open on BTC/USDT
 
 ## Reference data
 
 From `postgres/02_seed.sql`, market 1 is `price_precision 2`, `quantity_precision 8`, rebase
-`0/0` (identity) for both exchanges — so **wire prices equal UI prices** and every expectation
+`0/0` (identity) for every exchange used here — so **wire prices equal UI prices** and every expectation
 below is checkable by eye.
 
 `ts` offsets are shown relative to each scenario's own base `B = 1800000000000`.
@@ -117,6 +128,11 @@ below is checkable by eye.
 | [10](#10--ex1-sequence-gap--rest-resync) | ex1 nobitex | offset gap → `awaiting_snapshot` → REST resync |
 | [11](#11--ex1-noise-frames) | ex1 nobitex | Centrifugo non-book frames are discarded |
 | [12](#12--ex1-stale-rest-replay) | ex1 nobitex | old REST snapshot replayed after WS deltas → `out_of_order` |
+| [13](#13--ex2-rest-snapshot--ws-resync) | ex2 bitpin | REST snapshot arms baseline, first WS update adopts its offset; re-anchor |
+| [14](#14--ex2-update-before-snapshot) | ex2 bitpin | WS update before any REST snapshot → `no_baseline` |
+| [15](#15--ex2-sequence-gap--rest-resync) | ex2 bitpin | offset gap → `awaiting_snapshot` → REST resync |
+| [16](#16--ex2-noise-frames) | ex2 bitpin | Centrifugo noise **and** a wrong-typed `event_time` are discarded |
+| [17](#17--ex2-stale-rest-replay) | ex2 bitpin | old REST snapshot replayed after WS deltas → `out_of_order` |
 
 ex1/nobitex `ts` offsets below are shown relative to each scenario's own base `LU = 1800000000000`
 (the `lastUpdate` field); its **sequence offsets are literal** (not shifted) — see the timestamp
@@ -294,7 +310,7 @@ and not just the validator reset — a previous run's asks would otherwise still
 job 5's state.
 
 **Wallex prices all end in `.5`** (`62942.5`, `62952.5`, …). That is so they stay attributable
-if you ever run this alongside an ex8 scenario with `--no-reset`: the consolidator unions the
+if you ever run this alongside an ex8 scenario with `--no-reset`: the aggregator unions the
 two exchanges on pair 1, and the `.5` levels interleave with — never collide with — ex8's
 integer bands. Synthetic on purpose; two real exchanges would quote overlapping prices. To
 verify ex3 in isolation, read `ex3-p1-*` directly.
@@ -433,6 +449,137 @@ be adopted as a fresh baseline rather than validated as `1001+1`.
 
 ---
 
+## ex2/bitpin — the same REST + WS split, with a two-typed timestamp
+
+Scenarios 13–17 mirror 08–12 one-for-one, because bitpin was found (2026-07-25) to work exactly
+like nobitex: the initial book over **REST**, deltas only over **WebSocket**. The events already on
+`ex2-raw` are the **WS deltas** — the earlier "ex2 is a snapshot-only feed" reading was wrong. NiFi
+publishes two shapes:
+
+- **REST snapshot** — top-level `"action":"snapshot"`, NiFi injects the market as `"pair"`, no
+  offset: job 1 stamps `type=snapshot`, `sequence_id=null`, event_time=`event_time`.
+- **WS delta** — a Centrifugo push on channel `orderbook:BTC_USDT` (note: `orderbook:` with a
+  colon, *not* nobitex's `public:orderbook-`), no `action`: job 1 stamps `type=update`,
+  `sequence_id=push.pub.offset`, **`sequence_jump=1`**, event_time=`push.pub.data.event_time`.
+
+Job 2 is untouched — the null-seq resync and the event-time `out_of_order` guard were built
+exchange-agnostic for ex1, so ex2 inherits both. That is what 13/15/17 verify.
+
+**The one thing that is genuinely ex2-only:** `event_time` carries **two wire types under one
+name** — epoch millis (JSON *number*) on the REST snapshot, ISO-8601 *string* on the WS delta. Each
+branch of the parser requires its own type, so a snapshot whose `event_time` arrives as a string is
+**dropped**, silently, with no dead-letter. Scenario 16 file 05 is that exact frame.
+
+> Like 08–12, these are **unit-verified only**. They need NiFi's ex2 REST feed live on `ex2-raw`
+> and the `BitpinParser` build deployed **together** — a partial rollout makes every ex2 update
+> reject `no_baseline` (see `todo.md` M12).
+
+ex2 offsets below are relative to each scenario's own base `ET = 1800000000000`
+(= `2027-01-15T08:00:00Z`, the ISO form the WS files carry); steps are whole seconds.
+
+## 13 — ex2 REST snapshot → WS resync
+
+**`13-ex2-rest-then-ws-resync/`** — the signature bitpin path, plus a mid-stream re-anchor.
+
+| # | File | offset | Expected |
+| --- | --- | --- | --- |
+| 01 | `rest-snapshot` | — (null) | **ACCEPTED**, passes through unchecked, **arms the resync**. Baseline: 5 asks / 5 bids in the 62700 band. |
+| 02 | `ws-update` | 1000 | **ACCEPTED** — first update after the null-seq snapshot **adopts 1000 as the baseline**. ask `62702.60` deleted, ask `62720.00` added, ask `62701.30`→`0.29045069`, bid `62699.50`→`0.55175335`, bid `62688.00` added. |
+| 03 | `ws-update` | 1001 | **ACCEPTED** (+1). ask `62701.30` deleted, ask `62730.00` added, bid `62688.00` deleted, bid `62685.00` added. |
+| 04 | `rest-snapshot` | — (null) | **ACCEPTED** — a fresh REST snapshot **re-arms** the resync and **replaces** the book (jumps to the 62900 band). |
+| 05 | `ws-update` | **9000** | **ACCEPTED** — first update after the re-anchor adopts `9000` **unconditionally**, nowhere near `1002`. A re-anchor does **not** gap-check. |
+| 06 | `ws-update` | 9001 | **ACCEPTED** (+1 from the new baseline). |
+
+Same oracle as scenario 08: if 05 lands in `ex2-p1-rejected-flink`, the re-anchor is broken. No
+62700-band level may survive 04.
+
+**Dead letter: 0 records.**
+
+## 14 — ex2 update before snapshot
+
+**`14-ex2-update-before-snapshot/`** — the WS subscription delivers a delta before the REST fetch
+returns the initial book.
+
+| # | File | offset | Expected |
+| --- | --- | --- | --- |
+| 01 | `ws-update-no-baseline` | 1000 | **REJECTED** `no_baseline` → `ex2-p1-rejected-flink`. Nothing reaches the UI. |
+| 02 | `rest-snapshot` | — (null) | **ACCEPTED** — baseline, 62700 band, arms the resync. |
+| 03 | `ws-update` | 2000 | **ACCEPTED** — first update after the snapshot adopts `2000` as the baseline. |
+
+This is the failure mode a **partial rollout** produces continuously: parser deployed, REST feed
+not yet publishing → every update looks like 01. If the live ex2 dead-letter topic fills with
+`no_baseline`, check NiFi before suspecting job 2.
+
+**Dead letter: 1 record** — `no_baseline`.
+
+## 15 — ex2 sequence gap → REST resync
+
+**`15-ex2-sequence-gap/`** — Centrifugo offsets increment by exactly **1**, so any skip is a gap.
+
+| # | File | offset | step | Expected |
+| --- | --- | --- | --- | --- |
+| 01 | `rest-snapshot` | — (null) | — | baseline, 62700 band, arms the resync. |
+| 02 | `ws-update` | 1000 | adopt | **ACCEPTED** — adopts `1000` as the baseline. |
+| 03 | `ws-update-ok` | 1001 | +1 | **ACCEPTED**. |
+| 04 | `ws-update-gap` | **1005** | +4 | **REJECTED** `sequence_gap`, sets `awaitingSnapshot`. `lastSeq` stays `1001`. |
+| 05 | `ws-update-awaiting` | 1002 | +1 | **REJECTED** `awaiting_snapshot` — contiguous, but the book is known-diverged. |
+| 06 | `rest-snapshot-resync` | — (null) | — | **ACCEPTED**, clears `awaitingSnapshot`, **re-arms**, **replaces** the book (63100 band). |
+| 07 | `ws-update` | 2000 | adopt | **ACCEPTED** — adopts `2000` as the new baseline. |
+| 08 | `ws-update-ok` | 2001 | +1 | **ACCEPTED**. |
+
+04 and 05 carry a loud `9.99900000` quantity so a leaked rejected level is obvious in the UI. 06
+jumps to the **63100 band**: no 62700-band level should survive it.
+
+**Dead letter: 2 records** — `sequence_gap`, then `awaiting_snapshot`.
+
+## 16 — ex2 noise frames
+
+**`16-ex2-noise-frames/`** — everything here is **discarded at job 1**: dropped, *not*
+dead-lettered, never a crash.
+
+| # | File | offset | Expected |
+| --- | --- | --- | --- |
+| 01 | `connect-ack` | — | discarded — a Centrifugo `{"connect":…}` reply, no `push`. |
+| 02 | `foreign-channel` | — | discarded — a `trades:BTC_USDT` push; wrong channel prefix. |
+| 03 | `rest-snapshot` | — (null) | **ACCEPTED** — baseline, 62800 band, arms the resync. |
+| 04 | `malformed-book` | — | discarded — right channel, but the publication has **no `asks`/`bids`**. |
+| 05 | `rest-snapshot-string-event-time` | — | discarded — `action`, `pair`, `asks`, `bids` all correct, but `event_time` is an **ISO string** where the REST shape requires a **number**. |
+| 06 | `ws-update` | 1000 | **ACCEPTED** — adopts `1000`; neither 04 nor 05 consumed an offset or armed anything. |
+| 07 | `ws-update` | 1001 | **ACCEPTED** (+1). |
+
+05 is the ex2-specific one, and it is the **live NiFi contract check**. It carries a book nothing
+else in the scenario has — a `60000.00` bid wall and a `62815.00` ask — so acceptance is unmissable
+in the UI. If that wall appears, `event_time` is being read too loosely; if the *real* feed sends a
+quoted timestamp, every ex2 snapshot vanishes this way, with **no dead-letter record to find it
+by**. The only trace is job 1's drop counter.
+
+**Dead letter: 0 records.** Any record here is a real failure.
+
+---
+
+## 17 — ex2 stale REST replay
+
+**`17-ex2-stale-rest-replay/`** — a REST snapshot has no offset, so job 2 can only order these
+frames by **event time**, and for ex2 that means comparing a number against timestamps that
+arrived as ISO strings. File 04 is byte-identical to file 01 — the same old book, replayed.
+
+| # | File | offset | `ET` | Expected |
+| --- | --- | --- | --- | --- |
+| 01 | `rest-snapshot` | — (null) | ET+0 | **ACCEPTED** — baseline, 62700 band, arms the resync. |
+| 02 | `ws-update` | 1000 | ET+1s | **ACCEPTED** — adopts `1000` as the baseline. |
+| 03 | `ws-update-loud` | 1001 | ET+2s | **ACCEPTED** (+1) — adds a loud `60000.00` bid wall so a book leak is visible. |
+| 04 | `rest-snapshot-stale-replay` | — (null) | **ET+0** | **REJECTED** `out_of_order` — event time ET+0 < last accepted ET+2s; must not overwrite the book or re-arm the resync. |
+| 05 | `ws-update` | 1002 | ET+3s | **ACCEPTED** (+1) — the stream continues; the stale snapshot disturbed neither baseline nor sequence state. |
+
+The oracle is the dead-letter count, exactly `1` (`out_of_order`). This scenario is also the only
+one that proves the **two timestamp wire types land on a common scale**: if the epoch-millis
+snapshot and the ISO WS deltas were ever compared in different units, 04 would be accepted (or 02
+rejected) and the `60000.00` wall would vanish.
+
+**Dead letter: 1 record** — `out_of_order`.
+
+---
+
 ## Where to look when something disagrees
 
 Per stage, for pair 1:
@@ -444,11 +591,12 @@ ex8-p1-type-validated-raw-flink   # job 2 accepted
 ex8-p1-rejected-flink             # job 2 rejected — carries the reason string
 ex8-p1-rebased-flink              # job 3
 ex8-p1-applied-precision-flink    # job 4 (scenario 05 shows up here)
-ex8-p1-orderbook-snapshot-flink   # job 5 full book
-ex8-p1-{side}                     # job 6 → consolidator → UI
+ex8-p1-orderbook-snapshot-flink   # job 5 full book (consumed by the aggregator)
+p1-{side}                         # aggregator output (union of all exchanges) → UI
 ```
 
-(Scenario 07 is the same chain under `ex3-p1-*`; scenarios 08–12 under `ex1-p1-*`.)
+(Scenario 07 is the same chain under `ex3-p1-*`; scenarios 08–12 under `ex1-p1-*`; scenarios
+13–17 under `ex2-p1-*`.)
 
 The dead-letter topic carries the rejection reason, so 01/03/04 are checked there directly
 rather than inferred from the UI. Each scenario states its expected dead-letter count above;
@@ -468,6 +616,11 @@ those counts are per-run, so read only the records produced since your reset.
 | 10 | 2 — `sequence_gap`, `awaiting_snapshot` |
 | 11 | 0 |
 | 12 | 1 — `out_of_order` |
+| 13 | 0 |
+| 14 | 1 — `no_baseline` |
+| 15 | 2 — `sequence_gap`, `awaiting_snapshot` |
+| 16 | 0 |
+| 17 | 1 — `out_of_order` |
 
 More than expected means something valid was rejected; fewer means a check is not firing.
 

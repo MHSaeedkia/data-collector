@@ -35,7 +35,7 @@ import java.util.Map;
  *
  * <p><b>Prices are canonicalized before use as map keys</b> ({@code stripTrailingZeros}), because
  * MapState is hash-based: without it "10.50" and "10.5" would be two different levels for the same
- * price (a lesson from the consolidator).
+ * price (a lesson from the aggregation stage).
  *
  * <p>No checkpointing is configured anywhere on this platform yet, so after a restart a book is
  * empty until the next snapshot re-seeds it. Known, shared, not solved here.
@@ -59,9 +59,17 @@ public class BookBuildFunction
                                Collector<OrderBookSnapshot> out) throws Exception {
         event.getPipelineTimings().setBookBuildIn(System.currentTimeMillis());
 
-        boolean replace = "snapshot".equals(event.getType());
-        applySide(asks, event.getAsks(), replace);
-        applySide(bids, event.getBids(), replace);
+        if ("reset".equals(event.getType())) {
+            // Job 2 emits a reset marker on a sequence gap: clear
+            // the whole book so the emitted snapshot is empty and the exchange drops out downstream,
+            // rather than serving its pre-gap diverged book until the next real snapshot.
+            asks.clear();
+            bids.clear();
+        } else {
+            boolean replace = "snapshot".equals(event.getType());
+            applySide(asks, event.getAsks(), replace);
+            applySide(bids, event.getBids(), replace);
+        }
 
         OrderBookSnapshot book = new OrderBookSnapshot(
                 event.getExchangeId(), event.getPairId(), event.getEventTime(),

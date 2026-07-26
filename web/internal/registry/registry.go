@@ -54,7 +54,7 @@ func (r *Registry) Refresh(ctx context.Context) {
 	}
 }
 
-// Enrich resolves a raw consolidated book into the display shape pushed
+// Enrich resolves a raw aggregated book into the display shape pushed
 // to the browser. Unknown ids fall back to placeholders.
 func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 	r.mu.RLock()

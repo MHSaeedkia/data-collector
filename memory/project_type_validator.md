@@ -62,7 +62,7 @@ accepted event = last-accepted event_time, symmetric with `lastSeq`); the null-s
 `out_of_order` when `event_time < lastEventTime` **before** mutating state. Strict `<` (not `<=`) on
 purpose: equal-event-time frames pass, so ex3 wallex snapshots stamped the same processing-time
 millisecond aren't false-rejected (an equal-time duplicate re-applied is idempotent downstream; the
-consolidator dedups by strict `<` too). Seq-bearing snapshots (ex6/ex8) are unaffected — their old
+aggregator dedups by strict `<` too). Seq-bearing snapshots (ex6/ex8) are unaffected — their old
 snapshots are already caught by the seq `<= lastSeq` check. 16 harness tests (2 new). Still not run
 live.
 
@@ -71,6 +71,54 @@ the function so job wiring + tests share it). No metrics counters (unlike job 1'
 dead-letter topic IS the audit record). Timings: stamps `type_validate_in` on entry and
 `type_validate_out` before the main `collect`; rejects keep `type_validate_out` null (never emitted
 onward), `rejectedAt` records the dead-letter time.
+
+## Reset marker on gap (added 2026-07-21)
+
+The true-gap `else` branch now ALSO emits a synthetic **reset** onto the MAIN stream (not just the
+dead-letter): `type="reset"` (`RESET` constant), null seq/asks/bids, gap event's identity +
+event_time. Job 5 turns it into an emptied book so the exchange **drops out** of the aggregated view
+instead of serving its pre-gap diverged book until the next snapshot — restoring the old
+monolithic-merger "gap ⇒ clear the book" guarantee ([[orderbook-aggregation]]). The offending update
+is **still dead-lettered** unchanged.
+
+**Why a fresh `PipelineTimings` on the reset, not the gap event's:** the same gap event is
+simultaneously dead-lettered (where `type_validate_out` must stay null). Reusing its timings object
+and stamping `_out` for the reset would leak onto the rejected copy — they'd alias. So `emitReset`
+builds a new event with its own timings.
+
+**Emitted once per gap episode** for free: the branch is only reached on the not-awaiting→awaiting
+transition; every subsequent held update returns at the `awaitingSnapshot` reject above, so no second
+reset fires until a snapshot re-syncs and a new gap occurs. Exchange-agnostic (any delta feed). Tests
+use a `validBusiness()` helper filtering resets so the existing sequence assertions are unchanged; a
+dedicated test pins the reset's fields + once-per-episode.
+
+**LIVE BUG on the first gap test (2026-07-22) — `type` is an Avro ENUM, not a free string.** Plan
+assumption #3 ("`RawOrderBookEvent.type` is a plain string, `"reset"` is free") was WRONG. The first
+live snapshot→2 updates→gap test crashed the TaskManager: `RawOrderBookEventSerializer.serialize`
+→ `new GenericData.EnumSymbol(typeSchema, "reset")` → Avro `getEnumOrdinal("reset")` returned null
+(NPE) because the registered `raw-order-book-event` `Type` enum was `["snapshot","update"]`. The job
+FAILED, so the reset never reached job 5 → **the book was never cleared** = exactly the user's "gap
+not cleaned" symptom (the NPE, not the logic, was the fault). Fix: added `"reset"` to the `Type`
+enum in `schemas/raw_order_book_event.avsc` (single source of truth) and re-registered to the live
+registry — adding an enum symbol is BACKWARD-compatible (dry-run `is_compatible:true`; now v2 / id 7).
+**No Java rebuild**: production reads the wire schema via `AvroSchemaLoader.loadLatest` and the Java
+model's `type` is a plain `String`. BUT serializers cache `loadLatest` once, so **the running jobs
+must be resubmitted** to pick up v2 — `make run-normalizer-jobs` (cancel+resubmit; NOT
+`refresh-normalizer`, which `down -v`s and wipes the registry/data). This is the SAME standing rule
+as the `rejected-order-book-event`/`order-book-snapshot` re-registration gotchas above.
+
+**Redo for the other delta feeds — the gap-drop mechanism is exchange-agnostic, so there is NO
+per-exchange CODE to repeat.** The reset marker → empty book ([[book-builder]]) → drop-from-union
+([[aggregator]]) path all lives in the exchange-agnostic gap branch, and the enum fix is a one-time
+global schema change. What IS per-delta-feed is the LIVE verification: repeat the
+snapshot→updates→gap live test for each delta feed — **ex1 nobitex, ex6 bybit, ex8 okx** — and
+confirm that exchange drops out of `p{id}-{side}` on the gap and returns on the next snapshot/resync.
+**ex2 bitpin joined this list 2026-07-25** — it was re-classified from snapshot-only to
+REST-snapshot + WS-delta exactly like ex1, and needed NO job-2 code change (the `baselinePending`
+resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extractor]].
+(Remaining snapshot-only feeds ex4/ex5 and the no-ordering ex3 never hit the gap branch, so they
+never emit a reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+verified live yet.**
 
 ## Gotchas (all cost real debugging time 2026-07-15)
 

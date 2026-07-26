@@ -4,17 +4,16 @@ set -euo pipefail
 # Clears the pipeline's in-memory state so a scenario can be run in isolation.
 #
 # Every manual-test scenario targets the SAME pair (BTC-USDT, pair_id 1), so the only thing
-# separating one scenario from the next is job state. Four jobs are stateful and must be
+# separating one scenario from the next is job state. Three jobs are stateful and must be
 # recycled; the other three (pair-extractor, rebaser, precision) are stateless and are left
 # alone:
 #
-#   orderbook-consolidator     per-exchange book + last event_time
-#   normalizer-level-emitter   its copy of "what we already told the consolidator"
+#   normalizer-aggregator      per-exchange book + last event_time (keyed by pair+side)
 #   normalizer-book-builder    the order book itself (MapState per side)
 #   normalizer-type-validator  {lastSeq, awaitingSnapshot}   <- the one scenario 01 depends on
 #
 # There are no checkpoints configured anywhere in this platform, so cancel+resubmit IS the
-# state reset. Jobs are cancelled and resubmitted DOWNSTREAM-FIRST (consolidator -> 6 -> 5 -> 2)
+# state reset. Jobs are cancelled and resubmitted DOWNSTREAM-FIRST (aggregator -> 5 -> 2)
 # because every source reads `latest`: an upstream job restarted first would emit into a topic
 # nobody is reading yet.
 #
@@ -32,8 +31,7 @@ command -v curl >/dev/null || { echo "curl is required"; exit 1; }
 
 # "<flink job name>:<uploaded jar name prefix>", downstream-first.
 JOBS=(
-    "orderbook-consolidator:orderbook-consolidator"
-    "normalizer-level-emitter:job-level-emitter"
+    "normalizer-aggregator:job-aggregator"
     "normalizer-book-builder:job-book-builder"
     "normalizer-type-validator:job-type-validator"
 )

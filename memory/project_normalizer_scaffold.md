@@ -11,9 +11,9 @@ The Maven multi-module home of the 6 raw-pipeline jobs ([[raw-pipeline-decision]
 
 ## Module conventions (follow these when adding job modules in M2–M7)
 
-- Parent: `io.tibobit:normalizer-parent` (packaging `pom`), versions copied from the
-  consolidator pom (Flink 2.2.0, kafka connector 5.0.0-2.2, avro 1.11.4, confluent client
-  7.5.3, JUnit 5.10.2, AssertJ 3.25.3, Java 21). All shared deps live in
+- Parent: `io.tibobit:normalizer-parent` (packaging `pom`); versions: Flink 2.2.0, kafka
+  connector 5.0.0-2.2, avro 1.11.4, confluent client 7.5.3, JUnit 5.10.2, AssertJ 3.25.3,
+  Java 21. All shared deps live in
   `dependencyManagement`; plugins (resources/surefire/jacoco/shade) in `pluginManagement` —
   job modules declare them version-less.
 - **Modules are added one per milestone** (user decision): `<modules>` starts with `common`
@@ -31,9 +31,9 @@ The Maven multi-module home of the 6 raw-pipeline jobs ([[raw-pipeline-decision]
 
 - `model/`: `PriceLevel`, `RawOrderBookEvent` (nullable `Long sequenceId`, nullable
   `List<PriceLevel> asks/bids` — null ≠ empty, see [[avro-schema-orderbook]]),
-  `OrderBookSnapshot`, `RejectedOrderBookEvent`. Consolidator-style mutable POJOs.
-- `avro/AvroSchemaLoader`: verbatim port from the consolidator (`loadLatest` = registry,
-  `load` = classpath, tests only).
+  `OrderBookSnapshot`, `RejectedOrderBookEvent`. Plain mutable POJOs (no-arg ctor + getters).
+- `avro/AvroSchemaLoader`: loads Avro schemas (`loadLatest` = registry, `load` = classpath,
+  tests only).
 - `serde/`: `RawOrderBookEventSerializer`/`Deserializer`, `OrderBookSnapshotSerializer`/
   `Deserializer`, `RejectedOrderBookEventSerializer` (**serializer only** — nothing consumes
   dead-letter; add a deserializer only if a consumer appears). Mapping statics are
@@ -51,19 +51,16 @@ The Maven multi-module home of the 6 raw-pipeline jobs ([[raw-pipeline-decision]
 
 ## Deploy tooling
 
-- `flink/normalizer/run-job.sh <module>`: consolidator's script parameterized — builds with
+- `flink/normalizer/run-job.sh <module>`: parameterized — builds with
   `-pl <module> -am`, uploads to `FLINK_API` (default `http://localhost:7070`), submits via
   manifest Main-Class, waits for RUNNING, dumps root cause + taskmanager logs on failure.
   No-arg run prints available modules from the parent pom.
 - `Makefile`: `make run-local MODULE=job-x` / `run-remote` (192.168.150.104) / `test`.
-- `Dockerfile` + `confluent-deps-pom.xml`: byte-identical copies of the consolidator's — ONE
-  cluster image hosts consolidator + normalizer jobs. If the consolidator Dockerfile changes,
-  mirror it here.
-- `docker-compose-normalizer.yml` (repo root): **the full replacement stack** (user decision
-  2026-07-15) — identical to `docker-compose-orderbook-consolidator.yml` (same container
-  names/ports/volumes, so only ONE of the two composes runs at a time) except jobmanager/
+- `Dockerfile` + `confluent-deps-pom.xml`: build the one cluster image that hosts the 6
+  normalizer jobs (Flink libs + confluent registry deps baked into `/opt/flink/lib/`).
+- `docker-compose.yml` (repo root): **the full stack** (user decision 2026-07-15) — jobmanager/
   taskmanager build from `./flink/normalizer` and the taskmanager has **8 task slots** so the
-  single cluster fits the consolidator job + 6 normalizer jobs.
+  single cluster fits all 6 normalizer jobs.
 
 ## Smoke-test rule (RULE, user decision 2026-07-15 — applies to EVERY job's smoke)
 
@@ -93,8 +90,8 @@ either way the smoke must never depend on reference data it hasn't pinned (see [
 
 ## `make refresh-normalizer` — submission order is load-bearing (2026-07-19)
 
-Rebuilds the stack and submits the consolidator plus all 6 normalizer jobs, **downstream-first**:
-consolidator, then job 6 → job 1. Every source reads `OffsetsInitializer.latest()`, so a job started
+Rebuilds the stack and submits all 6 normalizer jobs, **downstream-first**: aggregator (job 6),
+then job 5 → job 1. Every source reads `OffsetsInitializer.latest()`, so a job started
 *after* its upstream silently misses everything the upstream emitted in the gap. `run-job.sh` blocks
 until the job reports RUNNING, which is what makes sequential Makefile lines a real ordering rather
 than a hopeful one. Same constraint drives topic pre-creation in warmup.sh
@@ -107,16 +104,7 @@ via the REST API and blocks until each reaches a terminal state, otherwise resub
 on slot exhaustion. `refresh-normalizer` deliberately does *not* call it: its `down -v` already
 destroys the cluster.
 
-`make run-consolidator-job` is the consolidator-only equivalent of `run-normalizer-jobs`: pull,
-cancel, resubmit just `flink/orderbook-consolidator`. It is meant for the **standalone**
-consolidator stack (`docker-compose-orderbook-consolidator.yml`), which binds the same
-`localhost:7070` and `jobmanager` container name as the normalizer stack — the two are mutually
-exclusive, only one can be up at a time. **Gotcha:** `cancel-flink-jobs.sh` cancels *every* job on
-whatever cluster answers on 7070. If the normalizer stack happens to be the one running,
-`run-consolidator-job` will kill the 6 normalizer jobs and not bring them back — use
-`run-normalizer-jobs` there instead.
-
-**Why:** every job module M2–M7 builds on these conventions; deviating breaks run-job.sh or
-duplicates common code.
-**How to apply:** when adding a job module, copy the conventions above; when touching the
-cluster image or compose, keep the consolidator/normalizer copies in sync.
+**Why:** every job module builds on these conventions; deviating breaks run-job.sh or duplicates
+common code.
+**How to apply:** when adding a job module, copy the conventions above; when touching the cluster
+image or compose, keep the image and compose in sync.

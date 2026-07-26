@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # ts handling: for okx, `ts` is the sequence id AND the event time. Files carry a fixed
 # synthetic base so the timeline is readable and diffable, but that base is FUTURE-dated
-# relative to real time — sending it verbatim would poison the consolidator's stored
+# relative to real time — sending it verbatim would poison the aggregator's stored
 # timestamp (it drops events older than stored) and every later real event would be dropped
 # until wall-clock caught up. So each scenario's ts window is shifted onto now, aligned to the
 # 300 ms cadence, preserving every delta within the scenario (the +300 steps, the deliberate
@@ -66,9 +66,11 @@ fi
 
 # ex8 carries `ts` (which is ALSO its sequence id, so it aligns to the 300 ms cadence); ex1
 # carries `lastUpdate` (event time only — its sequence id is the independent `pub.offset`, left
-# untouched, so no cadence alignment). ex3/wallex has no ordering field (job 1 stamps processing
-# time). Both future-dated synthetic bases are shifted onto now so the consolidator's stored
-# event_time is not poisoned (see README, "Why the script rewrites ts").
+# untouched, so no cadence alignment); ex2 carries `event_time`, event time only, in TWO wire
+# types — epoch millis on the REST snapshot, an ISO-8601 string on the WS delta. ex3/wallex has
+# no ordering field (job 1 stamps processing time). Both future-dated synthetic bases are shifted
+# onto now so the aggregator's stored event_time is not poisoned (see README, "Why the script
+# rewrites ts").
 DELTA=0
 MUT='.'
 if [ "$EXID" = "8" ]; then
@@ -80,6 +82,18 @@ elif [ "$EXID" = "1" ]; then
     MIN_TS="$(jq -r '(.lastUpdate // .push.pub.data.lastUpdate) // empty' "$DIR"/*.json | sort -n | head -1)"
     DELTA=$(( $(date +%s) * 1000 - MIN_TS ))
     MUT='if .lastUpdate then .lastUpdate += $d elif (.push.pub.data.lastUpdate) then .push.pub.data.lastUpdate += $d else . end'
+elif [ "$EXID" = "2" ]; then
+    # Both ex2 bases are whole seconds, so DELTA is a whole-second multiple and the shift is exact
+    # in millis (REST) and in seconds (WS ISO) alike. Frames whose event_time is neither shape are
+    # left verbatim — that includes scenario 16's deliberately string-typed snapshot event_time,
+    # whose whole point is that job 1 drops it.
+    MIN_TS="$(jq -r 'if (.event_time | type) == "number" then .event_time
+                     elif (.push.pub.data.event_time | type) == "string" then ((.push.pub.data.event_time | fromdateiso8601) * 1000)
+                     else empty end' "$DIR"/*.json | sort -n | head -1)"
+    DELTA=$(( $(date +%s) * 1000 - MIN_TS ))
+    MUT='if (.event_time | type) == "number" then .event_time += $d
+         elif (.push.pub.data.event_time | type) == "string" then .push.pub.data.event_time |= ((fromdateiso8601 + ($d / 1000 | floor)) | todateiso8601)
+         else . end'
 fi
 
 echo "=== $(basename "$DIR") -> $TOPIC (ts shift: ${DELTA} ms) ==="

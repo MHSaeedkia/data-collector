@@ -79,12 +79,14 @@ class NobitexParserTest {
     }
 
     /**
-     * Given a book frame from another exchange's channel format (bitpin's orderbook:BTC_USDT),
-     * When parsed, Then it is discarded — the channel prefix is the recognition key.
+     * Given book frames from another exchange (bitpin's WS channel orderbook:BTC_USDT, and its
+     * REST snapshot — same action/pair/epoch-millis shape, but the timestamp is named
+     * event_time where nobitex names it lastUpdate), When parsed, Then both are discarded.
      */
     @Test
     @DisplayName("discards frames from a foreign channel format")
     void discardsForeignChannel() throws Exception {
+        assertThat(parser.parse(Fixtures.bytes("ex2-update.json"))).isEmpty();
         assertThat(parser.parse(Fixtures.bytes("ex2-snapshot.json"))).isEmpty();
     }
 }

@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// consolidatedOrderBookEventSchema mirrors
-// schemas/consolidated_order_book_event.avsc — the wire shape the Flink
-// consolidator publishes and this package decodes.
-const consolidatedOrderBookEventSchema = `{
+// aggregatedOrderBookEventSchema mirrors
+// schemas/aggregated_order_book_event.avsc — the wire shape the Flink
+// aggregator publishes and this package decodes.
+const aggregatedOrderBookEventSchema = `{
 	"type": "record",
-	"name": "ConsolidatedOrderBookEvent",
+	"name": "AggregatedOrderBookEvent",
 	"namespace": "io.tibobit.orderbook",
 	"fields": [
 		{"name": "pair_id", "type": "int"},
@@ -27,7 +27,7 @@ const consolidatedOrderBookEventSchema = `{
 		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
 		{"name": "levels", "type": {"type": "array", "items": {
 			"type": "record",
-			"name": "ConsolidatedLevel",
+			"name": "AggregatedLevel",
 			"fields": [
 				{"name": "exchange_id", "type": "int"},
 				{"name": "price", "type": "string"},
@@ -41,7 +41,7 @@ const consolidatedOrderBookEventSchema = `{
 // big-endian schema id + Avro binary payload.
 func wireMessage(t *testing.T, schemaID uint32, we wireEvent) []byte {
 	t.Helper()
-	sch, err := avro.Parse(consolidatedOrderBookEventSchema)
+	sch, err := avro.Parse(aggregatedOrderBookEventSchema)
 	require.NoError(t, err)
 	payload, err := avro.Marshal(sch, we)
 	require.NoError(t, err)
@@ -60,7 +60,7 @@ func newTestRegistry(t *testing.T, schemaID uint32) (url string, requests *int) 
 		*requests++
 		assert.Equal(t, wantPath, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"schema": ` + mustQuoteJSON(consolidatedOrderBookEventSchema) + `}`))
+		w.Write([]byte(`{"schema": ` + mustQuoteJSON(aggregatedOrderBookEventSchema) + `}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL, requests

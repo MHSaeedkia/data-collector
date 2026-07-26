@@ -43,8 +43,6 @@ final class PipelineTimingsRecords {
                 .set("precision_out", t.getPrecisionOut())
                 .set("book_build_in", t.getBookBuildIn())
                 .set("book_build_out", t.getBookBuildOut())
-                .set("level_emit_in", t.getLevelEmitIn())
-                .set("level_emit_out", t.getLevelEmitOut())
                 .build();
     }
 
@@ -64,8 +62,6 @@ final class PipelineTimingsRecords {
         t.setPrecisionOut((Long) r.get("precision_out"));
         t.setBookBuildIn((Long) r.get("book_build_in"));
         t.setBookBuildOut((Long) r.get("book_build_out"));
-        t.setLevelEmitIn((Long) r.get("level_emit_in"));
-        t.setLevelEmitOut((Long) r.get("level_emit_out"));
         return t;
     }
 }

@@ -35,6 +35,47 @@ the baseline (new `baselinePending` state, exchange-agnostic; ex3 also hits it h
 Fixtures: `ex1-snapshot.json` is now the REST payload; the old WS Centrifugo message moved to
 `ex1-update.json` (BitpinParserTest's foreign-channel case + smoke both follow it).
 
+## ex2 bitpin — same split (2026-07-25, was "snapshot on every message")
+
+**The exact same wrong assumption, corrected the same way.** bitpin also serves the initial book
+over REST and only deltas over WS, so `BitpinParser` is now structurally identical to
+`NobitexParser`:
+
+- **REST snapshot**: `"action":"snapshot"` + NiFi-injected top-level `"pair"` → `type="snapshot"`,
+  `sequence_id=null`, jump 0, event_time = `event_time`.
+- **WS delta**: the Centrifugo push on `orderbook:{market}` → `type="update"`,
+  `sequence_id=pub.offset`, `sequence_jump=1`, event_time = `data.event_time`.
+
+**⚠ `event_time` has TWO wire types inside ex2** (user, 2026-07-25, revising the initial
+same-format assumption): the WS field is an **ISO-8601 string** (`Instant.parse`), the REST field
+is **epoch millis as a JSON number** (read verbatim via `asLong`). Same name, different type — the
+two branches must not share a timestamp code path, and the required-field checks
+(`isTextual` vs `isIntegralNumber`) are what enforce it.
+
+**`pair` must be `BTC_USDT` with the underscore** (user-confirmed 2026-07-25) — the DB market
+string and the WS channel suffix agree, and job 1's `"2|{market}"` lookup is exact, so `BTCUSDT`
+would drop silently. This is the standing NiFi-contract trap ([[type-validator]] / the lbank note
+below).
+
+**No job-2 change was needed** — `baselinePending` and the null-seq `out_of_order` guard were built
+exchange-agnostic for ex1, so ex2 inherited both. **Same coupled-deploy warning as ex1**: parser +
+NiFi's ex2 REST feed cut over together or every ex2 update rejects `no_baseline`.
+
+Runnable e2e coverage: [[manual-test-data]] scenarios 13–17 (mirror of ex1's 08–12), including one
+file that is a REST snapshot with a *string* `event_time` — the drop-with-no-dead-letter failure the
+two wire types make possible.
+
+**New cross-exchange hazard:** ex1 and ex2 REST snapshots are now structurally IDENTICAL except
+for the timestamp field's NAME — both are `action`+`pair`+epoch-millis (`lastUpdate` vs
+`event_time`). Each parser's snapshot branch requires its own name, so each rejects the other's
+payload; tests pin both directions. Production never cross-parses (`Parsers.byExchangeId()` routes
+by topic), but **do not relax those field checks to "action only"** — the name is the only
+discriminator left.
+
+Fixtures: `ex2-snapshot.json` is now the REST payload; the old WS message moved to
+`ex2-update.json` (Nobitex/Ramzinex foreign-frame tests + smoke follow it). Unit-verified only —
+**not run live**.
+
 ## Decisions made at implementation (were open in todo.md)
 
 - **ex9 lbank is SEEDED BUT NOT IMPLEMENTED** (teammate commit `195a735`, 2026-07-20 — DB seed +
@@ -48,7 +89,7 @@ Fixtures: `ex1-snapshot.json` is now the REST payload; the old WS Centrifugo mes
   (1–6 + 8) and `PairExtractFunction` drops unparsered exchanges via the `dropped-no-parser`
   counter. Rationale: one place to change when ex7 lands; also safely absorbs any future
   `ex{n}-raw` topic (warmup.sh is DB-driven, so new subscribed exchanges get topics).
-- **Offsets: `latest`** (consistent with the consolidator — live feed, no replay).
+- **Offsets: `latest`** (consistent with the aggregator — live feed, no replay).
 - **event_time stamping per exchange** (job 2 and audits read this): ex1 `data.lastUpdate`,
   ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts`, ex6 `cts`
   (matching-engine time — chosen over outer `ts` as the analog of okx's data ts; revisit if

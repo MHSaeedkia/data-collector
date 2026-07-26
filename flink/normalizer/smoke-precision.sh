@@ -35,7 +35,7 @@ set -euo pipefail
 # asks, two of which collide, and asserts two come out — this job can now change a side's length.
 #
 # Prerequisites (this is a TEST, not a deploy):
-#   - the normalizer stack is up (docker-compose-normalizer.yml)
+#   - the normalizer stack is up (docker-compose.yml)
 #   - the DB is warmed (scripts/warmup.sh) so exchange_markets resolves OKX BTC-USDT -> p1
 #   - ALL FOUR jobs are submitted: ./run-job.sh job-pair-extractor
 #                                  ./run-job.sh job-type-validator

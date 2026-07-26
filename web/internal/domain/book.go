@@ -1,6 +1,6 @@
 package domain
 
-// RawLevel/RawBook are the consolidated book as produced by the Flink job
+// RawLevel/RawBook are the aggregated book as produced by the Flink job
 // (identity only: pair_id / exchange_id, no display fields).
 
 type RawLevel struct {

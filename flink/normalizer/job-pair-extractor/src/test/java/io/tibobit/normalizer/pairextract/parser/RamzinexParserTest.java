@@ -54,7 +54,7 @@ class RamzinexParserTest {
     @Test
     @DisplayName("discards non-book frames")
     void discardsNonBookFrames() throws Exception {
-        assertThat(parser.parse(Fixtures.bytes("ex2-snapshot.json"))).isEmpty();
+        assertThat(parser.parse(Fixtures.bytes("ex2-update.json"))).isEmpty();
         assertThat(parser.parse("{}".getBytes())).isEmpty();
     }
 }
