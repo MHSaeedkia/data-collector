@@ -45,8 +45,6 @@ and never shells into a container. Copy `.env.example` to `.env` to override.
 
 ## Before a live run
 
-- **Stop NiFi.** A live feed on the exchange under test corrupts results, and the
-  per-`exchange_id` scoping of the assertions does not save you.
 - All six jobs must have been submitted at least once (`make refresh-normalizer`) — the reset
   resubmits from jars already uploaded to the cluster, it does not build anything.
 - The `"reset"` symbol must be registered in the `raw-order-book-event` `Type` enum **and the

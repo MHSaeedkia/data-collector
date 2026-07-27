@@ -571,8 +571,7 @@ Tasks will be added one at a time, on the user's instruction.
 
 **Prerequisite before any live run:** the `"reset"` symbol must be registered in the
 `raw-order-book-event` `Type` enum **and** the jobs resubmitted after, or job 2 NPEs serializing it
-(M11). Registered 2026-07-22; no feed verified live. Also stop NiFi — a live feed on the exchange
-under test corrupts results, and exchange-scoped assertions do not save it.
+(M11). Registered 2026-07-22; no feed verified live.
 
 **Dominant risk:** the expectations have never been validated live, so early failures are as likely
 to be the README's or the harness's fault as the pipeline's. Budget for triage.
