@@ -1,14 +1,17 @@
 ---
 name: e2e-harness
-description: 2026-07-25 PLAN (scaffold only) — Go end-to-end test harness replacing the 6 smoke-*.sh + manual-test-data/{produce,reset}.sh; raw in, aggregated book asserted out; design decisions and the sharp edges. No task breakdown — the user assigns work one item at a time.
+description: 2026-07-25 PLAN (scaffold only) — Go end-to-end test harness replacing the 6 smoke-*.sh + manual-test-data/{produce,reset}.sh; raw in, aggregated book asserted out. The suite OWNS its stack via testcontainers (user, 2026-07-27) — the dev compose stack is not used. Design decisions and the sharp edges. No task breakdown — the user assigns work one item at a time.
 metadata:
     type: project
 ---
 
 # Go e2e test harness — PLAN, 2026-07-25
 
-**Status: DESIGN ONLY.** Decided with the user 2026-07-25. Only the `e2e/` module scaffold exists
-(`internal/config` + its tests; the other packages are empty dirs).
+**Status: DESIGN ONLY.** Decided with the user 2026-07-25, **amended 2026-07-27: the suite owns its
+stack via testcontainers** and the dev compose stack is out of the picture — see "The suite owns its
+stack" below, which supersedes anything here that assumes a long-lived stack on fixed host ports.
+Only the `e2e/` module scaffold exists (`internal/config` + its tests; the other packages are empty
+dirs).
 
 **`todo.md` M13 carries the description only — no task breakdown.** The user removed the phase plan
 2026-07-27: tasks get added one at a time, on their instruction. Do not reconstruct a phase list,
@@ -62,6 +65,94 @@ important." Concretely, for the harness:
   (`internal/kafka`, `internal/postgres`) deliberately NOT unit-tested, composition root at the
   module root.
 
+## The suite owns its stack — testcontainers (user, 2026-07-27, REVERSES the earlier design)
+
+**Superseded:** the 2026-07-25 design attached to the long-lived `docker-compose.yml` dev stack and
+reset job state between scenarios. The user's decision: **testcontainers boots the environment for
+the integration tests, the harness deploys the Flink jobs into it, then produces raw events and
+asserts. The dev compose stack is not used.** I had recommended the opposite (boot cost); the user
+overrode it — do not re-litigate.
+
+**The strongest argument for it, which I underweighted at the time:** the harness becomes the ONLY
+writer of `ex{id}-raw`. On a shared long-lived stack a live collector feed on the exchange under
+test silently corrupts results, and exchange-scoped assertions do not save you. A purpose-built
+stack deletes that whole class of problem by construction rather than by a "remember to stop X"
+line in a checklist.
+
+**The e2e stack is exactly 5 services** — `jobmanager`, `taskmanager`, `kafka`, `schema-registry`,
+`postgres` — and nothing else. **Data collection is out of scope for this project entirely (user,
+2026-07-27): no collector service in `docker-compose.e2e.yml`, and no mention of one anywhere in
+`e2e/`'s documentation.** The suite produces every byte it asserts on.
+
+**Warmup runs before EACH test** (user, 2026-07-27): create the required schemas and topics per
+test, not once per stack boot. `scripts/warmup.sh` cannot be reused — it is `docker exec`-based
+(execs `kafka-topics` into the kafka container and `psql` into postgres). Port its three pieces:
+
+- **schema subjects** — 4 POSTs of `schemas/*.avsc` to `/subjects/{subject}/versions`
+  (`aggregated-order-book-event`, `raw-order-book-event`, `order-book-snapshot`,
+  `rejected-order-book-event`)
+- **topics** — `kadm`, every one `--partitions 1`; the stage/raw/output topic families are derived
+  from a `exchange_markets ⋈ markets ⋈ exchanges` query, so **the DB seed must land before topic
+  creation**
+- **DB seed** — free: mount `postgres/02_seed.sql` into the image's `/docker-entrypoint-initdb.d`
+
+**Open, not yet decided:** whether the stack itself boots once per `go test` run or once per
+scenario. Warmup-per-test is settled; stack scope is not. Inferred from "create schemas and topics
+before each test" that the stack is NOT recreated per test — otherwise topics would come up with it
+— but that is my inference, not the user's words. If the stack is per-run, **job reset between
+scenarios is still required** (all 17 scenarios share `pair_id` 1); re-creating topics does not
+reset Flink operator state. `JobResetter` stays a port either way.
+
+## Nothing may depend on the host machine (user, 2026-07-27)
+
+**The suite must run on a CI/CD platform with NO Java installed.** Therefore **the job jars are
+built inside a container** — a Maven/Flink image — never on the host. This **overrides my earlier
+recommendation** ("pre-build via a Make target, fail fast if the jars are missing"), which silently
+assumed a host JDK + Maven. Docker is the only host dependency the suite may have.
+
+Build facts (verified 2026-07-27 from `flink/normalizer/pom.xml`): **Java 21, Flink 2.2.0**, 7
+modules — `common` + `job-{pair-extractor,type-validator,rebaser,precision,book-builder,aggregator}`.
+`run-job.sh` builds one at a time with `mvn -pl <module> -am package -q -DskipTests`; for the suite,
+one reactor build of all six is enough.
+
+**The cluster image is NOT the stock `flink:` image** — correcting what I wrote above.
+`flink/normalizer/Dockerfile` (`FROM flink:2.2.0-scala_2.12-java21`) layers into `/opt/flink/lib`:
+the Kafka connector 5.0.0-2.2, `flink-avro` + `flink-avro-confluent-registry` 2.2.0, avro 1.11.4,
+Jackson 2.14.3, and the Confluent registry client's full dependency closure (resolved by a throwaway
+apt-installed Maven). Jobs submitted to a stock image would fail at runtime. The e2e stack must
+build/use **that** Dockerfile — note it already establishes the precedent of running Maven at image
+build time.
+
+**Recommended shape (mine, unconfirmed):** a multi-stage builder —
+`FROM maven:3.9-eclipse-temurin-21 AS build`, `mvn package -DskipTests`, final stage carrying just
+the six shaded jars. The Go side builds it, copies the jars out of a throwaway container, and
+REST-uploads them to the JobManager. Keeps **session mode**, so `/jars/{id}/run` and therefore
+cancel+resubmit reset keep working. Do NOT bake jars into `/opt/flink/usrlib` — that is
+application-mode shaped, and REST upload needs the jar bytes client-side anyway.
+
+**Cost, and the thing that will actually hurt:** a cold Maven build pulls the whole Flink dependency
+closure, and the cluster image itself downloads ~10 jars + apt-installs Maven. Mitigations, in
+order: order the Dockerfile `COPY pom.xml` → `dependency:go-offline` → `COPY src` so the dep layer
+is cached; give CI a persistent buildx/registry layer cache; and best for CI, build both images once
+in a build stage, push them, and let the suite consume them by tag via env override
+(`E2E_JOBS_IMAGE` / `E2E_FLINK_IMAGE`). Small port, large time win — without it every CI run pays
+the full download.
+
+**Build-context gotcha:** `flink/normalizer/` is outside `e2e/`, so the builder Dockerfile's context
+must be `flink/normalizer` (suggest `flink/normalizer/Dockerfile.jobs`). Resolve that path from the
+module root, never from the test's working directory.
+
+**Recommended, unconfirmed (rest):**
+
+- **Use testcontainers' compose module** with a dedicated `e2e/docker-compose.e2e.yml` (those 5
+  services) rather than hand-wiring containers in Go — declarative, and diffable against the dev
+  stack.
+- **A reuse escape hatch** (`E2E_REUSE_STACK=1`): CI boots cold, local red-green iteration does not
+  pay a full boot. Triage is where the time will actually go — see the closing risk section.
+- Container **wait strategies** replace only *part* of the `SETTLE` sleep. They cover "registry
+  answers, taskmanager has free slots"; they do **not** cover "every Flink source has been assigned
+  its partitions". Expect to keep a smaller settle.
+
 ## Design decisions worth keeping
 
 **New top-level `e2e/` module, NOT inside `web/`.** `web/Dockerfile` runs `go test -mod=vendor ./...`
@@ -73,10 +164,11 @@ during the image build — an e2e package there would break `docker compose buil
 `pkg/kadm` is not, but **fetching it over the network worked**, so the 403 risk did not materialize.
 Pin to web/'s versions so the cache is shared.
 
-**No `docker exec` anywhere.** Everything talks TCP to the host-published compose ports — kafka
-`localhost:9092`, registry `8082`, Flink REST `7070`, postgres `5432`. This is the single biggest
-win over the bash, and it also kills the `grep -m1 '^{'` needed to strip log4j noise from
-`kafka-avro-console-consumer` stdout.
+**No `docker exec` anywhere.** Everything talks TCP/HTTP to mapped container ports. This kills the
+`grep -m1 '^{'` the bash needs to strip log4j noise out of `kafka-avro-console-consumer` stdout.
+(Originally this meant the compose stack's fixed host ports 9092/8082/7070/5432; since the
+testcontainers decision below the ports are dynamic per run and come from the stack provider, so
+nothing may hardcode them — `internal/config`'s `localhost:*` defaults are now vestigial.)
 
 **Keep the bash's proven read pattern**: capture the topic's END offset before producing, then read
 from exactly that offset. No consumer group, no `auto.offset.reset` race. `kadm.ListEndOffsets` is
@@ -126,11 +218,11 @@ record per side — never a count.
 - **Every scenario resets first** — same three stateful jobs, same downstream-first order as
   [[manual-test-data]]'s `reset.sh`. No checkpointing on this platform ⇒ cancel+resubmit IS the reset.
 - **Assertions scoped by `exchange_id`**, as `smoke-aggregator.sh` already does. Never assert "p1 has
-  exactly N levels" — another exchange or a live NiFi feed may legitimately contribute.
-- **A live NiFi feed on the exchange under test corrupts results** and exchange-scoping does not save
-  it. Preflight: fail loudly if the raw topic's end offset advances while idle. Document stopping NiFi.
-- **Preflight the reference data** as the scripts do: market 1 must be `price_precision 2` /
-  `quantity_precision 8` and rebase `0/0`, or every expected digit is wrong.
+  exactly N levels" — a scenario on another exchange may legitimately contribute to the same pair.
+- **The reference data is now guaranteed rather than checked** — the seed is mounted into the
+  postgres container, so market 1 is `price_precision 2` / `quantity_precision 8`, rebase `0/0`
+  (identity) by construction. Every expected digit depends on that; if the seed ever diverges,
+  every scenario's expectations are wrong at once.
 
 ## Honest scoping
 
