@@ -567,39 +567,7 @@ New top-level `e2e/` module — **not** under `web/`, whose Dockerfile runs `go 
 at image build. No vendoring (the harness never builds in Docker). No `docker exec`: talk TCP to the
 host-published ports 9092 / 8082 / 7070 / 5432.
 
-- [ ] **Phase 1 — get ONE scenario to run live.** `config.go`, `flink.go` + `reset.go` (port
-      `reset.sh`: cancel + resubmit the 3 stateful jobs downstream-first via Flink REST, reusing
-      the uploaded jar), `kafka.go` (produce only), `scenario.go`, `shift.go`. Test resets,
-      produces `01-ex8-update-before-snapshot`, asserts nothing.
-      *Verify:* exits 0, 3 jobs reach RUNNING, kafka-ui shows 3 messages on `ex8-raw` with shifted
-      timestamps in plain (non-scientific) notation.
-      **This alone retires the M8 item "verify `reset.sh`'s Flink REST flow", open since 2026-07-20.**
-- [ ] **Phase 2 — dead-letter oracle, all 17 scenarios.** `avro.go` (generalized Confluent decoder,
-      approach copied from `web/internal/schema/decoder.go`) + the reject half of the expectation
-      table. Cheap: the counts and reasons are already tabulated in the manual-test README
-      (01–07 = 1/0/2/2/0/0/0; 08–12 and 13–17 = 0/1/2/0/1 each).
-      *Verify:* every scenario's `ex{id}-p1-rejected-flink` records match that table.
-- [ ] **Phase 3 — the aggregated book** (the deliverable the user actually asked for). Quiet-window
-      reader + expected final levels per side, scoped by `exchange_id`, taken from the LAST record
-      per side. Do 01–07 first (best documented), then 08–17. **Long pole:** unlike the dead-letter
-      counts these are not tabulated anywhere and must be derived from prose + payloads.
-      *Verify:* scenario 05 in particular — it pins the collision-merge behaviour that M5 still
-      lists as never having run live.
-- [ ] **Phase 4 — stage topics + `pipeline_timings` chain + failure dump.** Where the smoke scripts'
-      per-stage contracts land: monotonic `event_time ≤ pair_extract_in ≤ … ≤ book_build_out`, and
-      on rejects, upstream timings preserved with the failing stage's `_out` null.
-      *Verify:* all 17 green; then deliberately break one expectation and confirm the dump names
-      the right job.
-- [ ] **Phase 5 — delete `produce.sh`, `reset.sh`, and all 6 `smoke-*.sh`.** Two contracts do NOT
-      survive into a scenario-driven harness — decide here, don't discover later:
-      - `smoke-rebaser.sh`'s DB mutation (UPDATE `exchange_markets`, wait out the 60s
-        `RefreshingLookup`, restore on EXIT). Seeded rebase is `0/0` = identity, so **nothing else
-        proves job 3 works**. Port as one standalone Go test, or accept the gap knowingly.
-      - `smoke-pair-extractor.sh`'s 12-fixture sweep — scenarios cover only 4 exchanges, so this
-        loses parser coverage for **ex4, ex5, ex6**.
-- [ ] **Phase 6 — record it.** Flip `memory/project_e2e_harness.md` from PLAN to implemented, update
-      `memory/project_manual_test_data.md` (scripts replaced; the "not run live" caveat resolves),
-      and tick the items this closes in M5, M8, M10, M11, M12.
+Tasks will be added one at a time, on the user's instruction.
 
 **Prerequisite before any live run:** the `"reset"` symbol must be registered in the
 `raw-order-book-event` `Type` enum **and** the jobs resubmitted after, or job 2 NPEs serializing it

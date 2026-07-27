@@ -1,14 +1,18 @@
 ---
 name: e2e-harness
-description: 2026-07-25 PLAN (not implemented) — Go end-to-end test harness replacing the 6 smoke-*.sh + manual-test-data/{produce,reset}.sh; raw in, aggregated book asserted out; design decisions, the sharp edges, and the phasing
+description: 2026-07-25 PLAN (scaffold only) — Go end-to-end test harness replacing the 6 smoke-*.sh + manual-test-data/{produce,reset}.sh; raw in, aggregated book asserted out; design decisions and the sharp edges. No task breakdown — the user assigns work one item at a time.
 metadata:
     type: project
 ---
 
 # Go e2e test harness — PLAN, 2026-07-25
 
-**Status: DESIGN ONLY. No code written.** Decided with the user 2026-07-25; implementation deferred.
-Tasks live in `todo.md` M13.
+**Status: DESIGN ONLY.** Decided with the user 2026-07-25. Only the `e2e/` module scaffold exists
+(`internal/config` + its tests; the other packages are empty dirs).
+
+**`todo.md` M13 carries the description only — no task breakdown.** The user removed the phase plan
+2026-07-27: tasks get added one at a time, on their instruction. Do not reconstruct a phase list,
+here or there, and do not start work off the strength of this document — see [[scope-discipline]].
 
 ## Why
 
@@ -38,7 +42,25 @@ strong preference, and every dependency is already vendored in `web/`.
 
 Decision 2 is what makes decision 4 survivable: the per-stage contracts move into the harness rather
 than vanishing. **I advised against deleting the smokes before the Go harness runs green; the user
-reaffirmed. Sequenced last (M13 phase 5) so there is a working oracle during debugging.**
+reaffirmed. The deletion must still come last — the smokes are the only working oracle while the Go
+harness is debugged against a pipeline that has itself never been verified live.**
+
+## Clean Architecture — a requirement for THIS module (user, 2026-07-27)
+
+**Scope: the `e2e/` harness only.** Not a repo-wide mandate — the user corrected me on that.
+
+"This project should be all in Clean Arch, so testability and portability of all parts are
+important." Concretely, for the harness:
+
+- Dependencies point inward. The expectation/assertion logic depends on nothing; Kafka, the Flink
+  REST API, the schema registry and postgres are adapters at the edge.
+- Depend on narrow interfaces the harness owns, not on franz-go / hamba types.
+- **Everything except the adapters must be unit-testable with no stack running** — no broker, no
+  cluster, no clock, no filesystem. Swapping an adapter must not touch the logic.
+- `web/` is the reference shape ([[orderbook-web]]): `internal/domain` plain structs,
+  `internal/ports` interfaces, pure inner packages tested with hand-written fakes, thin adapters
+  (`internal/kafka`, `internal/postgres`) deliberately NOT unit-tested, composition root at the
+  module root.
 
 ## Design decisions worth keeping
 
@@ -113,13 +135,14 @@ record per side — never a count.
 ## Honest scoping
 
 The **dead-letter oracle is already tabulated** in the README's final table (01–07: 1/0/2/2/0/0/0;
-08–12 and 13–17: 0/1/2/0/1 each) — encoding it is mechanical, which is why it is phase 2.
+08–12 and 13–17: 0/1/2/0/1 each) — encoding it is mechanical and cheap.
 The **final-book expectations are NOT tabulated** and must be derived per scenario from prose plus
-the payload files. That is the bulk of the work and the reason phase 3 is the long pole.
+the payload files. That is the bulk of the work — expect it to dominate whatever the schedule is.
 
 ## Residual coverage the harness does NOT absorb
 
-Two contracts die with the smokes unless separately ported — decide at phase 5:
+Two contracts die with the smokes unless separately ported — decide before deleting them, don't
+discover it after:
 
 - **`smoke-rebaser.sh`'s DB mutation** (UPDATE `exchange_markets`, wait out the 60s
   `RefreshingLookup`, restore on an EXIT trap). The seed is `0/0` = identity, so **nothing else in
@@ -131,5 +154,7 @@ Two contracts die with the smokes unless separately ported — decide at phase 5
 
 The expectations themselves have never been validated live. Early red tests are as likely to be the
 README's fault or the harness's as the pipeline's — **budget for triage, not just implementation**.
-Phase 1 (reset + produce one scenario, assert nothing) is deliberately shaped to retire the oldest
-unknown first: whether `reset.sh`'s REST flow works at all.
+
+The oldest unknown is whether `reset.sh`'s Flink REST flow works at all (open since 2026-07-20, M8).
+Getting reset + produce-one-scenario running live retires it, and asserts nothing — worth doing
+before any expectation work rests on it.
