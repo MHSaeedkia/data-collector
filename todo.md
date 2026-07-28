@@ -547,25 +547,59 @@ Scope confirmed with the user: **ex2 ONLY** this pass (ex3/ex4/ex5 regimes uncha
 - [ ] ex2 is now a delta feed, so it joins the M11 live gap→drop verification list
       (**ex1, ex2, ex6, ex8**).
 
-## Milestone 13 — Go e2e test harness (PLAN ONLY, 2026-07-25)
+## Milestone 13 — Go e2e harness (provisioning + app shell + diagnostics done, 2026-07-28)
 
-Design agreed with the user 2026-07-25; **nothing implemented yet**. Full rationale and the sharp
-edges are in `memory/project_e2e_harness.md` — read it before starting.
+Design agreed with the user 2026-07-25. **Implemented so far: provisioning, the application shell
+and failure diagnostics.** `go run .` boots a stack, registers schemas, creates the scope's topics,
+builds the jars in a container, submits all six jobs, asserts they are RUNNING, reports and tears
+down. Producing payloads and asserting the book is not written. Full rationale and the sharp edges
+are in `memory/project_e2e_harness.md` — read it before starting.
 
 The problem: `manual-test-data/` is the best test asset in the repo and its oracle is a human
 reading 629 lines of prose and eyeballing the web UI. The 6 `smoke-*.sh` assert machine-checkably
 but each stops at its own job's topic, cover ex8 only, and are ~200 lines of copy-pasted
 boilerplate ×5. Neither closes raw-in → aggregated-book-out.
 
-**User decisions (settled, do not re-litigate):** a build-tagged `go test` package; assert *all* of
-{aggregated book, dead-letters, stage topics ALWAYS, dump on failure}; expectations as a Go table
-in the test file; and all the bash gets deleted. Deletion is sequenced LAST on purpose — it is the
-only working oracle while the Go harness is debugged against a pipeline that has itself never been
-verified live. (I advised against deleting the smokes at all; the user reaffirmed.)
+**User decisions (settled, do not re-litigate):** ~~a build-tagged `go test` package~~ →
+**a standalone APPLICATION (user, 2026-07-28)**; assert *all* of {aggregated book, dead-letters,
+stage topics ALWAYS, dump on failure}; expectations as a Go table in source; and all the bash gets
+deleted. Deletion is sequenced LAST on purpose — it is the only working oracle while the Go harness
+is debugged against a pipeline that has itself never been verified live. (I advised against
+deleting the smokes at all; the user reaffirmed. I also recommended keeping `go test` over an
+application; the user chose the application.)
 
 New top-level `e2e/` module — **not** under `web/`, whose Dockerfile runs `go test -mod=vendor ./...`
-at image build. No vendoring (the harness never builds in Docker). No `docker exec`: talk TCP to the
-host-published ports 9092 / 8082 / 7070 / 5432.
+at image build. No vendoring (the harness never builds in Docker). No `docker exec`: everything
+talks TCP/HTTP to mapped container ports, which are assigned per run and never hardcoded.
+
+- [x] **Application shell (2026-07-28)** — `main.go` is the composition root: `-scenario` (exact
+      name, unknown = error not an empty run), `-keep`, `-timeout 40m`, `signal.NotifyContext` so
+      Ctrl-C tears down instead of leaking 5 containers. `internal/runner` = the scenario lifecycle
+      use case (sequential, a failure never aborts the run), `internal/checks` = the three
+      provisioning expectations as `domain.Check` funcs returning `[]domain.Failure`,
+      `internal/report` = terminal output + exit code. Deleted `provision_live_test.go` and the
+      `e2e` build tag — a `main` package is unreachable from `go test` by construction. 10 runner
+      unit tests green; `go test ./...` still needs no Docker.
+- [x] **Deleted `internal/config` + `godotenv` (2026-07-28)** — nothing imported it, and its
+      `localhost:9092/8082/7070` defaults were actively wrong once ports went dynamic.
+- [x] **Failure diagnostics (2026-07-28)** — `harness.Start` no longer tears down; it returns a
+      non-nil `*Env` WITH its error so `internal/diagnostics` can read job states,
+      `/jobs/{id}/exceptions` and the jobmanager/taskmanager log tails off a half-provisioned stack
+      before Close destroys them. Previously a failed submission reported only
+      `not RUNNING within 2m` and the stack trace died with the container.
+- [ ] **Run it live once** — everything above is verified by unit tests and a Docker-less build
+      only. Docker was not running on this machine when it was written, so the provisioning
+      scenario has NOT been executed end to end since the rewrite.
+
+**The suite owns its stack (user, 2026-07-27):** testcontainers boots postgres, kafka,
+schema-registry, jobmanager and taskmanager — the dev compose stack is not used. **One stack per
+scenario**, so there is no job-reset step and no shared operator state. Warmup (4 schema subjects +
+the scope's 9 topics) runs before each test, and creates only the scope's topics, not the ~2,250 the
+seed implies.
+
+**Nothing may depend on the host but Docker (user, 2026-07-27):** CI has no Java, so the job jars are
+built by `flink/normalizer/Dockerfile.jobs` (multi-stage Maven) and copied out of a container. Built
+once per `go test` run, reused by every scenario.
 
 Tasks will be added one at a time, on the user's instruction.
 
