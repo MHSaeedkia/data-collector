@@ -408,7 +408,7 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (7, '30', 52, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
 (7, '196', 53, 'unsubscribe', 0, 0, NULL, 60), -- ompfinex
 (7, '195', 54, 'unsubscribe', -1, 0, NULL, 60), -- ompfinex
-(8, 'BTC-USDT', 1, 'unsubscribe', 0, 0, -2, 60), -- okx
+(8, 'BTC-USDT', 1, 'unsubscribe', 0, 0, -1, 60), -- okx
 (8, 'ETH-USDT', 3, 'unsubscribe', 0, 0, -2, 60), -- okx
 (8, 'XRP-USDT', 5, 'unsubscribe', 0, 0, -4, 60), -- okx
 (8, 'TRX-USDT', 7, 'unsubscribe', 0, 0, -5, 60), -- okx
@@ -425,7 +425,7 @@ INSERT INTO exchange_markets (exchange_id, market, market_id, "status", price_am
 (8, 'NEAR-USDT', 33, 'unsubscribe', 0, 0, -3, 60), -- okx
 (8, 'UNI-USDT', 35, 'unsubscribe', 0, 0, -3, 60), -- okx
 (8, 'AAVE-USDT', 37, 'unsubscribe', 0, 0, -2, 60), -- okx
-(8, 'OKX-USDT', 39, 'unsubscribe', 0, 0, -2, 60), -- okx
+(8, 'OKB-USDT', 39, 'unsubscribe', 0, 0, -2, 60), -- okx
 (8, 'ADA-USDT', 41, 'unsubscribe', 0, 0, -4, 60), -- okx
 (8, 'GRAM-USDT', 43, 'unsubscribe', 0, 0, -3, 60), -- okx
 (8, 'BNB-USDT', 45, 'unsubscribe', 0, 0, -1, 60), -- okx
