@@ -36,12 +36,9 @@ const (
 	pollInterval  = time.Second
 )
 
-// RunJobs cancels whatever is running on the cluster, builds the normalizer
-// modules and submits every job jar, downstream-first.
+// RunJobs builds the normalizer modules and submits every job jar,
+// downstream-first. The cluster must already be idle: call CancelJobs first.
 func RunJobs(ctx context.Context, api, normalizerDir string) error {
-	if err := cancelAll(ctx, api); err != nil {
-		return err
-	}
 	if err := build(ctx, normalizerDir); err != nil {
 		return err
 	}
@@ -145,9 +142,10 @@ func upload(ctx context.Context, api, jar string) (string, error) {
 	return path.Base(resp.Filename), nil
 }
 
-// cancelAll cancels every running job and waits for each to reach a terminal
-// state, so their task slots are free before new jobs are submitted.
-func cancelAll(ctx context.Context, api string) error {
+// CancelJobs cancels every running job and waits for each to reach a terminal
+// state, so their task slots are free before new jobs are submitted — and so
+// nothing is still consuming the topics when they are deleted.
+func CancelJobs(ctx context.Context, api string) error {
 	var list struct {
 		Jobs []struct {
 			ID     string `json:"id"`
