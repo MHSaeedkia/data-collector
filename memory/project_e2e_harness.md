@@ -1,17 +1,20 @@
 ---
 name: e2e-harness
-description: 2026-07-25 PLAN (scaffold only) — Go end-to-end test harness replacing the 6 smoke-*.sh + manual-test-data/{produce,reset}.sh; raw in, aggregated book asserted out. The suite OWNS its stack via testcontainers (user, 2026-07-27) — the dev compose stack is not used. Design decisions and the sharp edges. No task breakdown — the user assigns work one item at a time.
+description: Go end-to-end harness replacing the 6 smoke-*.sh + manual-test-data/{produce,reset}.sh; raw in, aggregated book asserted out. It is a standalone APPLICATION (user, 2026-07-28 — reverses the original `go test` design), owning its stack via testcontainers (user, 2026-07-27). Design decisions and the sharp edges. No task breakdown — the user assigns work one item at a time.
 metadata:
     type: project
 ---
 
 # Go e2e test harness — PLAN, 2026-07-25
 
-**Status: DESIGN ONLY.** Decided with the user 2026-07-25, **amended 2026-07-27: the suite owns its
-stack via testcontainers** and the dev compose stack is out of the picture — see "The suite owns its
-stack" below, which supersedes anything here that assumes a long-lived stack on fixed host ports.
-Only the `e2e/` module scaffold exists (`internal/config` + its tests; the other packages are empty
-dirs).
+**Status: PROVISIONING + APP SHELL + DIAGNOSTICS IMPLEMENTED (2026-07-27, 2026-07-28); everything
+else is still design.** `go run .` boots a stack, registers schemas, creates the scope's topics,
+builds the jars in a container, submits all six jobs, asserts they are RUNNING, reports, and tears
+down. Producing payloads, decoding Avro and asserting the book are NOT written.
+
+Decided with the user 2026-07-25, **amended 2026-07-27: the suite owns its stack via
+testcontainers** and the dev compose stack is out of the picture — see "The suite owns its stack"
+below, which supersedes anything here that assumes a long-lived stack on fixed host ports.
 
 **`todo.md` M13 carries the description only — no task breakdown.** The user removed the phase plan
 2026-07-27: tasks get added one at a time, on their instruction. Do not reconstruct a phase list,
@@ -35,8 +38,8 @@ strong preference, and every dependency is already vendored in `web/`.
 
 ## User decisions (2026-07-25 Q&A — do not re-litigate)
 
-1. **A `go test` package**, build-tagged. The free subtest/filter/report machinery IS the ~200 lines
-   of duplicated bash boilerplate; that is the point, not a side benefit.
+1. ~~**A `go test` package**, build-tagged.~~ **SUPERSEDED 2026-07-28 — it is a standalone
+   application.** See "The harness is an application" below.
 2. **All four oracles**: aggregated book, dead-letter records, **stage topics asserted ALWAYS**, and
    a full stage dump on failure.
 3. **Expectations as a Go table in the test file**, not data files beside the payloads.
@@ -47,6 +50,33 @@ Decision 2 is what makes decision 4 survivable: the per-stage contracts move int
 than vanishing. **I advised against deleting the smokes before the Go harness runs green; the user
 reaffirmed. The deletion must still come last — the smokes are the only working oracle while the Go
 harness is debugged against a pipeline that has itself never been verified live.**
+
+## The harness is an APPLICATION, not a `go test` package (user, 2026-07-28, REVERSES decision 1)
+
+`e2e/` is a `main` package. `go run .` provisions a stack per scenario, asserts, reports, tears
+down, and exits nonzero if anything failed. Flags: `-scenario <name>` (exact match; an unknown
+name is an ERROR, not an empty run), `-keep` (skip teardown for triage), `-timeout` (default 40m).
+
+**I recommended keeping `go test`; the user chose the application — do not re-litigate.** My
+argument was that the free machinery (discovery, `-run`, `t.Cleanup`, CI reports, testify) IS the
+~200 lines of duplicated bash the project set out to delete, so an app rebuilds it by hand. What
+the module now owns explicitly:
+
+| Lost with `go test` | Replaced by |
+| --- | --- |
+| discovery | `scenarios()` in `main.go` — a slice of `domain.Scenario` literals |
+| `-run` regex | `-scenario` exact-name flag + `runner.Filter` |
+| `t.Cleanup` | `defer` + `signal.NotifyContext` — **strictly better**, Ctrl-C now tears down where a killed test binary leaked 5 containers + a network |
+| testify assertions | `domain.Check` funcs returning `[]domain.Failure` — **better for Clean Arch**, assertion logic has no `testing` import |
+| pass/fail + exit code | `internal/runner` + `internal/report` |
+
+**No JUnit/XML** — nothing consumes it; the exit code is what CI needs. Add a format when asked.
+**Unit tests are still `go test ./...`** and need no Docker; there is no build tag any more,
+because a `main` package cannot be reached by `go test` at all.
+
+**`domain.Result` keeps `Err` and `Failures` separate and they must not be collapsed:** `Err` =
+the environment never came up (nothing was asserted); `Failures` = the pipeline behaved
+differently than expected (everything was asserted). The report prints them as ERROR vs FAIL.
 
 ## Clean Architecture — a requirement for THIS module (user, 2026-07-27)
 
@@ -96,12 +126,12 @@ test, not once per stack boot. `scripts/warmup.sh` cannot be reused — it is `d
   creation**
 - **DB seed** — free: mount `postgres/02_seed.sql` into the image's `/docker-entrypoint-initdb.d`
 
-**Open, not yet decided:** whether the stack itself boots once per `go test` run or once per
-scenario. Warmup-per-test is settled; stack scope is not. Inferred from "create schemas and topics
-before each test" that the stack is NOT recreated per test — otherwise topics would come up with it
-— but that is my inference, not the user's words. If the stack is per-run, **job reset between
-scenarios is still required** (all 17 scenarios share `pair_id` 1); re-creating topics does not
-reset Flink operator state. `JobResetter` stays a port either way.
+**RESOLVED 2026-07-27 — one stack PER SCENARIO** (user, over my recommendation of per-run). The
+consequence is the good one: **there is no job-reset step and no `JobResetter` port**. Operator
+state cannot leak between scenarios because the cluster does not survive them, which retires the
+oldest open question in the plan (whether `reset.sh`'s Flink REST flow works) by deleting the need
+for it. The cost is a full boot + warmup + 6 submissions per scenario; the jars are built once per
+`go test` run to keep that survivable.
 
 ## Nothing may depend on the host machine (user, 2026-07-27)
 
@@ -123,12 +153,12 @@ apt-installed Maven). Jobs submitted to a stock image would fail at runtime. The
 build/use **that** Dockerfile — note it already establishes the precedent of running Maven at image
 build time.
 
-**Recommended shape (mine, unconfirmed):** a multi-stage builder —
+**Shape, CONFIRMED and built 2026-07-27:** a multi-stage `flink/normalizer/Dockerfile.jobs` —
 `FROM maven:3.9-eclipse-temurin-21 AS build`, `mvn package -DskipTests`, final stage carrying just
 the six shaded jars. The Go side builds it, copies the jars out of a throwaway container, and
-REST-uploads them to the JobManager. Keeps **session mode**, so `/jars/{id}/run` and therefore
-cancel+resubmit reset keep working. Do NOT bake jars into `/opt/flink/usrlib` — that is
-application-mode shaped, and REST upload needs the jar bytes client-side anyway.
+REST-uploads them to the JobManager. Keeps **session mode**. Do NOT bake jars into
+`/opt/flink/usrlib` — that is application-mode shaped, and REST upload needs the jar bytes
+client-side anyway.
 
 **Cost, and the thing that will actually hurt:** a cold Maven build pulls the whole Flink dependency
 closure, and the cluster image itself downloads ~10 jars + apt-installs Maven. Mitigations, in
@@ -144,14 +174,87 @@ module root, never from the test's working directory.
 
 **Recommended, unconfirmed (rest):**
 
-- **Use testcontainers' compose module** with a dedicated `e2e/docker-compose.e2e.yml` (those 5
-  services) rather than hand-wiring containers in Go — declarative, and diffable against the dev
-  stack.
 - **A reuse escape hatch** (`E2E_REUSE_STACK=1`): CI boots cold, local red-green iteration does not
   pay a full boot. Triage is where the time will actually go — see the closing risk section.
+  (Harder now that the stack is per-scenario, but the need is the same.)
 - Container **wait strategies** replace only *part* of the `SETTLE` sleep. They cover "registry
   answers, taskmanager has free slots"; they do **not** cover "every Flink source has been assigned
   its partitions". Expect to keep a smaller settle.
+
+## Provisioning as built (2026-07-27)
+
+**Hand-wired containers in Go, no compose file** (user, chosen over my compose-module
+recommendation). There is no `docker-compose.e2e.yml` and nothing in `e2e/` mentions one.
+
+**Facts that constrain the wiring — verified from the Java, not assumed:**
+
+- Every job reads its own config from env with **in-network defaults**: `kafka:29092`,
+  `http://schema-registry:8082`, `jdbc:postgresql://postgres:5432/markets`. So the containers'
+  network aliases must be exactly `kafka` / `schema-registry` / `postgres`, and then **no job
+  configuration has to be passed at all**. Change an alias and every job breaks silently.
+- **The database is `markets`**, created by `postgres/01_schema.sql`. `POSTGRES_DB` stays
+  `postgres`; the init scripts make the real one. Waiting for the *second* "database system is ready
+  to accept connections" is what proves the seed landed — the first is the temporary server that
+  runs the init scripts.
+- **All six sources subscribe by topic PATTERN, start at `latest()`, and set no
+  `partition.discovery.interval.ms`.** Hence topics MUST exist before submission; a topic created
+  afterwards is missed entirely or found a discovery interval later, having lost everything produced
+  in between. This is why `provision.Run`'s step order is a contract, not a style choice.
+- **Kafka is the one service whose host port cannot be dynamic.** A broker advertises the address
+  clients reach it on, and that must be in its environment before it starts. The harness picks a
+  free port itself; everything else uses Docker-assigned ports read back at runtime.
+
+**Warmup is scope-scoped, not DB-derived (user, 2026-07-27).** `scripts/warmup.sh` derives topics
+from `exchange_markets`; the seed has 355 rows, so a faithful port would create ~2,250 topics **per
+scenario**. Instead a scenario declares its `Scope{ExchangeID, PairID}` and gets its 9 topics. This
+**removed the Postgres query and the pgx dependency from the harness entirely** — postgres still
+runs, because jobs 3 and 4 look up rebases and precisions in it.
+
+**The jars are built once per process and cached in memory**, even though the stack is per scenario.
+A cold Maven build pulls the whole Flink closure; paying it per scenario would dominate the run.
+
+**Added `flink/normalizer/.dockerignore`** (`*/target/`) so a host-side Maven build cannot leak
+stale jars into either image's build context.
+
+**Known flake, observed 2026-07-27 on the first live run:** the *cluster* image's
+`apt-get install maven` step failed with exit 100 — a transient Debian mirror error — and took the
+whole test down with it, five minutes in. The identical build succeeded on retry. Every run rebuilds
+that image, so CI inherits this: it is the strongest argument for the
+**`E2E_FLINK_IMAGE` / `E2E_JOBS_IMAGE` prebuilt-tag override** (build once in a CI build stage, let
+the suite consume by tag). Not implemented — no authorization.
+
+**The 8s settle survived.** Wait strategies cover "registry answers, taskmanager registered"; they
+do not cover "every source has been assigned its partitions", and nothing in the REST API exposes
+that. Inherited from the shell scripts' `SETTLE=8`.
+
+## Failure diagnostics — and who owns teardown (2026-07-28)
+
+Provisioning failure used to report `not RUNNING within 2m (last state "")` and nothing else,
+because `harness.Start` terminated the stack itself on the way out — the actual stack trace died
+with the taskmanager. Triage is the dominant cost of this harness, so this was the worst place to
+save a few lines.
+
+**`harness.Start` no longer tears anything down. THE CALLER ALWAYS OWNS TEARDOWN.** It returns a
+**non-nil `*Env` alongside its error** whenever containers actually started, so diagnostics can be
+read off a half-provisioned stack before it is closed. The one exception is a `stack.Start`
+failure, which self-terminates its own partial stack and returns nil — there is nothing left to
+read. `ports.Provisioner.Start` does the typed-nil dance deliberately (a `(*Env)(nil)` in an
+interface is not `nil`); do not "simplify" it away.
+
+`internal/diagnostics.Collect` gathers job states, `/jobs/{id}/exceptions` for anything not
+RUNNING, and the last 120 lines of the jobmanager + taskmanager logs. It **never returns an
+error** — diagnostics run when something already went wrong and must not replace the real
+failure; each section reports its own problem inline. The runner collects on a **fresh context**
+(`context.WithoutCancel`), because the most valuable case is precisely when the run's context has
+already timed out or been interrupted.
+
+`stack.Stack` now stores containers as `named{name, c}` and exposes `Logs(ctx, names...)`. The
+five aliases are exported consts (`stack.Kafka`, `stack.JobManager`, …) — they were always a
+contract with the jobs' in-network defaults, and now they are also the log keys.
+
+**`internal/config` is DELETED** (2026-07-28) along with `godotenv`. Nothing imported it, its
+`localhost:9092/8082/7070` defaults were actively wrong once ports went dynamic, and `settle` was
+already hardcoded in `harness.go` duplicating its `defaultSettleSeconds`.
 
 ## Design decisions worth keeping
 
@@ -213,10 +316,12 @@ record per side — never a count.
 
 ## Isolation hazards
 
-- **Scenarios cannot run in parallel.** All 17 target `pair_id` 1 and the aggregator's per-exchange
-  state survives across runs. `t.Run` without `t.Parallel()`.
-- **Every scenario resets first** — same three stateful jobs, same downstream-first order as
-  [[manual-test-data]]'s `reset.sh`. No checkpointing on this platform ⇒ cancel+resubmit IS the reset.
+- **Scenarios cannot run in parallel** — not for state reasons any more (each gets its own stack)
+  but for resource ones: five containers including a Flink cluster, on a Docker Desktop that
+  reported under 4 GB. `t.Run` without `t.Parallel()`.
+- **No reset step.** Superseded by the per-scenario stack. Jobs are still SUBMITTED
+  downstream-first, the same order as [[manual-test-data]]'s `reset.sh`, because sources read from
+  `latest()`.
 - **Assertions scoped by `exchange_id`**, as `smoke-aggregator.sh` already does. Never assert "p1 has
   exactly N levels" — a scenario on another exchange may legitimately contribute to the same pair.
 - **The reference data is now guaranteed rather than checked** — the seed is mounted into the
