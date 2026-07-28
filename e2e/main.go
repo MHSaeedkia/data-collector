@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"orderbook-e2e/config"
+	"orderbook-e2e/flink"
 	"orderbook-e2e/schemaregistry"
 	"orderbook-e2e/topics"
 )
@@ -25,10 +26,15 @@ func main() {
 }
 
 func runTest(cfg config.Config) error {
+	ctx := context.Background()
 	pairID := 1
 	exchangeID := 1
 
-	if err := topics.Create(context.Background(), cfg.KafkaBroker, exchangeID, pairID); err != nil {
+	if err := topics.Create(ctx, cfg.KafkaBroker, exchangeID, pairID); err != nil {
+		return err
+	}
+
+	if err := flink.RunJobs(ctx, cfg.FlinkAPI, cfg.NormalizerDir); err != nil {
 		return err
 	}
 

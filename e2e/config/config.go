@@ -13,6 +13,8 @@ type Config struct {
 	SchemaRegistryURL string
 	SchemasDir        string
 	KafkaBroker       string
+	FlinkAPI          string
+	NormalizerDir     string
 }
 
 // Load reads envFile (if present) into the process environment, then builds the
@@ -26,6 +28,8 @@ func Load(envFile string) (Config, error) {
 		SchemaRegistryURL: env("SCHEMA_REGISTRY_URL", "http://localhost:8082"),
 		SchemasDir:        env("SCHEMAS_DIR", "../schemas"),
 		KafkaBroker:       env("KAFKA_BROKER", "localhost:9092"),
+		FlinkAPI:          env("FLINK_API", "http://localhost:7070"),
+		NormalizerDir:     env("NORMALIZER_DIR", "../flink/normalizer"),
 	}
 
 	if cfg.SchemaRegistryURL == "" {
