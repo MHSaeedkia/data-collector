@@ -9,4 +9,5 @@
 - [x] Send payloads to the kafka topics — `e2e/producer/` produces `payload.SourceData` to `ex{exchangeID}-raw` (2026-07-28, verified live: produced and read back off the broker)
 - [x] Clean slate — `topics.Delete` wipes the 9 topics before `topics.Create` in `runTest` (2026-07-28, verified live on ex99/p99: delete → create → produce → delete → create leaves the topics empty)
 - [x] Setup order — `flink.CancelJobs` exported out of `RunJobs`, so `runTest` is cancel → delete → create → submit (2026-07-28, verified live: `CancelJobs` runs standalone against the Flink API)
+- [x] Warmup package — the cancel → delete → create → submit sequence moved out of `runTest` into `warmup.Run(ctx, cfg, exchangeID, pairID)` (2026-07-28, build/vet clean)
 - [ ] Verify each pipeline step has the wanted value

@@ -29,9 +29,11 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 - `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
   back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
   `AvroTime`.
+- `e2e/warmup/` — `warmup.Run(ctx, cfg, exchangeID, pairID)` is the whole pre-scenario sequence:
+  `flink.CancelJobs` → `topics.Delete` → `topics.Create` → `flink.RunJobs`.
 - `e2e/main.go` — wiring only: load config, `RegisterDir`, then `runTest(cfg, pairID, exchangeID,
-  TestPayload{SourceData, WantedData})`, which calls `flink.CancelJobs`, `topics.Delete`,
-  `topics.Create`, `flink.RunJobs`, then produces `payload.SourceData` to `ex{exchangeID}-raw`.
+  TestPayload{SourceData, WantedData})`, which calls `warmup.Run`, then produces
+  `payload.SourceData` to `ex{exchangeID}-raw`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -47,6 +49,10 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   only the reference for *which* topics exist and with what retention; the harness must not shell
   out to a container. `kadm.CreateTopic` returning `kerr.TopicAlreadyExists` is treated as success,
   which is the `--if-not-exists` behaviour.
+- **Bringing the stack to a clean start is one call, `warmup.Run`, not four in `runTest`.** The four
+  steps are a single unit with an order that must not drift, so they live behind one entry point in
+  their own package; `runTest` is then just warmup → produce → verify. `warmup` imports `config`,
+  `flink` and `topics`, so nothing below it may import `warmup`.
 - **Teardown order is jobs, then topics: cancel → delete → create → submit.** The jobs go down
   first because a running job holds the topics it consumes open while they are being deleted, and
   one left alive would attach to the recreated topics mid-setup and read the harness's own
