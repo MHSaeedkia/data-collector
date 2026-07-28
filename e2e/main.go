@@ -6,10 +6,9 @@ import (
 	"log"
 
 	"orderbook-e2e/config"
-	"orderbook-e2e/flink"
 	"orderbook-e2e/producer"
 	"orderbook-e2e/schemaregistry"
-	"orderbook-e2e/topics"
+	"orderbook-e2e/warmup"
 )
 
 func main() {
@@ -58,21 +57,7 @@ type TestPayload struct {
 func runTest(cfg config.Config, pairID, exchangeID int64, payload TestPayload) error {
 	ctx := context.Background()
 
-	// Jobs go down first: a running job holds the topics open while they are
-	// being deleted, and would read the recreated ones mid-setup.
-	if err := flink.CancelJobs(ctx, cfg.FlinkAPI); err != nil {
-		return err
-	}
-
-	if err := topics.Delete(ctx, cfg.KafkaBroker, exchangeID, pairID); err != nil {
-		return err
-	}
-
-	if err := topics.Create(ctx, cfg.KafkaBroker, exchangeID, pairID); err != nil {
-		return err
-	}
-
-	if err := flink.RunJobs(ctx, cfg.FlinkAPI, cfg.NormalizerDir); err != nil {
+	if err := warmup.Run(ctx, cfg, exchangeID, pairID); err != nil {
 		return err
 	}
 
