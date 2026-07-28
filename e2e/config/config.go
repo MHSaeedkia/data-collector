@@ -12,6 +12,7 @@ import (
 type Config struct {
 	SchemaRegistryURL string
 	SchemasDir        string
+	KafkaBroker       string
 }
 
 // Load reads envFile (if present) into the process environment, then builds the
@@ -24,6 +25,7 @@ func Load(envFile string) (Config, error) {
 	cfg := Config{
 		SchemaRegistryURL: env("SCHEMA_REGISTRY_URL", "http://localhost:8082"),
 		SchemasDir:        env("SCHEMAS_DIR", "../schemas"),
+		KafkaBroker:       env("KAFKA_BROKER", "localhost:9092"),
 	}
 
 	if cfg.SchemaRegistryURL == "" {
