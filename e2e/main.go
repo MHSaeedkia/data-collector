@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"orderbook-e2e/config"
 	"orderbook-e2e/flink"
+	"orderbook-e2e/producer"
 	"orderbook-e2e/schemaregistry"
 	"orderbook-e2e/topics"
 )
@@ -64,7 +66,11 @@ func runTest(cfg config.Config, pairID, exchangeID int64, payload TestPayload) e
 		return err
 	}
 
-	// send payloads to kafka topics
+	rawTopic := fmt.Sprintf("ex%d-raw", exchangeID)
+	if err := producer.SendJSON(ctx, cfg.KafkaBroker, rawTopic, payload.SourceData); err != nil {
+		return err
+	}
+
 	// verify each step has wanted value
 	return nil
 }
