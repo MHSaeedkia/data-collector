@@ -20,6 +20,9 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   exchange/pair pipeline needs, over the Kafka admin API (`kadm`), 1 partition / 1 replica each.
 - `e2e/flink/` — `flink.RunJobs(ctx, api, normalizerDir)` cancels every running job, builds the
   normalizer modules with `mvn`, then uploads and starts the 6 job jars over the Flink REST API.
+- `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
+  back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
+  `AvroTime`.
 - `e2e/main.go` — wiring only: load config, `RegisterDir`, then `runTest(cfg)`, which pins
   `exchangeID`/`pairID` for the scenario and calls `topics.Create` then `flink.RunJobs`.
 
@@ -51,6 +54,11 @@ the 6 from the first (all reach CANCELED) before resubmitting.
   rebuilds `common` six times for the same jars; the harness runs `mvn -f <dir>/pom.xml package -q
   -DskipTests` once and then globs each `<module>/target/*-1.0-SNAPSHOT.jar`, skipping shade's
   `original-*` copy.
+- **The event structs keep the Avro JSON union wrappers.** A nullable record arrives nested under
+  its own name and a nullable `long` under `"long"`, so `PipelineTimings` is a wrapper holding one
+  `StepTimings` field and timestamps are `AvroTime{Long string}` — the timestamps come through as ISO-8601
+  strings, not epoch millis, even though the `.avsc` types them `long`/`timestamp-millis`.
+  Verified by round-tripping a real book-builder payload: unmarshal + re-marshal is byte-identical.
 - **Subjects are derived, not hardcoded.** The subject is the file name with `_`→`-`
   (`aggregated_order_book_event.avsc` → `aggregated-order-book-event`). A new `.avsc` needs no
   code change — but a file whose subject is not the dashed file name would register under the
