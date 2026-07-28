@@ -20,15 +20,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := runTest(cfg); err != nil {
+	if err := runTest(cfg, 1, 1); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func runTest(cfg config.Config) error {
+func runTest(cfg config.Config, pairID, exchangeID int64) error {
 	ctx := context.Background()
-	pairID := 1
-	exchangeID := 1
 
 	if err := topics.Create(ctx, cfg.KafkaBroker, exchangeID, pairID); err != nil {
 		return err

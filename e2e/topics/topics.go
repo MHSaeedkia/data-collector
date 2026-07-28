@@ -37,7 +37,7 @@ type topic struct {
 
 // Create creates every topic the pipeline for exchangeID/pairID needs. Topics
 // that already exist are left as they are.
-func Create(ctx context.Context, broker string, exchangeID, pairID int) error {
+func Create(ctx context.Context, broker string, exchangeID, pairID int64) error {
 	cl, err := kgo.NewClient(kgo.SeedBrokers(strings.Split(broker, ",")...))
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func Create(ctx context.Context, broker string, exchangeID, pairID int) error {
 // because every normalizer source reads from `latest`: a topic that does not
 // exist when its job starts is discovered late, and whatever was produced in
 // between is lost.
-func plan(exchangeID, pairID int) []topic {
+func plan(exchangeID, pairID int64) []topic {
 	prefix := fmt.Sprintf("ex%d-p%d", exchangeID, pairID)
 
 	plan := make([]topic, 0, len(normalizerStages)+4)
