@@ -1,4 +1,5 @@
-package main
+// Package config loads the harness settings from a .env file and the environment.
+package config
 
 import (
 	"bufio"
@@ -13,9 +14,9 @@ type Config struct {
 	SchemasDir        string
 }
 
-// loadConfig reads envFile (if present) into the process environment, then
-// builds the config. Real environment variables always win over the file.
-func loadConfig(envFile string) (Config, error) {
+// Load reads envFile (if present) into the process environment, then builds the
+// config. Real environment variables always win over the file.
+func Load(envFile string) (Config, error) {
 	if err := loadEnvFile(envFile); err != nil {
 		return Config{}, err
 	}
