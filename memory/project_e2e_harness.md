@@ -20,11 +20,14 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   exchange/pair pipeline needs, over the Kafka admin API (`kadm`), 1 partition / 1 replica each.
 - `e2e/flink/` — `flink.RunJobs(ctx, api, normalizerDir)` cancels every running job, builds the
   normalizer modules with `mvn`, then uploads and starts the 6 job jars over the Flink REST API.
+- `e2e/producer/` — `producer.SendJSON(ctx, broker, topic, doc)` compacts the document and produces
+  it as one record (`kgo.ProduceSync`).
 - `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
   back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
   `AvroTime`.
-- `e2e/main.go` — wiring only: load config, `RegisterDir`, then `runTest(cfg)`, which pins
-  `exchangeID`/`pairID` for the scenario and calls `topics.Create` then `flink.RunJobs`.
+- `e2e/main.go` — wiring only: load config, `RegisterDir`, then `runTest(cfg, pairID, exchangeID,
+  TestPayload{SourceData, WantedData})`, which calls `topics.Create`, `flink.RunJobs`, then produces
+  `payload.SourceData` to `ex{exchangeID}-raw`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; a second run
@@ -54,6 +57,11 @@ the 6 from the first (all reach CANCELED) before resubmitting.
   rebuilds `common` six times for the same jars; the harness runs `mvn -f <dir>/pom.xml package -q
   -DskipTests` once and then globs each `<module>/target/*-1.0-SNAPSHOT.jar`, skipping shade's
   `original-*` copy.
+- **The scenario payload goes in raw, as the exchange sends it.** `runTest` produces
+  `payload.SourceData` verbatim (compacted) to `ex{exchangeID}-raw` — the same topic NiFi writes to —
+  so the run exercises the whole pipeline from the pair-extractor down. No key, no Avro encoding:
+  the raw topic carries plain exchange JSON. Auto topic creation is off on the broker, so producing
+  before `topics.Create` fails with `UNKNOWN_TOPIC_OR_PARTITION`.
 - **The event structs keep the Avro JSON union wrappers.** A nullable record arrives nested under
   its own name and a nullable `long` under `"long"`, so `PipelineTimings` is a wrapper holding one
   `StepTimings` field and timestamps are `AvroTime{Long string}` — the timestamps come through as ISO-8601
