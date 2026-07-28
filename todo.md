@@ -7,4 +7,6 @@
 - [x] Topic warmup — `e2e/topics/` creates the 9 topics for one exchange/pair via the Kafka admin API (2026-07-28, verified live: ex1/p1, retentions confirmed)
 - [x] Flink jobs — `e2e/flink/` cancels running jobs, builds with `mvn`, submits the 6 job jars over the REST API (2026-07-28, verified live: all 6 RUNNING, re-run cancels then resubmits)
 - [x] Send payloads to the kafka topics — `e2e/producer/` produces `payload.SourceData` to `ex{exchangeID}-raw` (2026-07-28, verified live: produced and read back off the broker)
+- [x] Clean slate — `topics.Delete` wipes the 9 topics before `topics.Create` in `runTest` (2026-07-28, verified live on ex99/p99: delete → create → produce → delete → create leaves the topics empty)
+- [x] Setup order — `flink.CancelJobs` exported out of `RunJobs`, so `runTest` is cancel → delete → create → submit (2026-07-28, verified live: `CancelJobs` runs standalone against the Flink API)
 - [ ] Verify each pipeline step has the wanted value

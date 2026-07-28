@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -51,6 +52,70 @@ func Create(ctx context.Context, broker string, exchangeID, pairID int64) error 
 		}
 	}
 	return nil
+}
+
+// Delete removes every topic Create would make, so a run starts from an empty
+// broker with no records left over from the previous one. Topics that do not
+// exist are not an error.
+func Delete(ctx context.Context, broker string, exchangeID, pairID int64) error {
+	cl, err := kgo.NewClient(kgo.SeedBrokers(strings.Split(broker, ",")...))
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+
+	p := plan(exchangeID, pairID)
+	names := make([]string, 0, len(p))
+	for _, t := range p {
+		names = append(names, t.name)
+	}
+
+	adm := kadm.NewClient(cl)
+	res, err := adm.DeleteTopics(ctx, names...)
+	if err != nil {
+		return err
+	}
+	for _, r := range res.Sorted() {
+		switch {
+		case r.Err == nil:
+			log.Printf("deleted %s", r.Topic)
+		case errors.Is(r.Err, kerr.UnknownTopicOrPartition):
+			// Nothing to delete, which is what we want anyway.
+		default:
+			return fmt.Errorf("delete topic %s: %w", r.Topic, r.Err)
+		}
+	}
+
+	return waitGone(ctx, adm, names)
+}
+
+// waitGone blocks until the broker stops listing names. Deletion is
+// asynchronous: creating a topic that is still marked for deletion fails, so
+// Create must not run until the old ones are actually gone.
+func waitGone(ctx context.Context, adm *kadm.Client, names []string) error {
+	for {
+		details, err := adm.ListTopics(ctx)
+		if err != nil {
+			return err
+		}
+
+		left := ""
+		for _, name := range names {
+			if details.Has(name) {
+				left = name
+				break
+			}
+		}
+		if left == "" {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for %s to be deleted: %w", left, ctx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // plan lists the topics in creation order. The normalizer stages come first

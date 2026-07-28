@@ -18,21 +18,25 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   and POSTs each to `/subjects/{subject}/versions` as `{"schemaType":"AVRO","schema":...}`.
 - `e2e/topics/` — `topics.Create(ctx, broker, exchangeID, pairID)` creates the 9 topics one
   exchange/pair pipeline needs, over the Kafka admin API (`kadm`), 1 partition / 1 replica each.
-- `e2e/flink/` — `flink.RunJobs(ctx, api, normalizerDir)` cancels every running job, builds the
-  normalizer modules with `mvn`, then uploads and starts the 6 job jars over the Flink REST API.
+  `topics.Delete(ctx, broker, exchangeID, pairID)` removes the same 9 and waits until the broker
+  stops listing them.
+- `e2e/flink/` — `flink.CancelJobs(ctx, api)` cancels every running job and waits for each to reach
+  a terminal state; `flink.RunJobs(ctx, api, normalizerDir)` builds the normalizer modules with
+  `mvn`, then uploads and starts the 6 job jars over the Flink REST API. `RunJobs` does not cancel:
+  the caller must have run `CancelJobs` first.
 - `e2e/producer/` — `producer.SendJSON(ctx, broker, topic, doc)` compacts the document and produces
   it as one record (`kgo.ProduceSync`).
 - `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
   back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
   `AvroTime`.
 - `e2e/main.go` — wiring only: load config, `RegisterDir`, then `runTest(cfg, pairID, exchangeID,
-  TestPayload{SourceData, WantedData})`, which calls `topics.Create`, `flink.RunJobs`, then produces
-  `payload.SourceData` to `ex{exchangeID}-raw`.
+  TestPayload{SourceData, WantedData})`, which calls `flink.CancelJobs`, `topics.Delete`,
+  `topics.Create`, `flink.RunJobs`, then produces `payload.SourceData` to `ex{exchangeID}-raw`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
-`p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; a second run
-reports every topic as already existing. All 6 normalizer jobs reach RUNNING; a second run cancels
-the 6 from the first (all reach CANCELED) before resubmitting.
+`p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
+in front, a second run deletes the 9 and recreates them empty. All 6 normalizer jobs reach RUNNING; a second run cancels
+the 6 from the first (all reach CANCELED) before deleting the topics and resubmitting.
 
 ## Decisions
 
@@ -43,6 +47,17 @@ the 6 from the first (all reach CANCELED) before resubmitting.
   only the reference for *which* topics exist and with what retention; the harness must not shell
   out to a container. `kadm.CreateTopic` returning `kerr.TopicAlreadyExists` is treated as success,
   which is the `--if-not-exists` behaviour.
+- **Teardown order is jobs, then topics: cancel → delete → create → submit.** The jobs go down
+  first because a running job holds the topics it consumes open while they are being deleted, and
+  one left alive would attach to the recreated topics mid-setup and read the harness's own
+  provisioning as pipeline input. That is why `RunJobs` no longer cancels — cancelling is a
+  separate, earlier step (`flink.CancelJobs`), not part of submission.
+- **Every run starts from an empty broker.** `runTest` deletes the 9 topics before creating them, so
+  no record from a previous run can be read as a result of this one — offsets, retained payloads and
+  half-consumed stages all go away with the topic. Deletion is asynchronous: `DeleteTopics` returns
+  before the topics are gone and creating one still marked for deletion fails, so `Delete` polls
+  `ListTopics` until none of the names are listed. `UnknownTopicOrPartition` per topic is success —
+  it is already absent.
 - **Creation order matters.** The five normalizer stage topics are created before anything else:
   normalizer sources read from `latest`, so a topic missing when its job starts is discovered late
   and whatever was produced in between is lost. The same rule fixes job submission order:
