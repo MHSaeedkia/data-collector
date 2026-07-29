@@ -12,4 +12,5 @@
 - [x] Warmup package — the cancel → delete → create → submit sequence moved out of `runTest` into `warmup.Run(ctx, cfg, exchangeID, pairID)` (2026-07-28, build/vet clean)
 - [x] Stack provisioning — `e2e/stack/` recreates the compose stack (`down -v` + `up -d --wait`) as the first step of `runTest`; `RegisterDir` moved after it (2026-07-29, build/vet clean, not run live)
 - [x] Verify the final book — `e2e/consumer/` reads the last record on `ex{id}-p{id}-orderbook-snapshot-flink` and `runTest` compares it to `TestPayload.WantedSnapshotData` (2026-07-29, decode verified offline against the real schema, whole run not tried live)
+- [x] Multi-payload scenarios — `runTest` takes `[]TestPayload`, produces each `SourceData` in order and asserts snapshot `i` equals payload `i`'s `WantedSnapshotData` (2026-07-29, build/vet clean, not run live)
 - [ ] Verify the four upstream steps (raw / type-validated / rebased / applied-precision) have their wanted values too

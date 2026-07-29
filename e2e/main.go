@@ -29,7 +29,7 @@ func main() {
 	// 	log.Fatal(err)
 	// }
 
-	err = runTest(cfg, 1, 1, TestPayload{
+	err = runTest(cfg, 1, 1, []TestPayload{{
 		SourceData: `{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -76,7 +76,7 @@ func main() {
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-	})
+	}})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -87,7 +87,7 @@ type TestPayload struct {
 	WantedSnapshotData events.OrderbookSnapshot
 }
 
-func runTest(cfg config.Config, pairID, exchangeID int64, payload TestPayload) error {
+func runTest(cfg config.Config, pairID, exchangeID int64, payloads []TestPayload) error {
 	ctx := context.Background()
 
 	// The registry comes up empty with the stack, so the schemas are registered
@@ -100,20 +100,30 @@ func runTest(cfg config.Config, pairID, exchangeID int64, payload TestPayload) e
 		return err
 	}
 
+	// The raw topic has one partition and the jobs run at parallelism 1, so the
+	// snapshots come out in the order the payloads went in — payload i is
+	// snapshot i.
 	rawTopic := fmt.Sprintf("ex%d-raw", exchangeID)
-	if err := producer.SendJSON(ctx, cfg.KafkaBroker, rawTopic, payload.SourceData); err != nil {
-		return err
+	for i, payload := range payloads {
+		if err := producer.SendJSON(ctx, cfg.KafkaBroker, rawTopic, payload.SourceData); err != nil {
+			return fmt.Errorf("payload %d: %w", i, err)
+		}
 	}
 
 	snapshotTopic := fmt.Sprintf("ex%d-p%d-orderbook-snapshot-flink", exchangeID, pairID)
-	got, err := consumer.ReadLatestSnapshot(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, snapshotTopic, snapshotWait)
+	got, err := consumer.ReadSnapshots(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, snapshotTopic, snapshotWait)
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(got, payload.WantedSnapshotData) {
-		return fmt.Errorf("%s:\n got: %+v\nwant: %+v", snapshotTopic, got, payload.WantedSnapshotData)
+	if len(got) != len(payloads) {
+		return fmt.Errorf("%s: got %d snapshots, want %d", snapshotTopic, len(got), len(payloads))
+	}
+	for i, payload := range payloads {
+		if !reflect.DeepEqual(got[i], payload.WantedSnapshotData) {
+			return fmt.Errorf("%s snapshot %d:\n got: %+v\nwant: %+v", snapshotTopic, i, got[i], payload.WantedSnapshotData)
+		}
 	}
 
-	log.Printf("%s matches the wanted snapshot", snapshotTopic)
+	log.Printf("%s matches all %d wanted snapshots", snapshotTopic, len(payloads))
 	return nil
 }

@@ -31,15 +31,16 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 - `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
   back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
   `AvroTime`.
-- `e2e/consumer/` — `consumer.ReadLatestSnapshot(ctx, broker, registryURL, topic, wait)` reads the
-  last `order-book-snapshot` off a topic and decodes it (Confluent wire format, schema fetched by
-  the id in the record) into an `events.OrderbookSnapshot`.
+- `e2e/consumer/` — `consumer.ReadSnapshots(ctx, broker, registryURL, topic, wait)` reads every
+  `order-book-snapshot` off a topic in offset order and decodes each (Confluent wire format, schema
+  fetched by the id in the record) into an `events.OrderbookSnapshot`.
 - `e2e/warmup/` — `warmup.Run(ctx, cfg, exchangeID, pairID)` is the whole pre-scenario sequence:
   `flink.CancelJobs` → `topics.Delete` → `topics.Create` → `flink.RunJobs`.
 - `e2e/main.go` — wiring only: load config and `stack.Provision`, then `runTest(cfg, pairID,
-  exchangeID, TestPayload{SourceData, WantedSnapshotData})`, which is `schemaregistry.RegisterDir`
-  → `warmup.Run` → produce `payload.SourceData` to `ex{exchangeID}-raw` → read
-  `ex{id}-p{id}-orderbook-snapshot-flink` back and compare it to `WantedSnapshotData`.
+  exchangeID, []TestPayload{{SourceData, WantedSnapshotData}, ...})`, which is
+  `schemaregistry.RegisterDir` → `warmup.Run` → produce every `SourceData` to `ex{exchangeID}-raw`
+  in order → read `ex{id}-p{id}-orderbook-snapshot-flink` back and compare snapshot `i` to
+  payload `i`'s `WantedSnapshotData`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -102,11 +103,19 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   so the run exercises the whole pipeline from the pair-extractor down. No key, no Avro encoding:
   the raw topic carries plain exchange JSON. Auto topic creation is off on the broker, so producing
   before `topics.Create` fails with `UNKNOWN_TOPIC_OR_PARTITION`.
-- **The assertion reads the LAST snapshot on the topic, not the first.** The book builder emits the
-  whole book on every event, so the first record is not necessarily the final book; `consumer`
-  waits up to `snapshotWait` (60s — the payload has six jobs to cross) for a first record and then
-  keeps the last one after the topic has been quiet for 2s. Reading from the start of the topic is
-  safe because the warmup deletes and recreates it, so it holds only this run's records.
+- **A scenario is a SEQUENCE of payloads, matched to snapshots BY INDEX.** `runTest` takes
+  `[]TestPayload`: it produces every `SourceData` to `ex{id}-raw` back to back, then reads the whole
+  snapshot topic and asserts snapshot `i` equals payload `i`'s `WantedSnapshotData` — plus
+  `len(got) == len(payloads)`, which is what catches the book builder emitting too few or too many
+  books. This assumes one snapshot per raw event and that order is preserved end to end: the raw
+  topic has ONE partition and the jobs run at parallelism 1, so produce order survives to the sink.
+  If either ever changes (repartitioning, parallelism > 1) index-matching breaks and the assertion
+  has to key on something in the event instead.
+- **The consumer reads until the topic goes QUIET, it does not stop at a count.** `consumer`
+  waits up to `snapshotWait` (60s — the payload has six jobs to cross) for a first record, then
+  keeps reading until 2s pass with nothing new. Stopping at `len(payloads)` records would make an
+  over-emitting pipeline look correct. Reading from the start of the topic is safe because the
+  warmup deletes and recreates it, so it holds only this run's records.
 - **Decoding is goavro + a schema fetched by the record's own id.** The stage topics carry Confluent
   wire format (`0x00`, big-endian schema id, Avro datum), so `schemaregistry.SchemaByID` resolves
   the id via `GET /schemas/ids/{id}` — never a local `.avsc`, which would silently drift from what
