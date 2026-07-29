@@ -37,12 +37,16 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   record) into an `events.OrderbookSnapshot` / into its `reject_reason` string.
 - `e2e/warmup/` — `warmup.Run(ctx, cfg, exchangeID, pairID)` is the whole pre-scenario sequence:
   `flink.CancelJobs` → `topics.Delete` → `topics.Create` → `flink.RunJobs`.
-- `e2e/main.go` — wiring only: load config and `stack.Provision`, then `runTest(cfg, pairID,
-  exchangeID, Scenario{Sources, WantSnapshots, WantRejects})`, which is
-  `schemaregistry.RegisterDir` → `warmup.Run` → produce every `Sources` entry to `ex{exchangeID}-raw`
-  in order → read `ex{id}-p{id}-orderbook-snapshot-flink` and then `ex{id}-p{id}-rejected-flink`
-  back and check each against its wanted stream (generic `compare[T]`, length then `DeepEqual`
-  per index).
+- `e2e/scenario/` — `scenario.Run(ctx, cfg, s)` is the whole test:
+  `schemaregistry.RegisterDir` → `warmup.Run` → `Scenario.produce` (every `Sources` entry to
+  `ex{ExchangeID}-raw`, in order) → `Scenario.verify` (read
+  `ex{id}-p{id}-orderbook-snapshot-flink` and then `ex{id}-p{id}-rejected-flink` back and check each
+  against its wanted stream — generic `compare[T]`, length then `DeepEqual` per index).
+  `scenario.go` holds the type and the run logic; `data.go` holds the cases themselves as exported
+  package-level vars (`scenario.NobitexSnapshot`). It imports `config`, `consumer`, `events`,
+  `producer`, `schemaregistry` and `warmup`, so nothing below it may import `scenario`.
+- `e2e/main.go` — `main()` and nothing else: load config, make a context, optionally
+  `stack.Provision`, `scenario.Run(ctx, cfg, scenario.NobitexSnapshot)`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -51,9 +55,10 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
 
 ## Decisions
 
-- **Each concern is its own package, `main.go` stays wiring only.** Config and registry logic are
-  packages so the remaining warmup steps (topics, payloads, assertions) can land as sibling packages
-  without growing `main`.
+- **Each concern is its own package; `main.go` holds `main()` and nothing else** (2026-07-29). Every
+  step — config, registry, topics, flink, producer, consumer, warmup, and the run itself
+  (`scenario`) — is a sibling package, so `main` is load-config → `scenario.Run` and there is no
+  logic in package `main` that another entry point could not reuse.
 - **Topics are created over the Kafka admin API, never `docker exec kafka-topics`.** `warmup.sh` is
   only the reference for *which* topics exist and with what retention; the harness must not shell
   out to a container. `kadm.CreateTopic` returning `kerr.TopicAlreadyExists` is treated as success,
@@ -68,19 +73,19 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   hand-written readiness poll. This is the one place the harness talks to docker — the ban on
   shelling out to a container (`docker exec kafka-topics`) is about doing *pipeline* work that way,
   not about owning the stack's lifecycle.
-- **Schemas are registered inside `runTest`, after provisioning.** `RegisterDir` used to run in
-  `main` before `runTest`; with `down -v` in front of it that registered into a registry that was
+- **Schemas are registered inside `scenario.Run`, after provisioning.** `RegisterDir` used to run in
+  `main` before the run; with `down -v` in front of it that registered into a registry that was
   then destroyed, leaving the jobs with no subjects.
-- **Bringing the stack to a clean start is one call, `warmup.Run`, not four in `runTest`.** The four
+- **Bringing the stack to a clean start is one call, `warmup.Run`, not four in `scenario.Run`.** The four
   steps are a single unit with an order that must not drift, so they live behind one entry point in
-  their own package; `runTest` is then just warmup → produce → verify. `warmup` imports `config`,
+  their own package; `scenario.Run` is then just warmup → produce → verify. `warmup` imports `config`,
   `flink` and `topics`, so nothing below it may import `warmup`.
 - **Teardown order is jobs, then topics: cancel → delete → create → submit.** The jobs go down
   first because a running job holds the topics it consumes open while they are being deleted, and
   one left alive would attach to the recreated topics mid-setup and read the harness's own
   provisioning as pipeline input. That is why `RunJobs` no longer cancels — cancelling is a
   separate, earlier step (`flink.CancelJobs`), not part of submission.
-- **Every run starts from an empty broker.** `runTest` deletes the 9 topics before creating them, so
+- **Every run starts from an empty broker.** The warmup deletes the 9 topics before creating them, so
   no record from a previous run can be read as a result of this one — offsets, retained payloads and
   half-consumed stages all go away with the topic. Deletion is asynchronous: `DeleteTopics` returns
   before the topics are gone and creating one still marked for deletion fails, so `Delete` polls
@@ -100,13 +105,13 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   rebuilds `common` six times for the same jars; the harness runs `mvn -f <dir>/pom.xml package -q
   -DskipTests` once and then globs each `<module>/target/*-1.0-SNAPSHOT.jar`, skipping shade's
   `original-*` copy.
-- **The scenario payload goes in raw, as the exchange sends it.** `runTest` produces each
-  `Scenario.Sources` entry verbatim (compacted) to `ex{exchangeID}-raw` — the same topic NiFi writes to —
+- **The scenario payload goes in raw, as the exchange sends it.** `Scenario.produce` produces each
+  `Sources` entry verbatim (compacted) to `ex{ExchangeID}-raw` — the same topic NiFi writes to —
   so the run exercises the whole pipeline from the pair-extractor down. No key, no Avro encoding:
   the raw topic carries plain exchange JSON. Auto topic creation is off on the broker, so producing
   before `topics.Create` fails with `UNKNOWN_TOPIC_OR_PARTITION`.
 - **A scenario declares its EXPECTED OUTPUT STREAMS PER TOPIC, not an expectation per source.**
-  `Scenario{Sources, WantSnapshots, WantRejects}` (2026-07-29). The reason is that a raw event has
+  `Scenario{ExchangeID, PairID, Sources, WantSnapshots, WantRejects}` (2026-07-29). The reason is that a raw event has
   THREE possible fates, not two: a snapshot, a dead-letter on `ex{id}-p{id}-rejected-flink`, or
   nothing at all (job 1 drops noise frames / unknown markets — drop ≠ reject, see
   [[manual-test-data]]). Four sources can legitimately mean three snapshots and one rejection, so
@@ -117,6 +122,14 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   the failure mode of miscounting while editing a scenario is a LOUD length mismatch, not a silent
   pass. `compare[T]` checks length first (that is what catches the book builder emitting too few or
   too many books) then `DeepEqual` per index.
+- **`exchangeID`/`pairID` live IN the `Scenario`, they are not parameters of `scenario.Run`**
+  (2026-07-29 refactor). It used to be `runTest(cfg, pairID, exchangeID, …)` — the opposite id order from
+  `warmup.Run` / `topics.Create` / `topics.Delete`, which are all `(exchangeID, pairID)`. It was
+  harmless only because the one call site passed `1, 1`; the first scenario on a second exchange
+  would have provisioned one pipeline and asserted against another. Two positional `int64`s of the
+  same type next to each other is the hazard, so they were folded into the struct instead of
+  reordered. **Everything else in the harness keeps `(exchangeID, pairID)` — do not add a function
+  that takes them the other way round.**
 - **Index-matching within a topic assumes order is preserved end to end.** The raw topic has ONE
   partition and no job sets parallelism (no `setParallelism` in any job, no `parallelism.default` in
   compose — only `taskmanager.numberOfTaskSlots: 8`, so Flink's default of 1 applies; INFERRED from
