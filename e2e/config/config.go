@@ -15,6 +15,7 @@ type Config struct {
 	KafkaBroker       string
 	FlinkAPI          string
 	NormalizerDir     string
+	ComposeFile       string
 }
 
 // Load reads envFile (if present) into the process environment, then builds the
@@ -30,6 +31,7 @@ func Load(envFile string) (Config, error) {
 		KafkaBroker:       env("KAFKA_BROKER", "localhost:9092"),
 		FlinkAPI:          env("FLINK_API", "http://localhost:7070"),
 		NormalizerDir:     env("NORMALIZER_DIR", "../flink/normalizer"),
+		ComposeFile:       env("COMPOSE_FILE", "../docker-compose.yml"),
 	}
 
 	if cfg.SchemaRegistryURL == "" {
