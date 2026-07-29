@@ -18,39 +18,48 @@ import (
 	"orderbook-e2e/schemaregistry"
 )
 
-// settle is how long the topic must stay quiet after a record before the last
-// one is taken as the latest: the book builder emits the whole book on every
-// event, so an assertion made on the first record could be one book behind.
+// settle is how long the topic must stay quiet before what has been read is
+// taken as everything the pipeline emitted for this run.
 const settle = 2 * time.Second
 
-// ReadLatestSnapshot returns the last order book snapshot on topic. The topics
-// are recreated empty by the warmup, so reading from the start reads only this
-// run's records. It waits up to wait for the first one — the pipeline has six
-// jobs to traverse — and then until the topic goes quiet.
-func ReadLatestSnapshot(ctx context.Context, broker, registryURL, topic string, wait time.Duration) (events.OrderbookSnapshot, error) {
+// ReadSnapshots returns every order book snapshot on topic, in the order the
+// book builder emitted them. The topics are recreated empty by the warmup, so
+// reading from the start reads only this run's records. It waits up to wait for
+// the first one — the pipeline has six jobs to traverse — and then keeps reading
+// until the topic goes quiet.
+func ReadSnapshots(ctx context.Context, broker, registryURL, topic string, wait time.Duration) ([]events.OrderbookSnapshot, error) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(strings.Split(broker, ",")...),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
 	if err != nil {
-		return events.OrderbookSnapshot{}, err
+		return nil, err
 	}
 	defer cl.Close()
 
-	last, err := pollLast(ctx, cl, topic, wait)
+	records, err := pollAll(ctx, cl, topic, wait)
 	if err != nil {
-		return events.OrderbookSnapshot{}, err
+		return nil, err
 	}
-	return decode(registryURL, last.Value)
+
+	snapshots := make([]events.OrderbookSnapshot, 0, len(records))
+	for i, r := range records {
+		snapshot, err := decode(registryURL, r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, nil
 }
 
-// pollLast polls until the topic has produced at least one record and then gone
-// quiet for settle, and returns the last record it saw.
-func pollLast(ctx context.Context, cl *kgo.Client, topic string, wait time.Duration) (*kgo.Record, error) {
-	log.Printf("waiting up to %s for a snapshot on %s...", wait, topic)
+// pollAll polls until the topic has produced at least one record and then gone
+// quiet for settle, and returns every record it saw, in offset order.
+func pollAll(ctx context.Context, cl *kgo.Client, topic string, wait time.Duration) ([]*kgo.Record, error) {
+	log.Printf("waiting up to %s for snapshots on %s...", wait, topic)
 
-	var last *kgo.Record
+	var records []*kgo.Record
 	deadline := time.Now().Add(wait)
 	for {
 		pollCtx, cancel := context.WithDeadline(ctx, deadline)
@@ -61,14 +70,14 @@ func pollLast(ctx context.Context, cl *kgo.Client, topic string, wait time.Durat
 			if !errors.Is(err, context.DeadlineExceeded) {
 				return nil, fmt.Errorf("consume %s: %w", topic, err)
 			}
-			if last == nil {
+			if len(records) == 0 {
 				return nil, fmt.Errorf("no record on %s within %s", topic, wait)
 			}
-			return last, nil
+			return records, nil
 		}
 
 		if fetches.NumRecords() > 0 {
-			fetches.EachRecord(func(r *kgo.Record) { last = r })
+			fetches.EachRecord(func(r *kgo.Record) { records = append(records, r) })
 			deadline = time.Now().Add(settle)
 		}
 	}
