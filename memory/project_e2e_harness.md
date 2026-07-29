@@ -31,16 +31,18 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 - `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
   back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
   `AvroTime`.
-- `e2e/consumer/` — `consumer.ReadSnapshots(ctx, broker, registryURL, topic, wait)` reads every
-  `order-book-snapshot` off a topic in offset order and decodes each (Confluent wire format, schema
-  fetched by the id in the record) into an `events.OrderbookSnapshot`.
+- `e2e/consumer/` — `consumer.ReadSnapshots(ctx, broker, registryURL, topic, wait)` and
+  `consumer.ReadRejections(...)` read every record off a topic in offset order (both over the same
+  unexported `readRecords`) and decode each (Confluent wire format, schema fetched by the id in the
+  record) into an `events.OrderbookSnapshot` / into its `reject_reason` string.
 - `e2e/warmup/` — `warmup.Run(ctx, cfg, exchangeID, pairID)` is the whole pre-scenario sequence:
   `flink.CancelJobs` → `topics.Delete` → `topics.Create` → `flink.RunJobs`.
 - `e2e/main.go` — wiring only: load config and `stack.Provision`, then `runTest(cfg, pairID,
-  exchangeID, []TestPayload{{SourceData, WantedSnapshotData}, ...})`, which is
-  `schemaregistry.RegisterDir` → `warmup.Run` → produce every `SourceData` to `ex{exchangeID}-raw`
-  in order → read `ex{id}-p{id}-orderbook-snapshot-flink` back and compare snapshot `i` to
-  payload `i`'s `WantedSnapshotData`.
+  exchangeID, Scenario{Sources, WantSnapshots, WantRejects})`, which is
+  `schemaregistry.RegisterDir` → `warmup.Run` → produce every `Sources` entry to `ex{exchangeID}-raw`
+  in order → read `ex{id}-p{id}-orderbook-snapshot-flink` and then `ex{id}-p{id}-rejected-flink`
+  back and check each against its wanted stream (generic `compare[T]`, length then `DeepEqual`
+  per index).
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -98,24 +100,47 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   rebuilds `common` six times for the same jars; the harness runs `mvn -f <dir>/pom.xml package -q
   -DskipTests` once and then globs each `<module>/target/*-1.0-SNAPSHOT.jar`, skipping shade's
   `original-*` copy.
-- **The scenario payload goes in raw, as the exchange sends it.** `runTest` produces
-  `payload.SourceData` verbatim (compacted) to `ex{exchangeID}-raw` — the same topic NiFi writes to —
+- **The scenario payload goes in raw, as the exchange sends it.** `runTest` produces each
+  `Scenario.Sources` entry verbatim (compacted) to `ex{exchangeID}-raw` — the same topic NiFi writes to —
   so the run exercises the whole pipeline from the pair-extractor down. No key, no Avro encoding:
   the raw topic carries plain exchange JSON. Auto topic creation is off on the broker, so producing
   before `topics.Create` fails with `UNKNOWN_TOPIC_OR_PARTITION`.
-- **A scenario is a SEQUENCE of payloads, matched to snapshots BY INDEX.** `runTest` takes
-  `[]TestPayload`: it produces every `SourceData` to `ex{id}-raw` back to back, then reads the whole
-  snapshot topic and asserts snapshot `i` equals payload `i`'s `WantedSnapshotData` — plus
-  `len(got) == len(payloads)`, which is what catches the book builder emitting too few or too many
-  books. This assumes one snapshot per raw event and that order is preserved end to end: the raw
-  topic has ONE partition and the jobs run at parallelism 1, so produce order survives to the sink.
-  If either ever changes (repartitioning, parallelism > 1) index-matching breaks and the assertion
-  has to key on something in the event instead.
-- **The consumer reads until the topic goes QUIET, it does not stop at a count.** `consumer`
-  waits up to `snapshotWait` (60s — the payload has six jobs to cross) for a first record, then
-  keeps reading until 2s pass with nothing new. Stopping at `len(payloads)` records would make an
-  over-emitting pipeline look correct. Reading from the start of the topic is safe because the
-  warmup deletes and recreates it, so it holds only this run's records.
+- **A scenario declares its EXPECTED OUTPUT STREAMS PER TOPIC, not an expectation per source.**
+  `Scenario{Sources, WantSnapshots, WantRejects}` (2026-07-29). The reason is that a raw event has
+  THREE possible fates, not two: a snapshot, a dead-letter on `ex{id}-p{id}-rejected-flink`, or
+  nothing at all (job 1 drops noise frames / unknown markets — drop ≠ reject, see
+  [[manual-test-data]]). Four sources can legitimately mean three snapshots and one rejection, so
+  source index ≠ snapshot index and a per-source `Wanted…` field would need a "nothing here" case.
+  The rejected alternative was `TestPayload{SourceData, *WantedSnapshot, WantedRejectReason}`
+  filtered into two sequences at assert time; **the user chose the per-topic form and was right** —
+  the scenarios are 4–6 events, so "which source caused snapshot 2?" is answered by counting, and
+  the failure mode of miscounting while editing a scenario is a LOUD length mismatch, not a silent
+  pass. `compare[T]` checks length first (that is what catches the book builder emitting too few or
+  too many books) then `DeepEqual` per index.
+- **Index-matching within a topic assumes order is preserved end to end.** The raw topic has ONE
+  partition and no job sets parallelism (no `setParallelism` in any job, no `parallelism.default` in
+  compose — only `taskmanager.numberOfTaskSlots: 8`, so Flink's default of 1 applies; INFERRED from
+  absence, confirm on the job graph). Repartitioning or parallelism > 1 breaks it and the assertion
+  would have to key on something inside the event. **Known latent trap: jobs 2 and 3 sink to the
+  SAME `rejected-flink` topic**, so order is only guaranteed within one job — a scenario mixing a
+  type-validator reject (`sequence_gap`, `no_baseline`, `awaiting_snapshot`, `stale_or_duplicate`,
+  `out_of_order`) with a rebaser `no_rebase_row` has no defined relative order and would need
+  multiset comparison. All 17 manual scenarios reject at job 2 only, so it does not bite yet.
+- **Only the rejection's `reject_reason` is asserted.** `rejected_at` is wall-clock and the envelope
+  echoes the rejected event back verbatim (with `pipeline_timings`), so neither is assertable;
+  the position in the stream already identifies which source produced it. This matches the oracle
+  the manual scenarios document themselves with (a dead-letter count + reasons).
+- **The consumer reads until the topic goes QUIET, it does not stop at a count.** `readRecords`
+  waits up to `wait` for a first record, then keeps reading until 2s pass with nothing new.
+  Stopping at the wanted count would make an over-emitting pipeline look correct. An EMPTY topic is
+  not an error — a scenario that expects no rejection is normal, so emptiness is judged by the
+  caller's length check, not by the consumer. Reading from the start of the topic is safe because
+  the warmup deletes and recreates it, so it holds only this run's records.
+- **Two waits: `snapshotWait` 60s, `rejectWait` 10s.** The snapshot budget is 60s because the
+  payload has six jobs to cross. The dead-letter topic is read only AFTER the snapshot topic has
+  settled, and jobs 2 and 3 are upstream of the book builder, so anything they were going to reject
+  is already there — otherwise every scenario expecting zero rejections would pay a second full
+  60s of waiting for nothing.
 - **Decoding is goavro + a schema fetched by the record's own id.** The stage topics carry Confluent
   wire format (`0x00`, big-endian schema id, Avro datum), so `schemaregistry.SchemaByID` resolves
   the id via `GET /schemas/ids/{id}` — never a local `.avsc`, which would silently drift from what
@@ -124,18 +149,18 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   round-tripping the real `order_book_snapshot.avsc` through goavro: it writes `event_time` as epoch
   millis (not ISO-8601), names union branches by their FULL Avro name (`io.tibobit.orderbook.
   PipelineTimings`, `long.timestamp-millis`) where the structs say `PipelineTimings` and `long` —
-  the structs describe some other decoder's JSON. `consumer.decode` therefore unmarshals into its
+  the structs describe some other decoder's JSON. `consumer.decodeSnapshot` therefore unmarshals into its
   own small wire struct and fills `OrderbookSnapshot` itself, formatting `event_time` as RFC3339
   UTC and leaving `PipelineTimings` nil (wall-clock, not assertable). `events` is otherwise unused
   and still carries the mismatched tags.
 - **The expected snapshot is derived from the source payload by hand, not captured.**
-  `TestPayload.WantedSnapshotData` is what the book builder must emit for the ex1/pair-1 BTCUSDT
+  `Scenario.WantSnapshots[0]` is what the book builder must emit for the ex1/pair-1 BTCUSDT
   payload: `event_time` is nobitex's `lastUpdate`, `exchange_markets(1,'BTCUSDT')` rebases by
   `10^0` on both sides so the numbers are unchanged, `markets(1)` truncates price to 2 and quantity
   to 8 decimals, and `Decimals.canonicalize` then strips trailing zeros (`0.50000000` → `0.5`,
   `62650.00` → `62650`). Asks sort ascending, bids descending. Change the seed's rebase or precision
   columns and this literal has to change with them. `EventTime` is an RFC3339 UTC string
-  (`2027-01-15T08:00:00Z`) because that is the spelling `consumer.decode` produces from the
+  (`2027-01-15T08:00:00Z`) because that is the spelling `consumer.decodeSnapshot` produces from the
   `timestamp-millis` value, not because that is how it sits on the wire.
 - **The event structs keep the Avro JSON union wrappers.** A nullable record arrives nested under
   its own name and a nullable `long` under `"long"`, so `PipelineTimings` is a wrapper holding one

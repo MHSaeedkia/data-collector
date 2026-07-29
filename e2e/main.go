@@ -15,9 +15,14 @@ import (
 	"orderbook-e2e/warmup"
 )
 
-// snapshotWait is how long the payload has to cross the six jobs and come back
-// out on the snapshot topic.
-const snapshotWait = 60 * time.Second
+const (
+	// snapshotWait is how long the payload has to cross the six jobs and come back
+	// out on the snapshot topic.
+	snapshotWait = 60 * time.Second
+	// rejectWait is short because the dead-letter topic is only read once the
+	// snapshot topic has gone quiet.
+	rejectWait = 10 * time.Second
+)
 
 func main() {
 	cfg, err := config.Load(".env")
@@ -29,8 +34,8 @@ func main() {
 	// 	log.Fatal(err)
 	// }
 
-	err = runTest(cfg, 1, 1, []TestPayload{{
-		SourceData: `{
+	err = runTest(cfg, 1, 1, Scenario{
+		Sources: []string{`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
 	"status": "ok",
@@ -51,43 +56,51 @@ func main() {
 		["62660", "0.33476925"]
 	]
 }
-`,
-		// What SourceData becomes by the time it reaches the book builder:
+`},
+		// What the source becomes by the time it reaches the book builder:
 		// event_time is nobitex's `lastUpdate`, ex1/BTCUSDT rebases by 10^0 on both
 		// sides (identity), pair 1 truncates price to 2 and quantity to 8 decimals,
 		// and every value is canonicalized (trailing zeros stripped). Asks sort
 		// ascending, bids descending — the source already arrives that way.
-		WantedSnapshotData: events.OrderbookSnapshot{
-			ExchangeID: 1,
-			PairID:     1,
-			EventTime:  "2027-01-15T08:00:00Z",
-			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.17447383"},
-				{Price: "62652", Quantity: "0.19067482"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-			},
-			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.5"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
+		WantSnapshots: []events.OrderbookSnapshot{
+			{
+				ExchangeID: 1,
+				PairID:     1,
+				EventTime:  "2027-01-15T08:00:00Z",
+				Asks: []events.PriceLevel{
+					{Price: "62650", Quantity: "2.21924167"},
+					{Price: "62651", Quantity: "0.17447383"},
+					{Price: "62652", Quantity: "0.19067482"},
+					{Price: "62655", Quantity: "1.05"},
+					{Price: "62660", Quantity: "0.33476925"},
+				},
+				Bids: []events.PriceLevel{
+					{Price: "62649", Quantity: "0.5"},
+					{Price: "62648", Quantity: "0.02744953"},
+					{Price: "62647", Quantity: "0.20630833"},
+					{Price: "62645", Quantity: "0.9"},
+					{Price: "62640", Quantity: "1.31062803"},
+				},
 			},
 		},
-	}})
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-type TestPayload struct {
-	SourceData         string
-	WantedSnapshotData events.OrderbookSnapshot
+// Scenario is one run: the exchange payloads to feed the raw topic, and what
+// the pipeline is expected to have emitted once they are through. An event can
+// land in three places — a snapshot, a rejection, or nowhere at all when job 1
+// drops it — so the two wanted streams are declared per topic rather than per
+// source, and their lengths are part of the assertion.
+type Scenario struct {
+	Sources       []string
+	WantSnapshots []events.OrderbookSnapshot
+	WantRejects   []string // reject_reason of each dead-letter, e.g. "sequence_gap"
 }
 
-func runTest(cfg config.Config, pairID, exchangeID int64, payloads []TestPayload) error {
+func runTest(cfg config.Config, pairID, exchangeID int64, scenario Scenario) error {
 	ctx := context.Background()
 
 	// The registry comes up empty with the stack, so the schemas are registered
@@ -100,30 +113,49 @@ func runTest(cfg config.Config, pairID, exchangeID int64, payloads []TestPayload
 		return err
 	}
 
-	// The raw topic has one partition and the jobs run at parallelism 1, so the
-	// snapshots come out in the order the payloads went in — payload i is
-	// snapshot i.
+	// The raw topic has one partition and the jobs run at parallelism 1, so each
+	// stream comes out in the order its sources went in.
 	rawTopic := fmt.Sprintf("ex%d-raw", exchangeID)
-	for i, payload := range payloads {
-		if err := producer.SendJSON(ctx, cfg.KafkaBroker, rawTopic, payload.SourceData); err != nil {
-			return fmt.Errorf("payload %d: %w", i, err)
+	for i, source := range scenario.Sources {
+		if err := producer.SendJSON(ctx, cfg.KafkaBroker, rawTopic, source); err != nil {
+			return fmt.Errorf("source %d: %w", i, err)
 		}
 	}
 
 	snapshotTopic := fmt.Sprintf("ex%d-p%d-orderbook-snapshot-flink", exchangeID, pairID)
-	got, err := consumer.ReadSnapshots(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, snapshotTopic, snapshotWait)
+	snapshots, err := consumer.ReadSnapshots(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, snapshotTopic, snapshotWait)
 	if err != nil {
 		return err
 	}
-	if len(got) != len(payloads) {
-		return fmt.Errorf("%s: got %d snapshots, want %d", snapshotTopic, len(got), len(payloads))
-	}
-	for i, payload := range payloads {
-		if !reflect.DeepEqual(got[i], payload.WantedSnapshotData) {
-			return fmt.Errorf("%s snapshot %d:\n got: %+v\nwant: %+v", snapshotTopic, i, got[i], payload.WantedSnapshotData)
-		}
+	if err := compare(snapshotTopic, snapshots, scenario.WantSnapshots); err != nil {
+		return err
 	}
 
-	log.Printf("%s matches all %d wanted snapshots", snapshotTopic, len(payloads))
+	// Jobs 2 and 3 are upstream of the book builder, so anything they were going
+	// to reject is already on the topic by the time the snapshots have settled —
+	// a run that expects no rejection does not have to wait the full budget again.
+	rejectedTopic := fmt.Sprintf("ex%d-p%d-rejected-flink", exchangeID, pairID)
+	rejects, err := consumer.ReadRejections(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, rejectedTopic, rejectWait)
+	if err != nil {
+		return err
+	}
+	if err := compare(rejectedTopic, rejects, scenario.WantRejects); err != nil {
+		return err
+	}
+
+	log.Printf("matched %d snapshots and %d rejections", len(snapshots), len(rejects))
+	return nil
+}
+
+// compare checks that a topic carried exactly the wanted records, in order.
+func compare[T any](topic string, got, want []T) error {
+	if len(got) != len(want) {
+		return fmt.Errorf("%s: got %d records, want %d\n got: %+v\nwant: %+v", topic, len(got), len(want), got, want)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			return fmt.Errorf("%s record %d:\n got: %+v\nwant: %+v", topic, i, got[i], want[i])
+		}
+	}
 	return nil
 }

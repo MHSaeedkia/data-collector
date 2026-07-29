@@ -13,4 +13,5 @@
 - [x] Stack provisioning — `e2e/stack/` recreates the compose stack (`down -v` + `up -d --wait`) as the first step of `runTest`; `RegisterDir` moved after it (2026-07-29, build/vet clean, not run live)
 - [x] Verify the final book — `e2e/consumer/` reads the last record on `ex{id}-p{id}-orderbook-snapshot-flink` and `runTest` compares it to `TestPayload.WantedSnapshotData` (2026-07-29, decode verified offline against the real schema, whole run not tried live)
 - [x] Multi-payload scenarios — `runTest` takes `[]TestPayload`, produces each `SourceData` in order and asserts snapshot `i` equals payload `i`'s `WantedSnapshotData` (2026-07-29, build/vet clean, not run live)
+- [x] Rejections — `runTest` takes a `Scenario{Sources, WantSnapshots, WantRejects}` and checks the snapshot topic *and* `ex{id}-p{id}-rejected-flink` against their own wanted streams, so a run can expect N sources → M snapshots + K rejections + drops (2026-07-29, build/vet clean, not run live)
 - [ ] Verify the four upstream steps (raw / type-validated / rebased / applied-precision) have their wanted values too
