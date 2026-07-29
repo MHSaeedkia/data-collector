@@ -1,6 +1,6 @@
 ---
 name: e2e-harness
-description: e2e/ is a standalone Go app (`go run .`); it registers the Avro schemas, creates the Kafka topics for one exchange/pair, and builds and submits the normalizer Flink jobs.
+description: e2e/ is a standalone Go app (`go run .`); it recreates the docker compose stack, registers the Avro schemas, creates the Kafka topics for one exchange/pair, and builds and submits the normalizer Flink jobs.
 metadata:
     type: project
 ---
@@ -13,7 +13,9 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 ## Layout
 
 - `e2e/config/` — `config.Load(".env")` returns
-  `Config{SchemaRegistryURL, SchemasDir, KafkaBroker, FlinkAPI, NormalizerDir}`.
+  `Config{SchemaRegistryURL, SchemasDir, KafkaBroker, FlinkAPI, NormalizerDir, ComposeFile}`.
+- `e2e/stack/` — `stack.Provision(ctx, composeFile)` runs `docker compose down -v` then
+  `up -d --wait`, streaming compose's output.
 - `e2e/schemaregistry/` — `schemaregistry.RegisterDir(registryURL, dir)` globs `*.avsc` from `dir`
   and POSTs each to `/subjects/{subject}/versions` as `{"schemaType":"AVRO","schema":...}`.
 - `e2e/topics/` — `topics.Create(ctx, broker, exchangeID, pairID)` creates the 9 topics one
@@ -31,9 +33,9 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   `AvroTime`.
 - `e2e/warmup/` — `warmup.Run(ctx, cfg, exchangeID, pairID)` is the whole pre-scenario sequence:
   `flink.CancelJobs` → `topics.Delete` → `topics.Create` → `flink.RunJobs`.
-- `e2e/main.go` — wiring only: load config, `RegisterDir`, then `runTest(cfg, pairID, exchangeID,
-  TestPayload{SourceData, WantedData})`, which calls `warmup.Run`, then produces
-  `payload.SourceData` to `ex{exchangeID}-raw`.
+- `e2e/main.go` — wiring only: load config, then `runTest(cfg, pairID, exchangeID,
+  TestPayload{SourceData, WantedData})`, which is `stack.Provision` → `schemaregistry.RegisterDir`
+  → `warmup.Run` → produce `payload.SourceData` to `ex{exchangeID}-raw`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -49,6 +51,19 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   only the reference for *which* topics exist and with what retention; the harness must not shell
   out to a container. `kadm.CreateTopic` returning `kerr.TopicAlreadyExists` is treated as success,
   which is the `--if-not-exists` behaviour.
+- **A run starts by recreating the whole stack: `docker compose down -v` + `up -d --wait`.** The
+  `-v` is the point — the Kafka, registry, postgres and NiFi volumes go with it, so nothing from a
+  previous run survives (this is what `make refresh-normalizer` does on the server). Consequences
+  to know: postgres is reseeded from `postgres/*.sql`, so the run sees the *local* seed, and the
+  NiFi flow is wiped — the harness produces to `ex{id}-raw` itself, so it does not need NiFi.
+  `up` is not given `--build`: a missing image is still built, and job code reaches the cluster as
+  jars from the harness's own `mvn` build, not baked into the image. `--wait` replaces a
+  hand-written readiness poll. This is the one place the harness talks to docker — the ban on
+  shelling out to a container (`docker exec kafka-topics`) is about doing *pipeline* work that way,
+  not about owning the stack's lifecycle.
+- **Schemas are registered inside `runTest`, after provisioning.** `RegisterDir` used to run in
+  `main` before `runTest`; with `down -v` in front of it that registered into a registry that was
+  then destroyed, leaving the jobs with no subjects.
 - **Bringing the stack to a clean start is one call, `warmup.Run`, not four in `runTest`.** The four
   steps are a single unit with an order that must not drift, so they live behind one entry point in
   their own package; `runTest` is then just warmup → produce → verify. `warmup` imports `config`,
@@ -96,5 +111,6 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   a missing `.env` is not an error.
 - **Defaults**: `SCHEMA_REGISTRY_URL=http://localhost:8082`, `SCHEMAS_DIR=../schemas`,
   `KAFKA_BROKER=localhost:9092`, `FLINK_API=http://localhost:7070`,
-  `NORMALIZER_DIR=../flink/normalizer` (paths relative to `e2e/`). `e2e/.env` is not in the repo —
+  `NORMALIZER_DIR=../flink/normalizer`, `COMPOSE_FILE=../docker-compose.yml` (paths relative to
+  `e2e/`). `e2e/.env` is not in the repo —
   only `.env.example`.

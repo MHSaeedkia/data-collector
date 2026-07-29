@@ -8,16 +8,13 @@ import (
 	"orderbook-e2e/config"
 	"orderbook-e2e/producer"
 	"orderbook-e2e/schemaregistry"
+	"orderbook-e2e/stack"
 	"orderbook-e2e/warmup"
 )
 
 func main() {
 	cfg, err := config.Load(".env")
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := schemaregistry.RegisterDir(cfg.SchemaRegistryURL, cfg.SchemasDir); err != nil {
 		log.Fatal(err)
 	}
 
@@ -56,6 +53,16 @@ type TestPayload struct {
 
 func runTest(cfg config.Config, pairID, exchangeID int64, payload TestPayload) error {
 	ctx := context.Background()
+
+	if err := stack.Provision(ctx, cfg.ComposeFile); err != nil {
+		return err
+	}
+
+	// The registry comes up empty with the stack, so the schemas are registered
+	// after provisioning, not before it.
+	if err := schemaregistry.RegisterDir(cfg.SchemaRegistryURL, cfg.SchemasDir); err != nil {
+		return err
+	}
 
 	if err := warmup.Run(ctx, cfg, exchangeID, pairID); err != nil {
 		return err
