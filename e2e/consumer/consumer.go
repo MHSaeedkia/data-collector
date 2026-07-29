@@ -23,11 +23,51 @@ import (
 const settle = 2 * time.Second
 
 // ReadSnapshots returns every order book snapshot on topic, in the order the
-// book builder emitted them. The topics are recreated empty by the warmup, so
-// reading from the start reads only this run's records. It waits up to wait for
-// the first one — the pipeline has six jobs to traverse — and then keeps reading
-// until the topic goes quiet.
+// book builder emitted them.
 func ReadSnapshots(ctx context.Context, broker, registryURL, topic string, wait time.Duration) ([]events.OrderbookSnapshot, error) {
+	records, err := readRecords(ctx, broker, topic, wait)
+	if err != nil {
+		return nil, err
+	}
+
+	snapshots := make([]events.OrderbookSnapshot, 0, len(records))
+	for i, r := range records {
+		snapshot, err := decodeSnapshot(registryURL, r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	return snapshots, nil
+}
+
+// ReadRejections returns the reason of every dead-letter on topic, in the order
+// it was written. Only the reason is read: rejected_at is wall-clock and the
+// rejected event itself is echoed back verbatim, so neither is worth asserting.
+func ReadRejections(ctx context.Context, broker, registryURL, topic string, wait time.Duration) ([]string, error) {
+	records, err := readRecords(ctx, broker, topic, wait)
+	if err != nil {
+		return nil, err
+	}
+
+	reasons := make([]string, 0, len(records))
+	for i, r := range records {
+		reason, err := decodeRejection(registryURL, r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons, nil
+}
+
+// readRecords returns every record on topic, in offset order. The topics are
+// recreated empty by the warmup, so reading from the start reads only this run's
+// records. It waits up to wait for the first one — the pipeline has six jobs to
+// traverse — and then keeps reading until the topic goes quiet. A topic that
+// stays empty for the whole wait is not an error: some runs expect nothing on a
+// topic, and it is the caller that knows how many records it wanted.
+func readRecords(ctx context.Context, broker, topic string, wait time.Duration) ([]*kgo.Record, error) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(strings.Split(broker, ",")...),
 		kgo.ConsumeTopics(topic),
@@ -38,26 +78,7 @@ func ReadSnapshots(ctx context.Context, broker, registryURL, topic string, wait 
 	}
 	defer cl.Close()
 
-	records, err := pollAll(ctx, cl, topic, wait)
-	if err != nil {
-		return nil, err
-	}
-
-	snapshots := make([]events.OrderbookSnapshot, 0, len(records))
-	for i, r := range records {
-		snapshot, err := decode(registryURL, r.Value)
-		if err != nil {
-			return nil, fmt.Errorf("record %d: %w", i, err)
-		}
-		snapshots = append(snapshots, snapshot)
-	}
-	return snapshots, nil
-}
-
-// pollAll polls until the topic has produced at least one record and then gone
-// quiet for settle, and returns every record it saw, in offset order.
-func pollAll(ctx context.Context, cl *kgo.Client, topic string, wait time.Duration) ([]*kgo.Record, error) {
-	log.Printf("waiting up to %s for snapshots on %s...", wait, topic)
+	log.Printf("reading %s for up to %s...", topic, wait)
 
 	var records []*kgo.Record
 	deadline := time.Now().Add(wait)
@@ -70,9 +91,6 @@ func pollAll(ctx context.Context, cl *kgo.Client, topic string, wait time.Durati
 			if !errors.Is(err, context.DeadlineExceeded) {
 				return nil, fmt.Errorf("consume %s: %w", topic, err)
 			}
-			if len(records) == 0 {
-				return nil, fmt.Errorf("no record on %s within %s", topic, wait)
-			}
 			return records, nil
 		}
 
@@ -83,26 +101,8 @@ func pollAll(ctx context.Context, cl *kgo.Client, topic string, wait time.Durati
 	}
 }
 
-// decode reads a Confluent-wire-format value: a 0 byte, the big-endian id of the
-// schema it was written with, then the Avro datum.
-func decode(registryURL string, value []byte) (events.OrderbookSnapshot, error) {
-	if len(value) < 5 || value[0] != 0 {
-		return events.OrderbookSnapshot{}, fmt.Errorf("record is not Confluent wire format (%d bytes)", len(value))
-	}
-
-	schema, err := schemaregistry.SchemaByID(registryURL, int(binary.BigEndian.Uint32(value[1:5])))
-	if err != nil {
-		return events.OrderbookSnapshot{}, err
-	}
-	codec, err := goavro.NewCodec(schema)
-	if err != nil {
-		return events.OrderbookSnapshot{}, err
-	}
-	native, _, err := codec.NativeFromBinary(value[5:])
-	if err != nil {
-		return events.OrderbookSnapshot{}, fmt.Errorf("decode snapshot: %w", err)
-	}
-	text, err := codec.TextualFromNative(nil, native)
+func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot, error) {
+	text, err := textual(registryURL, value)
 	if err != nil {
 		return events.OrderbookSnapshot{}, err
 	}
@@ -129,4 +129,41 @@ func decode(registryURL string, value []byte) (events.OrderbookSnapshot, error) 
 		Asks:       wire.Asks,
 		Bids:       wire.Bids,
 	}, nil
+}
+
+func decodeRejection(registryURL string, value []byte) (string, error) {
+	text, err := textual(registryURL, value)
+	if err != nil {
+		return "", err
+	}
+
+	var wire struct {
+		RejectReason string `json:"reject_reason"`
+	}
+	if err := json.Unmarshal(text, &wire); err != nil {
+		return "", fmt.Errorf("decode rejection: %w", err)
+	}
+	return wire.RejectReason, nil
+}
+
+// textual turns a Confluent-wire-format value — a 0 byte, the big-endian id of
+// the schema it was written with, then the Avro datum — into goavro's JSON.
+func textual(registryURL string, value []byte) ([]byte, error) {
+	if len(value) < 5 || value[0] != 0 {
+		return nil, fmt.Errorf("record is not Confluent wire format (%d bytes)", len(value))
+	}
+
+	schema, err := schemaregistry.SchemaByID(registryURL, int(binary.BigEndian.Uint32(value[1:5])))
+	if err != nil {
+		return nil, err
+	}
+	codec, err := goavro.NewCodec(schema)
+	if err != nil {
+		return nil, err
+	}
+	native, _, err := codec.NativeFromBinary(value[5:])
+	if err != nil {
+		return nil, fmt.Errorf("decode record: %w", err)
+	}
+	return codec.TextualFromNative(nil, native)
 }
