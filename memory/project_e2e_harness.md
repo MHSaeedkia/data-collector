@@ -31,11 +31,15 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 - `e2e/events/` — Go mirrors of the Avro records the pipeline carries, for decoding what comes
   back off the topics: `OrderbookSnapshot`, `PriceLevel`, `PipelineTimings`, `StepTimings`,
   `AvroTime`.
+- `e2e/consumer/` — `consumer.ReadLatestSnapshot(ctx, broker, registryURL, topic, wait)` reads the
+  last `order-book-snapshot` off a topic and decodes it (Confluent wire format, schema fetched by
+  the id in the record) into an `events.OrderbookSnapshot`.
 - `e2e/warmup/` — `warmup.Run(ctx, cfg, exchangeID, pairID)` is the whole pre-scenario sequence:
   `flink.CancelJobs` → `topics.Delete` → `topics.Create` → `flink.RunJobs`.
-- `e2e/main.go` — wiring only: load config, then `runTest(cfg, pairID, exchangeID,
-  TestPayload{SourceData, WantedData})`, which is `stack.Provision` → `schemaregistry.RegisterDir`
-  → `warmup.Run` → produce `payload.SourceData` to `ex{exchangeID}-raw`.
+- `e2e/main.go` — wiring only: load config and `stack.Provision`, then `runTest(cfg, pairID,
+  exchangeID, TestPayload{SourceData, WantedSnapshotData})`, which is `schemaregistry.RegisterDir`
+  → `warmup.Run` → produce `payload.SourceData` to `ex{exchangeID}-raw` → read
+  `ex{id}-p{id}-orderbook-snapshot-flink` back and compare it to `WantedSnapshotData`.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -98,6 +102,32 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   so the run exercises the whole pipeline from the pair-extractor down. No key, no Avro encoding:
   the raw topic carries plain exchange JSON. Auto topic creation is off on the broker, so producing
   before `topics.Create` fails with `UNKNOWN_TOPIC_OR_PARTITION`.
+- **The assertion reads the LAST snapshot on the topic, not the first.** The book builder emits the
+  whole book on every event, so the first record is not necessarily the final book; `consumer`
+  waits up to `snapshotWait` (60s — the payload has six jobs to cross) for a first record and then
+  keeps the last one after the topic has been quiet for 2s. Reading from the start of the topic is
+  safe because the warmup deletes and recreates it, so it holds only this run's records.
+- **Decoding is goavro + a schema fetched by the record's own id.** The stage topics carry Confluent
+  wire format (`0x00`, big-endian schema id, Avro datum), so `schemaregistry.SchemaByID` resolves
+  the id via `GET /schemas/ids/{id}` — never a local `.avsc`, which would silently drift from what
+  the job actually wrote. `goavro.NewCodec` then decodes it.
+- **`events.OrderbookSnapshot`'s JSON tags do NOT match goavro's textual output.** Verified by
+  round-tripping the real `order_book_snapshot.avsc` through goavro: it writes `event_time` as epoch
+  millis (not ISO-8601), names union branches by their FULL Avro name (`io.tibobit.orderbook.
+  PipelineTimings`, `long.timestamp-millis`) where the structs say `PipelineTimings` and `long` —
+  the structs describe some other decoder's JSON. `consumer.decode` therefore unmarshals into its
+  own small wire struct and fills `OrderbookSnapshot` itself, formatting `event_time` as RFC3339
+  UTC and leaving `PipelineTimings` nil (wall-clock, not assertable). `events` is otherwise unused
+  and still carries the mismatched tags.
+- **The expected snapshot is derived from the source payload by hand, not captured.**
+  `TestPayload.WantedSnapshotData` is what the book builder must emit for the ex1/pair-1 BTCUSDT
+  payload: `event_time` is nobitex's `lastUpdate`, `exchange_markets(1,'BTCUSDT')` rebases by
+  `10^0` on both sides so the numbers are unchanged, `markets(1)` truncates price to 2 and quantity
+  to 8 decimals, and `Decimals.canonicalize` then strips trailing zeros (`0.50000000` → `0.5`,
+  `62650.00` → `62650`). Asks sort ascending, bids descending. Change the seed's rebase or precision
+  columns and this literal has to change with them. `EventTime` is an RFC3339 UTC string
+  (`2027-01-15T08:00:00Z`) because that is the spelling `consumer.decode` produces from the
+  `timestamp-millis` value, not because that is how it sits on the wire.
 - **The event structs keep the Avro JSON union wrappers.** A nullable record arrives nested under
   its own name and a nullable `long` under `"long"`, so `PipelineTimings` is a wrapper holding one
   `StepTimings` field and timestamps are `AvroTime{Long string}` — the timestamps come through as ISO-8601

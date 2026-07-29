@@ -40,6 +40,35 @@ func RegisterDir(registryURL, dir string) error {
 	return nil
 }
 
+// SchemaByID returns the schema a Confluent-wire-format record points at, so a
+// record can be decoded with the very schema it was written with.
+func SchemaByID(registryURL string, id int) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := fmt.Sprintf("%s/schemas/ids/%d", strings.TrimSuffix(registryURL, "/"), id)
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("schema %d: %w", id, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("schema %d: http %d: %s", id, resp.StatusCode, body)
+	}
+
+	var result struct {
+		Schema string `json:"schema"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("schema %d: decode response: %w", id, err)
+	}
+	return result.Schema, nil
+}
+
 func register(client *http.Client, registryURL, subject, file string) (int, error) {
 	schema, err := os.ReadFile(file)
 	if err != nil {
