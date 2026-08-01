@@ -42,12 +42,35 @@ var scenarios = []struct {
 	{"18-ex3-noise-frames", scenario.Ex3NoiseFrames},
 	{"19-ex3-stale-replay", scenario.Ex3StaleReplay},
 
-	// {"01-ex8-update-before-snapshot", scenario.Ex8UpdateBeforeSnapshot},
-	// {"02-ex8-happy-path", scenario.Ex8HappyPath},
-	// {"03-ex8-sequence-gap", scenario.Ex8SequenceGap},
-	// {"04-ex8-stale-duplicate", scenario.Ex8StaleDuplicate},
-	// {"05-ex8-precision-dust", scenario.Ex8PrecisionDust},
-	// {"06-ex8-noise-frames", scenario.Ex8NoiseFrames},
+	// Ramzinex
+	{"20-ex4-ramzinex-snapshots", scenario.Ex4RamzinexSnapshots},
+	{"21-ex4-stale-offset", scenario.Ex4StaleOffset},
+	{"22-ex4-noise-frames", scenario.Ex4NoiseFrames},
+	{"23-ex4-rebase-toman", scenario.Ex4RebaseToman},
+	{"24-ex4-rebase-scaled-unit", scenario.Ex4RebaseScaledUnit},
+
+	// Bitget
+	{"25-ex5-bitget-snapshots", scenario.Ex5BitgetSnapshots},
+	{"26-ex5-multi-book-frame", scenario.Ex5MultiBookFrame},
+	{"27-ex5-stale-seq", scenario.Ex5StaleSeq},
+	{"28-ex5-noise-frames", scenario.Ex5NoiseFrames},
+	{"29-ex5-precision-dust", scenario.Ex5PrecisionDust},
+
+	// Bybit
+	{"30-ex6-snapshot-then-deltas", scenario.Ex6SnapshotThenDeltas},
+	{"31-ex6-one-sided-delta", scenario.Ex6OneSidedDelta},
+	{"32-ex6-sequence-gap", scenario.Ex6SequenceGap},
+	{"33-ex6-no-baseline", scenario.Ex6NoBaseline},
+	{"34-ex6-noise-frames", scenario.Ex6NoiseFrames},
+	{"35-ex6-precision-dust", scenario.Ex6PrecisionDust},
+
+	// OKX
+	{"36-ex8-update-before-snapshot", scenario.Ex8UpdateBeforeSnapshot},
+	{"37-ex8-happy-path", scenario.Ex8HappyPath},
+	{"38-ex8-sequence-gap", scenario.Ex8SequenceGap},
+	{"39-ex8-stale-duplicate", scenario.Ex8StaleDuplicate},
+	{"40-ex8-precision-dust", scenario.Ex8PrecisionDust},
+	{"41-ex8-noise-frames", scenario.Ex8NoiseFrames},
 }
 
 func main() {
