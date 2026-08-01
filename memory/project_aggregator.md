@@ -42,8 +42,8 @@ a delta representation has no primitive for it. That is the whole point.
 
 The aggregator writes the frozen `p{id}-{side}` topics the web consumes, so **only one producer may
 write them at a time**. Makefile `refresh-normalizer`/`run-normalizer-jobs` submit `job-aggregator`
-downstream-first; `manual-test-data/reset.sh` recycles `normalizer-aggregator` (stateful, keyed per
-pair+side). `run-job.sh` is module-driven, so `./run-job.sh job-aggregator` runs it standalone for
+downstream-first. `normalizer-aggregator` is stateful (keyed per pair+side), so it has to be
+recycled to reset it. `run-job.sh` is module-driven, so `./run-job.sh job-aggregator` runs it standalone for
 isolated smoke tests. The FROZEN web-output family `p{id}-{side}` is created by `scripts/warmup.sh`.
 
 **Why Java DataStream not SQL:** R6 many dynamic output topics (SQL Kafka sinks are single-topic),

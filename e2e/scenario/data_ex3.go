@@ -1,5 +1,4 @@
-// Scenarios from flink/normalizer/manual-test-data for
-// ex3/wallex — one side per message, no ordering field, no timestamp.
+// Scenarios for ex3/wallex — one side per message, no ordering field, no timestamp.
 // The conventions these follow are in data.go.
 
 package scenario

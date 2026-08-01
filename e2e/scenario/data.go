@@ -1,13 +1,12 @@
-// The scenarios in data_ex1/2/3/8.go mirror flink/normalizer/manual-test-data
-// one-for-one — same directories, same payloads verbatim. Four conventions hold
-// across all of them:
+// The scenarios in data_ex1/2/3/8.go carry the raw payloads verbatim. Four
+// conventions hold across all of them:
 //
-// Timestamps are NOT shifted. manual-test-data/produce.sh rewrites the synthetic
-// base 1800000000000 (2027-01-15T08:00:00Z) onto wall-clock so a future-dated book
-// cannot poison the aggregator's stored timestamp between runs. This harness
-// asserts on the book-builder topic, not the aggregator, and recreates every topic
-// and all job state per run — so the fixed base is safe here, and it is the only
-// reason EventTime is assertable at all.
+// Timestamps sit on a fixed synthetic base, 1800000000000 (2027-01-15T08:00:00Z),
+// and are NOT shifted onto wall-clock. A future-dated book can poison the
+// aggregator's stored timestamp between runs, but this harness asserts on the
+// book-builder topic, not the aggregator, and recreates every topic and all job
+// state per run — so the fixed base is safe here, and it is the only reason
+// EventTime is assertable at all.
 //
 // EventTime is second-resolution, because the consumer formats it with
 // time.RFC3339. okx's 300 ms steps therefore collapse onto the same string; the
