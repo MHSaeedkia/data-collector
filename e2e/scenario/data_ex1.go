@@ -5,13 +5,12 @@ package scenario
 
 import "orderbook-e2e/events"
 
-// Ex1RestThenWsResync is 08-ex1-rest-then-ws-resync —
-// a null-sequence REST snapshot arms a resync and the next WS update adopts its offset unconditionally.
+// Ex1RestThenWsResync — a null-sequence REST snapshot arms a resync and the next WS update adopts its offset unconditionally.
 var Ex1RestThenWsResync = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
-		// 01-rest-snapshot.json
+		// 01 rest snapshot
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -33,7 +32,7 @@ var Ex1RestThenWsResync = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 02-ws-update.json
+		// 02 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -55,7 +54,7 @@ var Ex1RestThenWsResync = Scenario{
 		}
 	}
 }`,
-		// 03-ws-update.json
+		// 03 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -76,7 +75,7 @@ var Ex1RestThenWsResync = Scenario{
 		}
 	}
 }`,
-		// 04-rest-snapshot.json
+		// 04 rest snapshot
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -96,7 +95,7 @@ var Ex1RestThenWsResync = Scenario{
 		["62860", "0.40000000"]
 	]
 }`,
-		// 05-ws-update.json
+		// 05 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -117,7 +116,7 @@ var Ex1RestThenWsResync = Scenario{
 		}
 	}
 }`,
-		// 06-ws-update.json
+		// 06 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -140,7 +139,7 @@ var Ex1RestThenWsResync = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-rest-snapshot.json
+		{ // after 01 rest snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -159,7 +158,7 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 02-ws-update.json
+		{ // after 02 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -179,7 +178,7 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62638", Quantity: "1.1"},
 			},
 		},
-		{ // after 03-ws-update.json
+		{ // after 03 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -199,7 +198,7 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62635", Quantity: "2"},
 			},
 		},
-		{ // after 04-rest-snapshot.json
+		{ // after 04 rest snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -216,7 +215,7 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62840", Quantity: "1.2"},
 			},
 		},
-		{ // after 05-ws-update.json
+		{ // after 05 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -234,7 +233,7 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62830", Quantity: "1.4"},
 			},
 		},
-		{ // after 06-ws-update.json
+		{ // after 06 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -255,13 +254,12 @@ var Ex1RestThenWsResync = Scenario{
 	},
 }
 
-// Ex1UpdateBeforeSnapshot is 09-ex1-update-before-snapshot —
-// a WS delta before any REST snapshot has no baseline to apply to.
+// Ex1UpdateBeforeSnapshot — a WS delta before any REST snapshot has no baseline to apply to.
 var Ex1UpdateBeforeSnapshot = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
-		// 01-ws-update-no-baseline.json
+		// 01 ws update no baseline
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -281,7 +279,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 		}
 	}
 }`,
-		// 02-rest-snapshot.json
+		// 02 rest snapshot
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -303,7 +301,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 03-ws-update.json
+		// 03 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -327,7 +325,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 02-rest-snapshot.json
+		{ // after 02 rest snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -346,7 +344,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03-ws-update.json
+		{ // after 03 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -370,13 +368,12 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 	WantRejects: []string{"no_baseline"},
 }
 
-// Ex1SequenceGap is 10-ex1-sequence-gap —
-// Centrifugo offsets step by exactly one, so any skip is a gap; only a REST snapshot can re-arm.
+// Ex1SequenceGap — Centrifugo offsets step by exactly one, so any skip is a gap; only a REST snapshot can re-arm.
 var Ex1SequenceGap = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
-		// 01-rest-snapshot.json
+		// 01 rest snapshot
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -398,7 +395,7 @@ var Ex1SequenceGap = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 02-ws-update.json
+		// 02 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -418,7 +415,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 03-ws-update-ok.json
+		// 03 ws update ok
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -437,7 +434,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 04-ws-update-gap.json
+		// 04 ws update gap
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -456,7 +453,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 05-ws-update-awaiting.json
+		// 05 ws update awaiting
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -475,7 +472,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 06-rest-snapshot-resync.json
+		// 06 rest snapshot resync
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -495,7 +492,7 @@ var Ex1SequenceGap = Scenario{
 		["63060", "0.40000000"]
 	]
 }`,
-		// 07-ws-update.json
+		// 07 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -516,7 +513,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 08-ws-update-ok.json
+		// 08 ws update ok
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -539,7 +536,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-rest-snapshot.json
+		{ // after 01 rest snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -558,7 +555,7 @@ var Ex1SequenceGap = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 02-ws-update.json
+		{ // after 02 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -578,7 +575,7 @@ var Ex1SequenceGap = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03-ws-update-ok.json
+		{ // after 03 ws update ok
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -600,14 +597,14 @@ var Ex1SequenceGap = Scenario{
 				{Price: "62635", Quantity: "2"},
 			},
 		},
-		{ // after 04-ws-update-gap.json (reset)
+		{ // after 04 ws update gap (reset)
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
 		},
-		{ // after 06-rest-snapshot-resync.json
+		{ // after 06 rest snapshot resync
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -624,7 +621,7 @@ var Ex1SequenceGap = Scenario{
 				{Price: "63040", Quantity: "1.2"},
 			},
 		},
-		{ // after 07-ws-update.json
+		{ // after 07 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -642,7 +639,7 @@ var Ex1SequenceGap = Scenario{
 				{Price: "63030", Quantity: "1.4"},
 			},
 		},
-		{ // after 08-ws-update-ok.json
+		{ // after 08 ws update ok
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -664,20 +661,19 @@ var Ex1SequenceGap = Scenario{
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
 }
 
-// Ex1NoiseFrames is 11-ex1-noise-frames —
-// Centrifugo noise is dropped without consuming an offset or arming a resync.
+// Ex1NoiseFrames — Centrifugo noise is dropped without consuming an offset or arming a resync.
 var Ex1NoiseFrames = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
-		// 01-connect-ack.json
+		// 01 connect ack
 		`{
 	"connect": {
 		"client": "a4d3ae55-9f2c-4c31-8f0e-1b2c3d4e5f60",
 		"version": "5.0.0"
 	}
 }`,
-		// 02-foreign-channel.json
+		// 02 foreign channel
 		`{
 	"push": {
 		"channel": "public:trades-BTCUSDT",
@@ -691,7 +687,7 @@ var Ex1NoiseFrames = Scenario{
 		}
 	}
 }`,
-		// 03-rest-snapshot.json
+		// 03 rest snapshot
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -711,7 +707,7 @@ var Ex1NoiseFrames = Scenario{
 		["62960", "0.33476925"]
 	]
 }`,
-		// 04-malformed-book.json
+		// 04 malformed book
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -724,7 +720,7 @@ var Ex1NoiseFrames = Scenario{
 		}
 	}
 }`,
-		// 05-ws-update.json
+		// 05 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -745,7 +741,7 @@ var Ex1NoiseFrames = Scenario{
 		}
 	}
 }`,
-		// 06-ws-update.json
+		// 06 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -768,7 +764,7 @@ var Ex1NoiseFrames = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 03-rest-snapshot.json
+		{ // after 03 rest snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -785,7 +781,7 @@ var Ex1NoiseFrames = Scenario{
 				{Price: "62940", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 05-ws-update.json
+		{ // after 05 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -803,7 +799,7 @@ var Ex1NoiseFrames = Scenario{
 				{Price: "62938", Quantity: "1.1"},
 			},
 		},
-		{ // after 06-ws-update.json
+		{ // after 06 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -824,13 +820,12 @@ var Ex1NoiseFrames = Scenario{
 	},
 }
 
-// Ex1StaleRestReplay is 12-ex1-stale-rest-replay —
-// a REST snapshot carries no offset, so a replayed old one is caught by event time alone.
+// Ex1StaleRestReplay — a REST snapshot carries no offset, so a replayed old one is caught by event time alone.
 var Ex1StaleRestReplay = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
-		// 01-rest-snapshot.json
+		// 01 rest snapshot
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -848,7 +843,7 @@ var Ex1StaleRestReplay = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 02-ws-update.json
+		// 02 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -868,7 +863,7 @@ var Ex1StaleRestReplay = Scenario{
 		}
 	}
 }`,
-		// 03-ws-update-loud.json
+		// 03 ws update loud
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -887,7 +882,7 @@ var Ex1StaleRestReplay = Scenario{
 		}
 	}
 }`,
-		// 04-rest-snapshot-stale-replay.json
+		// 04 rest snapshot stale replay
 		`{
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -905,7 +900,7 @@ var Ex1StaleRestReplay = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 05-ws-update.json
+		// 05 ws update
 		`{
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -926,7 +921,7 @@ var Ex1StaleRestReplay = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-rest-snapshot.json
+		{ // after 01 rest snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -941,7 +936,7 @@ var Ex1StaleRestReplay = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 02-ws-update.json
+		{ // after 02 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -957,7 +952,7 @@ var Ex1StaleRestReplay = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03-ws-update-loud.json
+		{ // after 03 ws update loud
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -975,7 +970,7 @@ var Ex1StaleRestReplay = Scenario{
 				{Price: "60000", Quantity: "5"},
 			},
 		},
-		{ // after 05-ws-update.json
+		{ // after 05 ws update
 			ExchangeID: 1,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",

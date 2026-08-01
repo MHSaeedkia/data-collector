@@ -5,14 +5,13 @@ package scenario
 
 import "orderbook-e2e/events"
 
-// Ex3WallexHalfBook is 07-ex3-wallex-half-book —
-// wallex sends one side per message; a null side must never wipe the other.
+// Ex3WallexHalfBook — wallex sends one side per message; a null side must never wipe the other.
 var Ex3WallexHalfBook = Scenario{
 	ExchangeID:      3,
 	PairID:          1,
 	IgnoreEventTime: true,
 	Sources: []string{
-		// 01-buy-depth.json
+		// 01 buy depth
 		`[
 	"BTCUSDT@buyDepth",
 	[
@@ -21,7 +20,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62932.5, "quantity": 2.9, "sum": 182504.25 }
 	]
 ]`,
-		// 02-sell-depth.json
+		// 02 sell depth
 		`[
 	"BTCUSDT@sellDepth",
 	[
@@ -30,7 +29,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62962.5, "quantity": 2.2, "sum": 138517.5 }
 	]
 ]`,
-		// 03-buy-depth-refresh.json
+		// 03 buy depth refresh
 		`[
 	"BTCUSDT@buyDepth",
 	[
@@ -40,7 +39,7 @@ var Ex3WallexHalfBook = Scenario{
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-buy-depth.json
+		{ // after 01 buy depth
 			ExchangeID: 3,
 			PairID:     1,
 			Asks:       []events.PriceLevel{},
@@ -50,7 +49,7 @@ var Ex3WallexHalfBook = Scenario{
 				{Price: "62932.5", Quantity: "2.9"},
 			},
 		},
-		{ // after 02-sell-depth.json
+		{ // after 02 sell depth
 			ExchangeID: 3,
 			PairID:     1,
 			Asks: []events.PriceLevel{
@@ -64,7 +63,7 @@ var Ex3WallexHalfBook = Scenario{
 				{Price: "62932.5", Quantity: "2.9"},
 			},
 		},
-		{ // after 03-buy-depth-refresh.json
+		{ // after 03 buy depth refresh
 			ExchangeID: 3,
 			PairID:     1,
 			Asks: []events.PriceLevel{
