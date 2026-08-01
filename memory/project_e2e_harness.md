@@ -221,3 +221,15 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   `NORMALIZER_DIR=../flink/normalizer`, `COMPOSE_FILE=../docker-compose.yml` (paths relative to
   `e2e/`). `e2e/.env` is not in the repo —
   only `.env.example`.
+- **ex3/wallex can never produce a dead-letter, so its scenarios only assert books and drops**
+  (2026-08-01). Worked out from the job sources before writing the ex3 cases, so a future session
+  does not re-derive it: job 2's only applicable rule is the null-sequence guard, which compares
+  `event_time` to the last accepted one — and ex3 has no timestamp on the wire, so job 1 stamps
+  processing time, which only ever moves forward. Job 3's `no_rebase_row` is unreachable too:
+  `ExchangeMarketsLoader` (pair resolution) and `RebaseFactorsLoader` both read `exchange_markets`
+  with no status filter, so a frame that got a `pair_id` necessarily has rebase factors. ex3's
+  entire failure surface is job-1 drops (bad envelope, unknown side suffix, unknown market,
+  non-numeric level) plus book state. `Ex3StaleReplay` pins the consequence as intended behaviour:
+  a replayed older frame is accepted and the book goes backwards, which is the "no out-of-order
+  protection" ex3 was always known to have (sample-raw-data.md § ex3) — if that scenario ever
+  fails, the guard changed, it is not a flake.
