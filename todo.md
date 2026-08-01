@@ -16,4 +16,7 @@
 - [x] Rejections — `runTest` takes a `Scenario{Sources, WantSnapshots, WantRejects}` and checks the snapshot topic *and* `ex{id}-p{id}-rejected-flink` against their own wanted streams, so a run can expect N sources → M snapshots + K rejections + drops (2026-07-29, build/vet clean, not run live)
 - [x] `main.go` refactor — ids folded into `Scenario`, scenario data out of `main()` into package-level vars, `runTest` split into `Scenario.produce` / `Scenario.verify` (2026-07-29, build/vet clean, not run live)
 - [x] `e2e/scenario/` package — `runTest`/`compare`/`Scenario` moved out of package `main` into `scenario.Run(ctx, cfg, s)` (`scenario.go`) with the cases in `data.go` (`scenario.NobitexSnapshot`); `main.go` is now `main()` and nothing else (2026-07-29, build/vet clean, not run live)
+- [x] All 17 manual-test-data scenarios ported — `scenario/data_ex1/2/3/8.go`, payloads verbatim, expected books derived by replaying jobs 3/4/5 over the fixtures and cross-checked against `manual-test-data/README.md` (2026-07-29, build/vet clean, **none run live**)
+- [x] `main.go` runs all 17 — a named list in directory order, each scenario warms up its own exchange, failures are collected and reported at the end instead of aborting the run (2026-07-29, build/vet clean, not run live)
+- [ ] Run the 17 ported scenarios against the live stack — the expected books are derived, not observed
 - [ ] Verify the four upstream steps (raw / type-validated / rebased / applied-precision) have their wanted values too

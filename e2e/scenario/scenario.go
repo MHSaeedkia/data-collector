@@ -38,6 +38,11 @@ type Scenario struct {
 	Sources       []string
 	WantSnapshots []events.OrderbookSnapshot
 	WantRejects   []string // reject_reason of each dead-letter, e.g. "sequence_gap"
+
+	// IgnoreEventTime blanks EventTime on both sides before comparing. Only ex3
+	// wallex needs it: its wire carries no timestamp at all, so job 1 stamps
+	// processing time and the field is wall-clock. The levels are still asserted.
+	IgnoreEventTime bool
 }
 
 // Run brings the pipeline back to a clean start, feeds it s's sources and
@@ -85,6 +90,11 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 	snapshots, err := consumer.ReadSnapshots(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, snapshotTopic, snapshotWait)
 	if err != nil {
 		return err
+	}
+	if s.IgnoreEventTime {
+		for i := range snapshots {
+			snapshots[i].EventTime = ""
+		}
 	}
 	if err := compare(snapshotTopic, snapshots, s.WantSnapshots); err != nil {
 		return err

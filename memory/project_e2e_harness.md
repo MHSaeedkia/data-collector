@@ -42,11 +42,12 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   `ex{ExchangeID}-raw`, in order) → `Scenario.verify` (read
   `ex{id}-p{id}-orderbook-snapshot-flink` and then `ex{id}-p{id}-rejected-flink` back and check each
   against its wanted stream — generic `compare[T]`, length then `DeepEqual` per index).
-  `scenario.go` holds the type and the run logic; `data.go` holds the cases themselves as exported
-  package-level vars (`scenario.NobitexSnapshot`). It imports `config`, `consumer`, `events`,
+  `scenario.go` holds the type and the run logic; `data.go` holds the shared conventions comment
+  plus `NobitexSnapshot`, and `data_ex1/2/3/8.go` hold the 17 manual-test-data cases as exported
+  package-level vars. It imports `config`, `consumer`, `events`,
   `producer`, `schemaregistry` and `warmup`, so nothing below it may import `scenario`.
 - `e2e/main.go` — `main()` and nothing else: load config, make a context, optionally
-  `stack.Provision`, `scenario.Run(ctx, cfg, scenario.NobitexSnapshot)`.
+  `stack.Provision`, then loop the `scenarios` list calling `scenario.Run` on each.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -130,6 +131,37 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   same type next to each other is the hazard, so they were folded into the struct instead of
   reordered. **Everything else in the harness keeps `(exchangeID, pairID)` — do not add a function
   that takes them the other way round.**
+- **A sequence gap costs one dead-letter AND one extra, EMPTY snapshot** (2026-07-29, read out of
+  `TypeValidateFunction.emitReset` / `BookBuildFunction`). On the not-awaiting → awaiting transition
+  job 2 dead-letters the gap event *and* emits a synthetic `type=reset` marker onto the main stream;
+  job 5 answers a reset by clearing both `MapState`s and emitting the book empty. So the snapshot
+  stream for a gap scenario is `…, {Asks: {}, Bids: {}}, <resync snapshot>, …`, and every pre-gap
+  level is gone until a snapshot re-seeds. **`manual-test-data/README.md` does not mention this** —
+  it only counts dead-letters — so its per-scenario prose is NOT a complete oracle for the snapshot
+  topic. Fires exactly once per gap episode; the `awaiting_snapshot` rejections that follow emit
+  nothing.
+- **The manual-test-data payloads go out VERBATIM — the `produce.sh` timestamp shift is deliberately
+  not reproduced** (2026-07-29). The script rewrites the synthetic base `1800000000000`
+  (`2027-01-15T08:00:00Z`) onto wall-clock so a future-dated book cannot poison the AGGREGATOR's
+  stored last-event-time between manual runs. That reasoning does not reach this harness: it asserts
+  on the book-builder topic, not the aggregator, and recreates every topic and all job state per
+  run. Keeping the base fixed is what makes `EventTime` assertable at all — shifting it would make
+  the field wall-clock and unassertable. **Do not "fix" the scenarios by shifting them.**
+- **`EventTime` is second-resolution and ex3 has none at all.** The consumer formats with
+  `time.RFC3339`, which has no fractional part, so okx's 300 ms steps collapse onto one string —
+  consecutive ex8 snapshots are separated by their levels, not their timestamps. ex3 wallex carries
+  no wire timestamp whatsoever (job 1 stamps `System.currentTimeMillis()`), so `Scenario` has an
+  `IgnoreEventTime bool` that blanks the field on both sides before comparing; it exists for that
+  one exchange and nothing else should set it.
+- **The 17 scenarios run in one process, sequentially, and a failure does not abort the run**
+  (2026-07-29). `main.go` holds a `scenarios` list of `{name, Scenario}` in manual-test-data
+  directory order; the name is only in that list, not on `Scenario`, so the 17 data vars stayed
+  untouched. Each `scenario.Run` re-registers the schemas and re-warms *its own* exchange (cancel →
+  delete topics → create → resubmit the 6 jobs), which is what makes them independent and also what
+  makes the suite slow — that per-scenario warmup is the cost, not the 60 s snapshot wait. Because
+  it is that slow, failures are collected and listed at the end rather than `log.Fatal`-ing on the
+  first one; the process exits 1 if any failed. `stack.Provision` stays commented out at the top —
+  the per-scenario warmup already gives a clean slate, and `down -v` per scenario would be absurd.
 - **Index-matching within a topic assumes order is preserved end to end.** The raw topic has ONE
   partition and no job sets parallelism (no `setParallelism` in any job, no `parallelism.default` in
   compose — only `taskmanager.numberOfTaskSlots: 8`, so Flink's default of 1 applies; INFERRED from
