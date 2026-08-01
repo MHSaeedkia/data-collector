@@ -18,5 +18,6 @@
 - [x] `e2e/scenario/` package — `runTest`/`compare`/`Scenario` moved out of package `main` into `scenario.Run(ctx, cfg, s)` (`scenario.go`) with the cases in `data.go` (`scenario.NobitexSnapshot`); `main.go` is now `main()` and nothing else (2026-07-29, build/vet clean, not run live)
 - [x] All 17 scenarios (01–17, ex8/ex3/ex1/ex2) live in `scenario/data_ex1/2/3/8.go` — payloads verbatim, expected books derived by replaying jobs 3/4/5 over them (2026-07-29, build/vet clean, **none run live**)
 - [x] `main.go` runs all 17 — a named list in directory order, each scenario warms up its own exchange, failures are collected and reported at the end instead of aborting the run (2026-07-29, build/vet clean, not run live)
-- [ ] Run the 17 ported scenarios against the live stack — the expected books are derived, not observed
+- [x] ex3/wallex coverage — 4 scenarios added next to `Ex3WallexHalfBook` (`Ex3EmptySideWipe`, `Ex3PrecisionDust`, `Ex3NoiseFrames`, `Ex3StaleReplay`), all 5 wired into `main.go` as 11–15; none expects a rejection because ex3 cannot reach a dead-letter (2026-08-01, build/vet clean, not run live)
+- [ ] Run the ported scenarios against the live stack — the expected books are derived, not observed
 - [ ] Verify the four upstream steps (raw / type-validated / rebased / applied-precision) have their wanted values too

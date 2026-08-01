@@ -31,7 +31,12 @@ var scenarios = []struct {
 	{"09-ex2-noise-frames", scenario.Ex2NoiseFrames},
 	{"10-ex2-stale-rest-replay", scenario.Ex2StaleRestReplay},
 
-	// {"07-ex3-wallex-half-book", scenario.Ex3WallexHalfBook},
+	// Wallex
+	{"11-ex3-wallex-half-book", scenario.Ex3WallexHalfBook},
+	{"12-ex3-empty-side-wipe", scenario.Ex3EmptySideWipe},
+	{"13-ex3-precision-dust", scenario.Ex3PrecisionDust},
+	{"14-ex3-noise-frames", scenario.Ex3NoiseFrames},
+	{"15-ex3-stale-replay", scenario.Ex3StaleReplay},
 
 	// {"01-ex8-update-before-snapshot", scenario.Ex8UpdateBeforeSnapshot},
 	// {"02-ex8-happy-path", scenario.Ex8HappyPath},
@@ -39,7 +44,6 @@ var scenarios = []struct {
 	// {"04-ex8-stale-duplicate", scenario.Ex8StaleDuplicate},
 	// {"05-ex8-precision-dust", scenario.Ex8PrecisionDust},
 	// {"06-ex8-noise-frames", scenario.Ex8NoiseFrames},
-
 }
 
 func main() {
