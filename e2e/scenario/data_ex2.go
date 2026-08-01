@@ -1,5 +1,4 @@
-// Scenarios from flink/normalizer/manual-test-data for
-// ex2/bitpin — ex1's shape, with event_time arriving in two wire types.
+// Scenarios for ex2/bitpin — ex1's shape, with event_time arriving in two wire types.
 // The conventions these follow are in data.go.
 
 package scenario

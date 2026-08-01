@@ -1,5 +1,4 @@
-// Scenarios from flink/normalizer/manual-test-data for
-// ex1/nobitex — a REST snapshot with no offset plus Centrifugo WS deltas.
+// Scenarios for ex1/nobitex — a REST snapshot with no offset plus Centrifugo WS deltas.
 // The conventions these follow are in data.go.
 
 package scenario

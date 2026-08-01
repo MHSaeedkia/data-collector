@@ -43,7 +43,7 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
   `ex{id}-p{id}-orderbook-snapshot-flink` and then `ex{id}-p{id}-rejected-flink` back and check each
   against its wanted stream — generic `compare[T]`, length then `DeepEqual` per index).
   `scenario.go` holds the type and the run logic; `data.go` holds the shared conventions comment
-  plus `NobitexSnapshot`, and `data_ex1/2/3/8.go` hold the 17 manual-test-data cases as exported
+  plus `NobitexSnapshot`, and `data_ex1/2/3/8.go` hold the 17 scenario cases as exported
   package-level vars. It imports `config`, `consumer`, `events`,
   `producer`, `schemaregistry` and `warmup`, so nothing below it may import `scenario`.
 - `e2e/main.go` — `main()` and nothing else: load config, make a context, optionally
@@ -115,7 +115,7 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   `Scenario{ExchangeID, PairID, Sources, WantSnapshots, WantRejects}` (2026-07-29). The reason is that a raw event has
   THREE possible fates, not two: a snapshot, a dead-letter on `ex{id}-p{id}-rejected-flink`, or
   nothing at all (job 1 drops noise frames / unknown markets — drop ≠ reject, see
-  [[manual-test-data]]). Four sources can legitimately mean three snapshots and one rejection, so
+  [[pair-extractor]]). Four sources can legitimately mean three snapshots and one rejection, so
   source index ≠ snapshot index and a per-source `Wanted…` field would need a "nothing here" case.
   The rejected alternative was `TestPayload{SourceData, *WantedSnapshot, WantedRejectReason}`
   filtered into two sequences at assert time; **the user chose the per-topic form and was right** —
@@ -136,17 +136,15 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   job 2 dead-letters the gap event *and* emits a synthetic `type=reset` marker onto the main stream;
   job 5 answers a reset by clearing both `MapState`s and emitting the book empty. So the snapshot
   stream for a gap scenario is `…, {Asks: {}, Bids: {}}, <resync snapshot>, …`, and every pre-gap
-  level is gone until a snapshot re-seeds. **`manual-test-data/README.md` does not mention this** —
-  it only counts dead-letters — so its per-scenario prose is NOT a complete oracle for the snapshot
-  topic. Fires exactly once per gap episode; the `awaiting_snapshot` rejections that follow emit
-  nothing.
-- **The manual-test-data payloads go out VERBATIM — the `produce.sh` timestamp shift is deliberately
-  not reproduced** (2026-07-29). The script rewrites the synthetic base `1800000000000`
-  (`2027-01-15T08:00:00Z`) onto wall-clock so a future-dated book cannot poison the AGGREGATOR's
-  stored last-event-time between manual runs. That reasoning does not reach this harness: it asserts
-  on the book-builder topic, not the aggregator, and recreates every topic and all job state per
-  run. Keeping the base fixed is what makes `EventTime` assertable at all — shifting it would make
-  the field wall-clock and unassertable. **Do not "fix" the scenarios by shifting them.**
+  level is gone until a snapshot re-seeds. Counting dead-letters is therefore NOT a complete oracle
+  for a gap scenario — the empty book has to be in `WantSnapshots` too. Fires exactly once per gap
+  episode; the `awaiting_snapshot` rejections that follow emit nothing.
+- **Scenario timestamps stay on the fixed synthetic base `1800000000000` (`2027-01-15T08:00:00Z`) —
+  do NOT shift them onto wall-clock** (2026-07-29). A future-dated book can poison the AGGREGATOR's
+  stored last-event-time, but that does not reach this harness: it asserts on the book-builder
+  topic, not the aggregator, and recreates every topic and all job state per run. Keeping the base
+  fixed is what makes `EventTime` assertable at all — shifting it would make the field wall-clock
+  and unassertable. **Do not "fix" the scenarios by shifting them.**
 - **`EventTime` is second-resolution and ex3 has none at all.** The consumer formats with
   `time.RFC3339`, which has no fractional part, so okx's 300 ms steps collapse onto one string —
   consecutive ex8 snapshots are separated by their levels, not their timestamps. ex3 wallex carries
@@ -154,8 +152,8 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   `IgnoreEventTime bool` that blanks the field on both sides before comparing; it exists for that
   one exchange and nothing else should set it.
 - **The 17 scenarios run in one process, sequentially, and a failure does not abort the run**
-  (2026-07-29). `main.go` holds a `scenarios` list of `{name, Scenario}` in manual-test-data
-  directory order; the name is only in that list, not on `Scenario`, so the 17 data vars stayed
+  (2026-07-29). `main.go` holds a `scenarios` list of `{name, Scenario}` in numbered order (01–17);
+  the name is only in that list, not on `Scenario`, so the 17 data vars stayed
   untouched. Each `scenario.Run` re-registers the schemas and re-warms *its own* exchange (cancel →
   delete topics → create → resubmit the 6 jobs), which is what makes them independent and also what
   makes the suite slow — that per-scenario warmup is the cost, not the 60 s snapshot wait. Because

@@ -61,9 +61,9 @@ below).
 exchange-agnostic for ex1, so ex2 inherited both. **Same coupled-deploy warning as ex1**: parser +
 NiFi's ex2 REST feed cut over together or every ex2 update rejects `no_baseline`.
 
-Runnable e2e coverage: [[manual-test-data]] scenarios 13–17 (mirror of ex1's 08–12), including one
-file that is a REST snapshot with a *string* `event_time` — the drop-with-no-dead-letter failure the
-two wire types make possible.
+Runnable e2e coverage: [[e2e-harness]] scenarios 13–17 (mirror of ex1's 08–12), including one
+source that is a REST snapshot with a *string* `event_time` — the drop-with-no-dead-letter failure
+the two wire types make possible.
 
 **New cross-exchange hazard:** ex1 and ex2 REST snapshots are now structurally IDENTICAL except
 for the timestamp field's NAME — both are `action`+`pair`+epoch-millis (`lastUpdate` vs

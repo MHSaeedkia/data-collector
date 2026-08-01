@@ -1,5 +1,4 @@
-// Scenarios from flink/normalizer/manual-test-data for
-// ex8/okx — a single-shape feed: every frame is a book frame carrying its
+// Scenarios for ex8/okx — a single-shape feed: every frame is a book frame carrying its
 // own sequence in `ts`.
 // The conventions these follow are in data.go.
 
