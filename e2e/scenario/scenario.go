@@ -25,6 +25,10 @@ const (
 	// rejectWait is short because the dead-letter topic is only read once the
 	// snapshot topic has gone quiet.
 	rejectWait = 10 * time.Second
+	// aggregateWait is short for the same reason: the aggregator sits directly
+	// behind the book builder, so its output is already written by the time the
+	// snapshot topic has settled.
+	aggregateWait = 10 * time.Second
 )
 
 // Scenario is one run: which pipeline to feed, the exchange payloads to put on
@@ -39,10 +43,26 @@ type Scenario struct {
 	WantSnapshots []events.OrderbookSnapshot
 	WantRejects   []string // reject_reason of each dead-letter, e.g. "sequence_gap"
 
+	// WantAggregated is the aggregated view of the pair once every source is
+	// through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`. Nil
+	// means the aggregated topics are not read at all, which is the default: the
+	// aggregator emits one record per side per snapshot, so asserting the whole
+	// stream would restate WantSnapshots twice over. Only the final state is
+	// worth pinning, and only on the scenarios where job 6 is the point.
+	WantAggregated *AggregatedBook
+
 	// IgnoreEventTime blanks EventTime on both sides before comparing. Only ex3
 	// wallex needs it: its wire carries no timestamp at all, so job 1 stamps
 	// processing time and the field is wall-clock. The levels are still asserted.
 	IgnoreEventTime bool
+}
+
+// AggregatedBook is the two sides of the aggregated book as the web app would
+// read them. Every level carries the exchange it came from, because the
+// aggregator unions across exchanges instead of summing them.
+type AggregatedBook struct {
+	Asks []events.AggregatedLevel
+	Bids []events.AggregatedLevel
 }
 
 // Run brings the pipeline back to a clean start, feeds it s's sources and
@@ -110,6 +130,44 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 	}
 
 	log.Printf("matched %d snapshots and %d rejections", len(snapshots), len(rejects))
+
+	if s.WantAggregated == nil {
+		return nil
+	}
+	return s.verifyAggregated(ctx, cfg)
+}
+
+// verifyAggregated checks the last record on each of the pair's two aggregated
+// topics. Those topics are the pair's, not the exchange's — the aggregator keys
+// on (pair_id, side) across every exchange — but a scenario feeds one exchange
+// and the warmup emptied the topics, so what is there is this run's.
+func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config) error {
+	for _, side := range []struct {
+		name string
+		want []events.AggregatedLevel
+	}{
+		{"asks", s.WantAggregated.Asks},
+		{"bids", s.WantAggregated.Bids},
+	} {
+		topic := fmt.Sprintf("p%d-%s", s.PairID, side.name)
+		records, err := consumer.ReadAggregated(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, topic, aggregateWait)
+		if err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			return fmt.Errorf("%s: no aggregated records, want a final book", topic)
+		}
+
+		final := records[len(records)-1]
+		if final.PairID != s.PairID || final.Side != side.name {
+			return fmt.Errorf("%s: record is pair %d %s, want pair %d %s",
+				topic, final.PairID, final.Side, s.PairID, side.name)
+		}
+		if err := compare(topic, final.Levels, side.want); err != nil {
+			return err
+		}
+		log.Printf("matched the final aggregated book on %s (%d records seen)", topic, len(records))
+	}
 	return nil
 }
 

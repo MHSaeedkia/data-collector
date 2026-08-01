@@ -991,3 +991,259 @@ var Ex1StaleRestReplay = Scenario{
 	},
 	WantRejects: []string{"out_of_order"},
 }
+
+// Ex1PrecisionDust — job 4 on a nobitex feed: prices that collide once truncated to the market's
+// 2 places merge into one level with their quantities summed, and a quantity below the market's 8
+// places truncates to zero, which job 5 reads as a delete. Pair 1 rebases by 10^0, so the numbers
+// that move here moved in job 4 and nowhere else.
+var Ex1PrecisionDust = Scenario{
+	ExchangeID: 1,
+	PairID:     1,
+	Sources: []string{
+		// 01 rest snapshot
+		`{
+	"action": "snapshot",
+	"pair": "BTCUSDT",
+	"status": "ok",
+	"lastUpdate": 1800000000000,
+	"lastTradePrice": "62650",
+	"bids": [
+		["62650.123", "0.40000000"],
+		["62650.129", "0.25000000"],
+		["62649.5", "1.00000000"]
+	],
+	"asks": [
+		["62651.006", "0.30000000"],
+		["62652", "0.000000005"]
+	]
+}`,
+		// 02 ws update
+		`{
+	"push": {
+		"channel": "public:orderbook-BTCUSDT",
+		"pub": {
+			"data": {
+				"asks": [
+					["62651.004", "0.000000009"],
+					["62653.999", "0.75000000"]
+				],
+				"bids": [
+					["62650.121", "0.10000000"],
+					["62650.128", "0.20000000"]
+				],
+				"lastTradePrice": "62652",
+				"lastUpdate": 1800000000100
+			},
+			"offset": 5000
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01 rest snapshot — .123 and .129 merged at .12 (0.4+0.25), the dust ask never rested
+			ExchangeID: 1,
+			PairID:     1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62651", Quantity: "0.3"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62650.12", Quantity: "0.65"},
+				{Price: "62649.5", Quantity: "1"},
+			},
+		},
+		{ // after 02 ws update — dust deleted the 62651 ask that was already resting there
+			ExchangeID: 1,
+			PairID:     1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62653.99", Quantity: "0.75"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62650.12", Quantity: "0.3"},
+				{Price: "62649.5", Quantity: "1"},
+			},
+		},
+	},
+}
+
+// Ex1RebaseToman — job 3's IRR→Toman case. Nobitex quotes IRT markets in rials; the platform
+// stores tomans, so `exchange_markets(1,'1K_SHIBIRT')` carries price_amount_rebase -1 and the
+// price is shifted one place down before anything else sees it. Volume is untouched (rebase 0).
+// The prices are chosen so the shift lands a third decimal on the market's 2 places, which
+// job 4 then truncates DOWN — proving rebase runs first and truncation second.
+var Ex1RebaseToman = Scenario{
+	ExchangeID: 1,
+	PairID:     52,
+	Sources: []string{
+		// 01 rest snapshot, prices in rials
+		`{
+	"action": "snapshot",
+	"pair": "1K_SHIBIRT",
+	"status": "ok",
+	"lastUpdate": 1800000000000,
+	"lastTradePrice": "8525",
+	"bids": [
+		["8523.45", "1500.00000000"],
+		["8520", "2000.00000000"],
+		["8510.9", "3000.00000000"]
+	],
+	"asks": [
+		["8530.55", "1200.00000000"],
+		["8541", "800.00000000"]
+	]
+}`,
+		// 02 ws update
+		`{
+	"push": {
+		"channel": "public:orderbook-1K_SHIBIRT",
+		"pub": {
+			"data": {
+				"asks": [
+					["8530.55", "0"],
+					["8535.99", "500.00000000"]
+				],
+				"bids": [
+					["8520", "2500.00000000"]
+				],
+				"lastTradePrice": "8530",
+				"lastUpdate": 1800000000100
+			},
+			"offset": 4000
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01 rest snapshot — 8523.45 rials is 852.345 tomans, truncated DOWN to 852.34
+			ExchangeID: 1,
+			PairID:     52,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "853.05", Quantity: "1200"},
+				{Price: "854.1", Quantity: "800"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "852.34", Quantity: "1500"},
+				{Price: "852", Quantity: "2000"},
+				{Price: "851.09", Quantity: "3000"},
+			},
+		},
+		{ // after 02 ws update — the delete is matched on the rebased price, not the wire one
+			ExchangeID: 1,
+			PairID:     52,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "853.59", Quantity: "500"},
+				{Price: "854.1", Quantity: "800"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "852.34", Quantity: "1500"},
+				{Price: "852", Quantity: "2500"},
+				{Price: "851.09", Quantity: "3000"},
+			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "853.59", Quantity: "500"},
+			{ExchangeID: 1, Price: "854.1", Quantity: "800"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "852.34", Quantity: "1500"},
+			{ExchangeID: 1, Price: "852", Quantity: "2500"},
+			{ExchangeID: 1, Price: "851.09", Quantity: "3000"},
+		},
+	},
+}
+
+// Ex1RebaseScaledUnit — job 3's scaled-unit case, and the only pair in the suite where BOTH
+// rebase exponents are non-zero. Nobitex quotes PEPE per 1,000,000 units, so
+// `exchange_markets(1,'1M_PEPEUSDT')` is price -6 / volume +6: the price divides by a million
+// and the quantity multiplies by one, landing on per-1-PEPE numbers. Pair 17 is also the only
+// pair seeded at precision 10/10, so the truncation happens ten places out instead of two.
+//
+// The last ask of 01 is the ordering proof: 10^-17 of a 1M unit is 10^-11 whole PEPE, which
+// survives the +6 rebase and only then dies at the market's 10 places. Rebase first, truncate
+// second — the other order would have kept it.
+var Ex1RebaseScaledUnit = Scenario{
+	ExchangeID: 1,
+	PairID:     17,
+	Sources: []string{
+		// 01 rest snapshot, priced per 1M PEPE
+		`{
+	"action": "snapshot",
+	"pair": "1M_PEPEUSDT",
+	"status": "ok",
+	"lastUpdate": 1800000000000,
+	"lastTradePrice": "12.35",
+	"bids": [
+		["12.3456789", "0.00000005"],
+		["12.3", "1.50000000"]
+	],
+	"asks": [
+		["12.4", "2.25000000"],
+		["12.45678901234", "0.00100000"],
+		["12.6", "0.00000000000000001"]
+	]
+}`,
+		// 02 ws update
+		`{
+	"push": {
+		"channel": "public:orderbook-1M_PEPEUSDT",
+		"pub": {
+			"data": {
+				"asks": [
+					["12.4", "0"],
+					["12.5", "0.50000000"]
+				],
+				"bids": [
+					["12.3456789", "0.00000001"]
+				],
+				"lastTradePrice": "12.45",
+				"lastUpdate": 1800000000100
+			},
+			"offset": 3000
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01 rest snapshot — the 12.6 ask rebased to 10^-11 PEPE and truncated away
+			ExchangeID: 1,
+			PairID:     17,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "0.0000124", Quantity: "2250000"},
+				{Price: "0.0000124567", Quantity: "1000"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "0.0000123456", Quantity: "0.05"},
+				{Price: "0.0000123", Quantity: "1500000"},
+			},
+		},
+		{ // after 02 ws update
+			ExchangeID: 1,
+			PairID:     17,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "0.0000124567", Quantity: "1000"},
+				{Price: "0.0000125", Quantity: "500000"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "0.0000123456", Quantity: "0.01"},
+				{Price: "0.0000123", Quantity: "1500000"},
+			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "0.0000124567", Quantity: "1000"},
+			{ExchangeID: 1, Price: "0.0000125", Quantity: "500000"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "0.0000123456", Quantity: "0.01"},
+			{ExchangeID: 1, Price: "0.0000123", Quantity: "1500000"},
+		},
+	},
+}

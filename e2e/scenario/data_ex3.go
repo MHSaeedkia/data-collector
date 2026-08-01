@@ -94,6 +94,18 @@ var Ex3WallexHalfBook = Scenario{
 			},
 		},
 	},
+	// The two sides were reported by separate messages; the aggregated view is one book.
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62952.5", Quantity: "0.7"},
+			{ExchangeID: 3, Price: "62957.5", Quantity: "1.4"},
+			{ExchangeID: 3, Price: "62962.5", Quantity: "2.2"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62942.5", Quantity: "0.5"},
+			{ExchangeID: 3, Price: "62927.5", Quantity: "3.5"},
+		},
+	},
 }
 
 // Ex3EmptySideWipe — an empty level array is a report that the side is empty, unlike an absent
@@ -172,6 +184,14 @@ var Ex3EmptySideWipe = Scenario{
 			},
 			Bids: []events.PriceLevel{},
 		},
+	},
+	// An emptied side reaches the aggregated view as a book with no levels at all — the same
+	// shape the aggregator produces when a reset drops an exchange out of the union.
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62504", Quantity: "1.5"},
+		},
+		Bids: []events.AggregatedLevel{},
 	},
 }
 

@@ -16,6 +16,24 @@ type PriceLevel struct {
 	Quantity string `json:"quantity"`
 }
 
+// AggregatedSide is one record on an aggregated output topic `p{pair_id}-{side}`
+// — the terminal aggregator's output and the frozen contract the web app reads.
+// Each side is its own topic and its own record, so a book is two of these.
+type AggregatedSide struct {
+	PairID int64             `json:"pair_id"`
+	Side   string            `json:"side"` // "asks" or "bids"
+	Levels []AggregatedLevel `json:"levels"`
+}
+
+// AggregatedLevel is one level of the aggregated book. Levels from different
+// exchanges are unioned, never summed, so each one stays tagged with the
+// exchange it came from even when two exchanges quote the same price.
+type AggregatedLevel struct {
+	ExchangeID int64  `json:"exchange_id"`
+	Price      string `json:"price"`
+	Quantity   string `json:"quantity"`
+}
+
 // PipelineTimings keeps the Avro union wrappers the payload carries: the record
 // sits under its own name, and every timestamp under "long".
 type PipelineTimings struct {

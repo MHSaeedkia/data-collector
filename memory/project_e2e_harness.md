@@ -233,3 +233,33 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   a replayed older frame is accepted and the book goes backwards, which is the "no out-of-order
   protection" ex3 was always known to have (sample-raw-data.md § ex3) — if that scenario ever
   fails, the guard changed, it is not a flake.
+- **Job 6 is verified from the final aggregated record only, not the whole stream** (2026-08-01).
+  `Scenario.WantAggregated *AggregatedBook` (nil = don't read the topics) is checked by
+  `verifyAggregated`, which reads `p{PairID}-asks` and `p{PairID}-bids` and asserts the LAST
+  record on each. The aggregator emits one record per side per input snapshot, so asserting the
+  full stream would restate `WantSnapshots` twice over for no extra signal — every intermediate
+  aggregate is just that snapshot with an `exchange_id` stamped on each level. Only four scenarios
+  opt in, chosen for what they prove about job 6 rather than for coverage's sake. `event_time` is
+  deliberately not decoded: it is the max across the exchanges in the union, which is processing
+  time whenever ex3 is involved.
+- **The suite cannot test the aggregator's actual job — union across exchanges** (2026-08-01).
+  `warmup.Run` takes ONE exchange id and `Scenario` has one `Sources` list, so every scenario feeds
+  a single exchange and every aggregated book is a union of one. Union-never-sum, equal prices from
+  two exchanges staying separate, and one exchange dropping out on a reset while another stays are
+  all unreachable without a multi-exchange scenario shape (two raw topics warmed and fed into the
+  same pair). Known gap, deliberately not built.
+- **Job 3 (rebase) can only be asserted on ex1 with the local seed** (2026-08-01). Every bitpin,
+  wallex, bitget, bybit and okx row is `0/0`, so job 3 is the identity for them and a scenario
+  there proves nothing. ex1 has the only real exponents, and both flavours the business actually
+  has: `1K_SHIBIRT` → pair 52 `(-1, 0)` is the **IRR→toman** shift (nobitex quotes rials, the
+  platform stores tomans), and `1M_PEPEUSDT` → pair 17 `(-6, +6)` is the **scaled-unit** case
+  (quoted per 1,000,000 PEPE: price down a million, quantity up a million) — and pair 17 is also
+  the only pair seeded at precision `10/10` instead of `2/8`. Those two are `Ex1RebaseToman` and
+  `Ex1RebaseScaledUnit`. Both scenarios pick wire prices whose rebase lands an extra decimal on
+  the market's precision, so they also pin the ORDER of jobs 3 and 4 — rebase, then truncate down.
+- **`no_rebase_row` is unreachable from the seed and stays untested** (2026-08-01). Pair resolution
+  (`ExchangeMarketsLoader`) and the rebase factors (`RebaseFactorsLoader`) both read
+  `exchange_markets`, the second only adding `WHERE market_id IS NOT NULL` — and a null `market_id`
+  means job 1 already dropped the frame for an unknown market. Anything that reaches job 3 has a
+  row. Reaching that dead-letter needs a DB mutation mid-run, which is what the job's own smoke
+  script does.
