@@ -263,3 +263,50 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   means job 1 already dropped the frame for an unknown market. Anything that reaches job 3 has a
   row. Reaching that dead-letter needs a DB mutation mid-run, which is what the job's own smoke
   script does.
+- **CORRECTION to the bullet above: job 3 can be asserted on ex4 too** (2026-08-01, found while
+  writing the ex4/ex5/ex6 scenarios). The earlier claim "only ex1 has real exponents" was made
+  without reading the ramzinex block of the seed. `exchange_markets` for ex4 carries both flavours,
+  and unlike the `1K_SHIB*` rows its arithmetic is internally consistent: market `'2'` → pair 2
+  `(-1, 0)` is the IRR→toman shift, market `'552'` → pair 17 `(-2, +2)` is a per-100-unit quote,
+  and market `'366'` → pair 18 `(-3, +2)` is exactly those two composed (unit shift + toman shift).
+  That consistency is the reason `Ex4RebaseScaledUnit` uses PEPE on ramzinex rather than SHIB.
+  ex2, ex3, ex5, ex6 and ex8 really are all `0/0`.
+- **ex4 is the inverse dust proof** (2026-08-01). Everywhere else in the suite a rebase makes a
+  quantity smaller or leaves it alone, so dust dies. ramzinex's `+2` volume exponent makes it
+  bigger, so `Ex4RebaseScaledUnit` pins the opposite: a wire quantity of `5e-12` is below pair 17's
+  10-place lot precision on its own but becomes `5e-10` after the shift and RESTS, while `5e-14`
+  becomes `5e-12` and still dies. Both outcomes flip if jobs 3 and 4 are ever reordered, which is
+  the point — an un-rebased pipeline would pass a same-direction test and fail this one.
+- **ex4 and ex3 are the two exchanges with no wire timestamp** (2026-08-01). `RamzinexParser`
+  stamps `System.currentTimeMillis()`, so every ex4 scenario sets `IgnoreEventTime` for the same
+  reason ex3 does. Unlike ex3 though, ex4 DOES have an ordering field (`pub.offset`, jump 0), so it
+  takes job 2's snapshot branch and CAN dead-letter `stale_or_duplicate` — ex3's "no reachable
+  dead-letter" property does not carry over.
+- **Snapshot feeds with a sequence have no gap rule, and that is asserted deliberately**
+  (2026-08-01). ex4 and ex5 both set `sequence_jump = 0`, but job 2's snapshot branch never reads
+  the jump at all — it only checks `seq <= lastSeq`. `Ex4StaleOffset` and `Ex5StaleSeq` each end on
+  a huge forward jump that must be ACCEPTED. If someone later "fixes" jump 0 into a contiguity
+  rule, those two fail rather than silently starving the book.
+- **ex5 is the only exchange whose one Kafka record can become several events** (2026-08-01).
+  `BitgetParser` loops `data[]` and emits one event per element (okx's parser has the same shape but
+  its captures only ever carry one). `Ex5MultiBookFrame` pins the fan-out — two book objects in one
+  record produce two snapshots with their own seq and event time. The same loop drops the WHOLE
+  record if any element is malformed, including elements already read, so a partial book is never
+  emitted.
+- **ex6 is the only place the null-side rule can be proved on an UPDATE** (2026-08-01). "Null side
+  is not an empty side" was written for ex3, but ex3 only ever sends snapshots. `BybitParser` maps a
+  missing `a`/`b` key to a null side on deltas too, so `Ex6OneSidedDelta` covers both — and its last
+  frame is a one-sided SNAPSHOT, which replaces the reported side wholesale while leaving the
+  unreported one alone. ex6 is also the only exchange where the full job-2 delta ruleset is
+  reachable (`no_baseline`, `sequence_gap` + the synthetic reset, `awaiting_snapshot`,
+  `stale_or_duplicate`), which is why it gets six scenarios instead of five.
+- **The reset marker is asserted as a real snapshot record, not as an absence** (2026-08-01).
+  `Ex6SequenceGap` expects FIVE snapshots for six sources: the gap event is dead-lettered, but job 2
+  also puts a synthetic `type="reset"` on the main stream and job 5 turns it into a fully emptied
+  book carrying the gap event's own event time. That empty snapshot is a record on the topic and
+  must be in `WantSnapshots` — forgetting it reads as an off-by-one in the stream length.
+- **Wire ordering in the scenario payloads is kept realistic even though nothing asserts it**
+  (2026-08-01). Job 5 sorts on the way out, so a mis-sorted source would still pass. The payloads
+  are still written best-first per exchange (and price-DESCENDING on BOTH ramzinex sides) so they
+  stay readable as samples of the real feed — `Ex4RamzinexSnapshots` is the one scenario where the
+  re-sort is the actual assertion.
