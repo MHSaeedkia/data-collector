@@ -6,13 +6,12 @@ package scenario
 
 import "orderbook-e2e/events"
 
-// Ex8UpdateBeforeSnapshot is 01-ex8-update-before-snapshot —
-// an update with no baseline is rejected; the snapshot after it becomes one.
+// Ex8UpdateBeforeSnapshot — an update with no baseline is rejected; the snapshot after it becomes one.
 var Ex8UpdateBeforeSnapshot = Scenario{
 	ExchangeID: 8,
 	PairID:     1,
 	Sources: []string{
-		// 01-update-no-baseline.json
+		// 01 update no baseline
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -31,7 +30,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 		}
 	]
 }`,
-		// 02-snapshot.json
+		// 02 snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -59,7 +58,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 		}
 	]
 }`,
-		// 03-update.json
+		// 03 update
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -84,7 +83,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 02-snapshot.json
+		{ // after 02 snapshot
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -103,7 +102,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 				{Price: "62760", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03-update.json
+		{ // after 03 update
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -127,13 +126,12 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	WantRejects: []string{"no_baseline"},
 }
 
-// Ex8HappyPath is 02-ex8-happy-path —
-// snapshot then three consecutive updates; 04 omits bids entirely, so the bid side must survive untouched.
+// Ex8HappyPath — snapshot then three consecutive updates; 04 omits bids entirely, so the bid side must survive untouched.
 var Ex8HappyPath = Scenario{
 	ExchangeID: 8,
 	PairID:     1,
 	Sources: []string{
-		// 01-snapshot.json
+		// 01 snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -161,7 +159,7 @@ var Ex8HappyPath = Scenario{
 		}
 	]
 }`,
-		// 02-update-modify-add-delete.json
+		// 02 update modify add delete
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -181,7 +179,7 @@ var Ex8HappyPath = Scenario{
 		}
 	]
 }`,
-		// 03-update-delete-bid.json
+		// 03 update delete bid
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -200,7 +198,7 @@ var Ex8HappyPath = Scenario{
 		}
 	]
 }`,
-		// 04-update-asks-only.json
+		// 04 update asks only
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -220,7 +218,7 @@ var Ex8HappyPath = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-snapshot.json
+		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -239,7 +237,7 @@ var Ex8HappyPath = Scenario{
 				{Price: "62785", Quantity: "4"},
 			},
 		},
-		{ // after 02-update-modify-add-delete.json
+		{ // after 02 update modify add delete
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -258,7 +256,7 @@ var Ex8HappyPath = Scenario{
 				{Price: "62785", Quantity: "4"},
 			},
 		},
-		{ // after 03-update-delete-bid.json
+		{ // after 03 update delete bid
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -278,7 +276,7 @@ var Ex8HappyPath = Scenario{
 				{Price: "62780", Quantity: "5.5"},
 			},
 		},
-		{ // after 04-update-asks-only.json
+		{ // after 04 update asks only
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:01Z",
@@ -300,13 +298,12 @@ var Ex8HappyPath = Scenario{
 	},
 }
 
-// Ex8SequenceGap is 03-ex8-sequence-gap —
-// a gap empties the book and arms awaitingSnapshot, so even a contiguous update is refused until a snapshot resyncs.
+// Ex8SequenceGap — a gap empties the book and arms awaitingSnapshot, so even a contiguous update is refused until a snapshot resyncs.
 var Ex8SequenceGap = Scenario{
 	ExchangeID: 8,
 	PairID:     1,
 	Sources: []string{
-		// 01-snapshot.json
+		// 01 snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -334,7 +331,7 @@ var Ex8SequenceGap = Scenario{
 		}
 	]
 }`,
-		// 02-update-ok.json
+		// 02 update ok
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -350,7 +347,7 @@ var Ex8SequenceGap = Scenario{
 		}
 	]
 }`,
-		// 03-update-gap.json
+		// 03 update gap
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -366,7 +363,7 @@ var Ex8SequenceGap = Scenario{
 		}
 	]
 }`,
-		// 04-update-awaiting-snapshot.json
+		// 04 update awaiting snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -382,7 +379,7 @@ var Ex8SequenceGap = Scenario{
 		}
 	]
 }`,
-		// 05-snapshot-resync.json
+		// 05 snapshot resync
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -406,7 +403,7 @@ var Ex8SequenceGap = Scenario{
 		}
 	]
 }`,
-		// 06-update-ok.json
+		// 06 update ok
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -424,7 +421,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-snapshot.json
+		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -443,7 +440,7 @@ var Ex8SequenceGap = Scenario{
 				{Price: "62785", Quantity: "4"},
 			},
 		},
-		{ // after 02-update-ok.json
+		{ // after 02 update ok
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -462,14 +459,14 @@ var Ex8SequenceGap = Scenario{
 				{Price: "62785", Quantity: "4"},
 			},
 		},
-		{ // after 03-update-gap.json (reset)
+		{ // after 03 update gap (reset)
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
 		},
-		{ // after 05-snapshot-resync.json
+		{ // after 05 snapshot resync
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:02Z",
@@ -484,7 +481,7 @@ var Ex8SequenceGap = Scenario{
 				{Price: "62970", Quantity: "3.3"},
 			},
 		},
-		{ // after 06-update-ok.json
+		{ // after 06 update ok
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:02Z",
@@ -503,13 +500,12 @@ var Ex8SequenceGap = Scenario{
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
 }
 
-// Ex8StaleDuplicate is 04-ex8-stale-duplicate —
-// a replayed update and a backwards snapshot are both stale; neither advances lastSeq, so 05 still lands.
+// Ex8StaleDuplicate — a replayed update and a backwards snapshot are both stale; neither advances lastSeq, so 05 still lands.
 var Ex8StaleDuplicate = Scenario{
 	ExchangeID: 8,
 	PairID:     1,
 	Sources: []string{
-		// 01-snapshot.json
+		// 01 snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -533,7 +529,7 @@ var Ex8StaleDuplicate = Scenario{
 		}
 	]
 }`,
-		// 02-update-ok.json
+		// 02 update ok
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -549,7 +545,7 @@ var Ex8StaleDuplicate = Scenario{
 		}
 	]
 }`,
-		// 03-update-replay-duplicate.json
+		// 03 update replay duplicate
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -565,7 +561,7 @@ var Ex8StaleDuplicate = Scenario{
 		}
 	]
 }`,
-		// 04-snapshot-out-of-order.json
+		// 04 snapshot out of order
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -581,7 +577,7 @@ var Ex8StaleDuplicate = Scenario{
 		}
 	]
 }`,
-		// 05-snapshot-ok.json
+		// 05 snapshot ok
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -607,7 +603,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-snapshot.json
+		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -622,7 +618,7 @@ var Ex8StaleDuplicate = Scenario{
 				{Price: "62970", Quantity: "3.3"},
 			},
 		},
-		{ // after 02-update-ok.json
+		{ // after 02 update ok
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -637,7 +633,7 @@ var Ex8StaleDuplicate = Scenario{
 				{Price: "62970", Quantity: "3.3"},
 			},
 		},
-		{ // after 05-snapshot-ok.json
+		{ // after 05 snapshot ok
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -656,13 +652,12 @@ var Ex8StaleDuplicate = Scenario{
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
 }
 
-// Ex8PrecisionDust is 05-ex8-precision-dust —
-// truncation, colliding prices merged by summing, and dust quantities that truncate to a delete.
+// Ex8PrecisionDust — truncation, colliding prices merged by summing, and dust quantities that truncate to a delete.
 var Ex8PrecisionDust = Scenario{
 	ExchangeID: 8,
 	PairID:     1,
 	Sources: []string{
-		// 01-snapshot.json
+		// 01 snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -692,7 +687,7 @@ var Ex8PrecisionDust = Scenario{
 		}
 	]
 }`,
-		// 02-update-dust-delete.json
+		// 02 update dust delete
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -714,7 +709,7 @@ var Ex8PrecisionDust = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 01-snapshot.json
+		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -731,7 +726,7 @@ var Ex8PrecisionDust = Scenario{
 				{Price: "62895.44", Quantity: "9"},
 			},
 		},
-		{ // after 02-update-dust-delete.json
+		{ // after 02 update dust delete
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -750,13 +745,12 @@ var Ex8PrecisionDust = Scenario{
 	},
 }
 
-// Ex8NoiseFrames is 06-ex8-noise-frames —
-// non-book frames are dropped, not dead-lettered, and do not disturb sequence tracking.
+// Ex8NoiseFrames — non-book frames are dropped, not dead-lettered, and do not disturb sequence tracking.
 var Ex8NoiseFrames = Scenario{
 	ExchangeID: 8,
 	PairID:     1,
 	Sources: []string{
-		// 01-subscribe-ack.json
+		// 01 subscribe ack
 		`{
 	"event": "subscribe",
 	"arg": {
@@ -766,14 +760,14 @@ var Ex8NoiseFrames = Scenario{
 	},
 	"connId": "a4d3ae55"
 }`,
-		// 02-error-frame.json
+		// 02 error frame
 		`{
 	"event": "error",
 	"code": "60012",
 	"msg": "Invalid request: unknown channel",
 	"connId": "a4d3ae55"
 }`,
-		// 03-snapshot.json
+		// 03 snapshot
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -797,7 +791,7 @@ var Ex8NoiseFrames = Scenario{
 		}
 	]
 }`,
-		// 04-unknown-action.json
+		// 04 unknown action
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -813,7 +807,7 @@ var Ex8NoiseFrames = Scenario{
 		}
 	]
 }`,
-		// 05-other-channel.json
+		// 05 other channel
 		`{
 	"arg": { "channel": "trades", "instId": "BTC-USDT" },
 	"data": [
@@ -827,7 +821,7 @@ var Ex8NoiseFrames = Scenario{
 		}
 	]
 }`,
-		// 06-update.json
+		// 06 update
 		`{
 	"arg": {
 		"channel": "books-grouped",
@@ -848,7 +842,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 03-snapshot.json
+		{ // after 03 snapshot
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
@@ -863,7 +857,7 @@ var Ex8NoiseFrames = Scenario{
 				{Price: "62935", Quantity: "0.9"},
 			},
 		},
-		{ // after 06-update.json
+		{ // after 06 update
 			ExchangeID: 8,
 			PairID:     1,
 			EventTime:  "2027-01-15T08:00:00Z",
