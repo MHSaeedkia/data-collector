@@ -1,3 +1,27 @@
+// The scenarios in data_ex1/2/3/8.go mirror flink/normalizer/manual-test-data
+// one-for-one — same directories, same payloads verbatim. Four conventions hold
+// across all of them:
+//
+// Timestamps are NOT shifted. manual-test-data/produce.sh rewrites the synthetic
+// base 1800000000000 (2027-01-15T08:00:00Z) onto wall-clock so a future-dated book
+// cannot poison the aggregator's stored timestamp between runs. This harness
+// asserts on the book-builder topic, not the aggregator, and recreates every topic
+// and all job state per run — so the fixed base is safe here, and it is the only
+// reason EventTime is assertable at all.
+//
+// EventTime is second-resolution, because the consumer formats it with
+// time.RFC3339. okx's 300 ms steps therefore collapse onto the same string; the
+// levels, not the timestamps, are what separate consecutive snapshots there.
+//
+// A sequence gap produces an EXTRA snapshot the README does not mention: job 2
+// emits a synthetic reset marker alongside the dead-letter, and job 5 answers it
+// by clearing the book and emitting it empty. So a gap costs one dead-letter and
+// one empty snapshot, and every level from before the gap is gone until a
+// snapshot resyncs.
+//
+// Prices and quantities are canonicalized (BigDecimal.stripTrailingZeros), so the
+// wire's "1.50000000" is "1.5" here and bitpin's "62700.00" is "62700".
+
 package scenario
 
 import "orderbook-e2e/events"
@@ -26,9 +50,7 @@ var NobitexSnapshot = Scenario{
 		["62652", "0.19067482"],
 		["62655", "1.05000000"],
 		["62660", "0.33476925"]
-	]
-}
-`},
+	]}`},
 	// What the source becomes by the time it reaches the book builder:
 	// event_time is nobitex's `lastUpdate`, ex1/BTCUSDT rebases by 10^0 on both
 	// sides (identity), pair 1 truncates price to 2 and quantity to 8 decimals,
@@ -55,4 +77,5 @@ var NobitexSnapshot = Scenario{
 			},
 		},
 	},
+	WantRejects: []string{},
 }
