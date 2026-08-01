@@ -1007,3 +1007,86 @@ var Ex2StaleRestReplay = Scenario{
 	},
 	WantRejects: []string{"out_of_order"},
 }
+
+// Ex2PrecisionDust — job 4 on a bitpin feed, the same two rules as ex1: prices colliding at the
+// market's 2 places merge with their quantities summed, and a quantity under 8 places truncates
+// to zero and deletes. Rebase cannot be asserted on ex2 — every bitpin row in the seed is 0/0,
+// so job 3 is the identity here; the rebase cases live on ex1, whose seed has real exponents.
+var Ex2PrecisionDust = Scenario{
+	ExchangeID: 2,
+	PairID:     1,
+	Sources: []string{
+		// 01 rest snapshot
+		`{
+	"action": "snapshot",
+	"pair": "BTC_USDT",
+	"event_time": 1800000000000,
+	"asks": [
+		["62700.117", "0.30000000"],
+		["62700.119", "0.20000000"],
+		["62701.50", "0.000000004"]
+	],
+	"bids": [
+		["62699.999", "1.00000000"],
+		["62698.25", "0.12345678999"]
+	]
+}`,
+		// 02 ws update
+		`{
+	"push": {
+		"channel": "orderbook:BTC_USDT",
+		"pub": {
+			"data": {
+				"asks": [
+					["62700.115", "0.000000001"],
+					["62705.999", "0.60000000"]
+				],
+				"bids": [
+					["62698.251", "0.40000000"],
+					["62698.259", "0.10000000"]
+				],
+				"symbol": "BTC_USDT",
+				"event": "market_data",
+				"event_time": "2027-01-15T08:00:01Z"
+			},
+			"offset": 1000
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01 rest snapshot — .117 and .119 merged at .11, the dust ask never rested
+			ExchangeID: 2,
+			PairID:     1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62700.11", Quantity: "0.5"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62699.99", Quantity: "1"},
+				{Price: "62698.25", Quantity: "0.12345678"},
+			},
+		},
+		{ // after 02 ws update — dust deleted the resting ask, and the merged bid replaced it
+			ExchangeID: 2,
+			PairID:     1,
+			EventTime:  "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "62705.99", Quantity: "0.6"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62699.99", Quantity: "1"},
+				{Price: "62698.25", Quantity: "0.5"},
+			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62705.99", Quantity: "0.6"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62699.99", Quantity: "1"},
+			{ExchangeID: 2, Price: "62698.25", Quantity: "0.5"},
+		},
+	},
+}

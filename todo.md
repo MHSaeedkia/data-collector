@@ -19,5 +19,9 @@
 - [x] All 17 scenarios (01–17, ex8/ex3/ex1/ex2) live in `scenario/data_ex1/2/3/8.go` — payloads verbatim, expected books derived by replaying jobs 3/4/5 over them (2026-07-29, build/vet clean, **none run live**)
 - [x] `main.go` runs all 17 — a named list in directory order, each scenario warms up its own exchange, failures are collected and reported at the end instead of aborting the run (2026-07-29, build/vet clean, not run live)
 - [x] ex3/wallex coverage — 4 scenarios added next to `Ex3WallexHalfBook` (`Ex3EmptySideWipe`, `Ex3PrecisionDust`, `Ex3NoiseFrames`, `Ex3StaleReplay`), all 5 wired into `main.go` as 11–15; none expects a rejection because ex3 cannot reach a dead-letter (2026-08-01, build/vet clean, not run live)
+- [x] Job 3 + job 4 coverage — `Ex1PrecisionDust` / `Ex2PrecisionDust` (collision merge + dust delete) and `Ex1RebaseToman` (pair 52, IRR→toman `-1/0`) / `Ex1RebaseScaledUnit` (pair 17, scaled-unit `-6/+6` at precision 10/10); before these, every scenario ran on pair 1 where rebase is the identity, so job 3 was untested (2026-08-01, build/vet clean, not run live)
+- [x] Job 6 coverage — `Scenario.WantAggregated` + `consumer.ReadAggregated` assert the final record on `p{id}-asks`/`p{id}-bids`; 4 scenarios opt in (2026-08-01, build/vet clean, not run live)
 - [ ] Run the ported scenarios against the live stack — the expected books are derived, not observed
+- [ ] Cross-exchange aggregation is still untested — every scenario feeds one exchange, so job 6 only ever unions one book. Needs a multi-exchange scenario shape (two raw topics warmed and fed into one pair)
+- [ ] Decide on the `1K_SHIB*` / `1M_BTT*` rebase rows in `postgres/02_seed.sql` — they carry the IRR→toman shift but not the 1000×/1000000× unit shift the `1M_PEPE*` rows do
 - [ ] Verify the four upstream steps (raw / type-validated / rebased / applied-precision) have their wanted values too

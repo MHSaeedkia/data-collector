@@ -61,6 +61,26 @@ func ReadRejections(ctx context.Context, broker, registryURL, topic string, wait
 	return reasons, nil
 }
 
+// ReadAggregated returns every aggregated book on topic, in the order the
+// aggregator emitted them. It writes one record per side per input snapshot, so
+// this stream is as long as the snapshot stream that produced it.
+func ReadAggregated(ctx context.Context, broker, registryURL, topic string, wait time.Duration) ([]events.AggregatedSide, error) {
+	records, err := readRecords(ctx, broker, topic, wait)
+	if err != nil {
+		return nil, err
+	}
+
+	sides := make([]events.AggregatedSide, 0, len(records))
+	for i, r := range records {
+		side, err := decodeAggregated(registryURL, r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		sides = append(sides, side)
+	}
+	return sides, nil
+}
+
 // readRecords returns every record on topic, in offset order. The topics are
 // recreated empty by the warmup, so reading from the start reads only this run's
 // records. It waits up to wait for the first one — the pipeline has six jobs to
@@ -129,6 +149,27 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 		Asks:       wire.Asks,
 		Bids:       wire.Bids,
 	}, nil
+}
+
+// decodeAggregated reads an aggregated record. event_time is left out: it is the
+// max event time of the exchanges in the union, which for ex3 is job 1's
+// processing time, so it is not assertable across all exchanges. The levels are.
+func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, error) {
+	text, err := textual(registryURL, value)
+	if err != nil {
+		return events.AggregatedSide{}, err
+	}
+
+	var wire struct {
+		PairID int64                    `json:"pair_id"`
+		Side   string                   `json:"side"`
+		Levels []events.AggregatedLevel `json:"levels"`
+	}
+	if err := json.Unmarshal(text, &wire); err != nil {
+		return events.AggregatedSide{}, fmt.Errorf("decode aggregated: %w", err)
+	}
+
+	return events.AggregatedSide{PairID: wire.PairID, Side: wire.Side, Levels: wire.Levels}, nil
 }
 
 func decodeRejection(registryURL string, value []byte) (string, error) {

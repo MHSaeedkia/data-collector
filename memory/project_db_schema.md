@@ -35,3 +35,14 @@ This is the join [[orderbook-web]] now uses; before normalization it was `SELECT
 
 **Why:** Single source of truth for pairs/exchanges/subscriptions; drives [[kafka-topic-strategy]] topic provisioning and [[orderbook-web]] id→label enrichment.
 **How to apply:** Any code reading pair symbols must join `currencies` via `markets.base_id`/`quote_id` — there is no `base`/`quote` column on `markets` anymore.
+
+## Suspected seed bug — the `1K_SHIB*` rebase rows (noticed 2026-08-01, NOT fixed)
+
+`exchange_markets` expresses an exchange's scaled-unit quoting through the rebase exponents, and
+the `1M_PEPE*` rows do it correctly: nobitex `1M_PEPEUSDT` is `(-6, +6)` and `1M_PEPEIRT` is
+`(-7, +6)` — a million-unit price/volume shift, plus one more on the price for IRR→toman. By that
+rule the `1K_` rows should carry a thousand-unit shift, but nobitex `1K_SHIBUSDT` is `(0, 0)` and
+`1K_SHIBIRT` is `(-1, 0)` — the toman shift is there, the 1000× is missing. Same for `1M_BTTUSDT`
+`(0, 0)` / `1M_BTTIRT` `(-1, 0)`. If those feeds are live, their prices are off by 10^3/10^6 and
+their quantities by the same. Raised with the user; left alone pending their call, since it is
+production reference data and the local seed is already known to be stale against the server.
