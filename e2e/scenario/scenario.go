@@ -36,12 +36,14 @@ const (
 // are through. An event can land in three places — a snapshot, a rejection, or
 // nowhere at all when job 1 drops it — so the two wanted streams are declared
 // per topic rather than per source, and their lengths are part of the assertion.
+// The json tags are the HTTP contract: a scenario can be posted to the server
+// instead of being written as a package-level var.
 type Scenario struct {
-	ExchangeID    int64
-	PairID        int64
-	Sources       []string
-	WantSnapshots []events.OrderbookSnapshot
-	WantRejects   []string // reject_reason of each dead-letter, e.g. "sequence_gap"
+	ExchangeID    int64                      `json:"exchange_id" example:"3"`
+	PairID        int64                      `json:"pair_id" example:"1"`
+	Sources       []string                   `json:"sources"` // raw exchange documents, verbatim
+	WantSnapshots []events.OrderbookSnapshot `json:"want_snapshots"`
+	WantRejects   []string                   `json:"want_rejects"` // reject_reason of each dead-letter, e.g. "sequence_gap"
 
 	// WantAggregated is the aggregated view of the pair once every source is
 	// through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`. Nil
@@ -49,20 +51,20 @@ type Scenario struct {
 	// aggregator emits one record per side per snapshot, so asserting the whole
 	// stream would restate WantSnapshots twice over. Only the final state is
 	// worth pinning, and only on the scenarios where job 6 is the point.
-	WantAggregated *AggregatedBook
+	WantAggregated *AggregatedBook `json:"want_aggregated"`
 
 	// IgnoreEventTime blanks EventTime on both sides before comparing. Only ex3
 	// wallex needs it: its wire carries no timestamp at all, so job 1 stamps
 	// processing time and the field is wall-clock. The levels are still asserted.
-	IgnoreEventTime bool
+	IgnoreEventTime bool `json:"ignore_event_time"`
 }
 
 // AggregatedBook is the two sides of the aggregated book as the web app would
 // read them. Every level carries the exchange it came from, because the
 // aggregator unions across exchanges instead of summing them.
 type AggregatedBook struct {
-	Asks []events.AggregatedLevel
-	Bids []events.AggregatedLevel
+	Asks []events.AggregatedLevel `json:"asks"`
+	Bids []events.AggregatedLevel `json:"bids"`
 }
 
 // Run brings the pipeline back to a clean start, feeds it s's sources and
