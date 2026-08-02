@@ -1,0 +1,189 @@
+basePath: /
+definitions:
+  events.AggregatedLevel:
+    properties:
+      exchange_id:
+        type: integer
+      price:
+        type: string
+      quantity:
+        type: string
+    type: object
+  events.AvroTime:
+    properties:
+      long:
+        type: string
+    type: object
+  events.OrderbookSnapshot:
+    properties:
+      asks:
+        items:
+          $ref: '#/definitions/events.PriceLevel'
+        type: array
+      bids:
+        items:
+          $ref: '#/definitions/events.PriceLevel'
+        type: array
+      event_time:
+        type: string
+      exchange_id:
+        type: integer
+      pair_id:
+        type: integer
+      pipeline_timings:
+        $ref: '#/definitions/events.PipelineTimings'
+    type: object
+  events.PipelineTimings:
+    properties:
+      PipelineTimings:
+        $ref: '#/definitions/events.StepTimings'
+    type: object
+  events.PriceLevel:
+    properties:
+      price:
+        type: string
+      quantity:
+        type: string
+    type: object
+  events.StepTimings:
+    properties:
+      book_build_in:
+        $ref: '#/definitions/events.AvroTime'
+      book_build_out:
+        $ref: '#/definitions/events.AvroTime'
+      pair_extract_in:
+        $ref: '#/definitions/events.AvroTime'
+      pair_extract_out:
+        $ref: '#/definitions/events.AvroTime'
+      precision_in:
+        $ref: '#/definitions/events.AvroTime'
+      precision_out:
+        $ref: '#/definitions/events.AvroTime'
+      rebase_in:
+        $ref: '#/definitions/events.AvroTime'
+      rebase_out:
+        $ref: '#/definitions/events.AvroTime'
+      type_validate_in:
+        $ref: '#/definitions/events.AvroTime'
+      type_validate_out:
+        $ref: '#/definitions/events.AvroTime'
+    type: object
+  scenario.AggregatedBook:
+    properties:
+      asks:
+        items:
+          $ref: '#/definitions/events.AggregatedLevel'
+        type: array
+      bids:
+        items:
+          $ref: '#/definitions/events.AggregatedLevel'
+        type: array
+    type: object
+  server.RunRequest:
+    properties:
+      exchange_id:
+        example: 3
+        type: integer
+      ignore_event_time:
+        description: |-
+          IgnoreEventTime blanks EventTime on both sides before comparing. Only ex3
+          wallex needs it: its wire carries no timestamp at all, so job 1 stamps
+          processing time and the field is wall-clock. The levels are still asserted.
+        type: boolean
+      name:
+        example: ex3-half-book
+        type: string
+      pair_id:
+        example: 1
+        type: integer
+      sources:
+        description: raw exchange documents, verbatim
+        items:
+          type: string
+        type: array
+      want_aggregated:
+        allOf:
+        - $ref: '#/definitions/scenario.AggregatedBook'
+        description: |-
+          WantAggregated is the aggregated view of the pair once every source is
+          through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`. Nil
+          means the aggregated topics are not read at all, which is the default: the
+          aggregator emits one record per side per snapshot, so asserting the whole
+          stream would restate WantSnapshots twice over. Only the final state is
+          worth pinning, and only on the scenarios where job 6 is the point.
+      want_rejects:
+        description: reject_reason of each dead-letter, e.g. "sequence_gap"
+        items:
+          type: string
+        type: array
+      want_snapshots:
+        items:
+          $ref: '#/definitions/events.OrderbookSnapshot'
+        type: array
+    type: object
+  server.RunResponse:
+    properties:
+      duration_ms:
+        example: 92310
+        type: integer
+      error:
+        type: string
+      name:
+        example: ex3-half-book
+        type: string
+      status:
+        enum:
+        - ok
+        - failed
+        example: ok
+        type: string
+    type: object
+host: localhost:9595
+info:
+  contact: {}
+  description: |-
+    Runs one end-to-end scenario against the normalizer pipeline: the stack is provisioned once when the server starts, then every request warms the pipeline up for its own exchange/pair, feeds the raw topic and checks what came back out.
+
+    The same `Scenario` the compiled-in cases use, posted as JSON. Regenerate this spec with `swag init -g main.go -o docs` after changing the handler or the scenario struct.
+  title: Orderbook E2E Harness API
+  version: "1.0"
+paths:
+  /scenarios/run:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected and (optionally) aggregated topics back and compares them to the `want_*` streams.
+
+        A scenario that does not match is **200 with `"status":"failed"`**, not a 5xx: the run itself worked, the pipeline disagreed. A non-200 always means the scenario never ran.
+
+        Runs are serialized — each one cancels the Flink jobs and recreates the exchange's topics, so a request arriving while another is in flight gets 409 instead of being queued. Expect a successful call to take minutes.
+
+        "Try it out" is prefilled with the real `ex1-precision-dust` case — a nobitex REST snapshot plus a WS delta on ex1/pair 1, where two bid prices merge once truncated to the market's 2 places and a dust quantity truncates to zero and deletes its level. Send it as-is and it should come back `"status":"ok"`.
+      parameters:
+      - description: The scenario to run. Unknown fields are rejected, so a mistyped
+          want_snapshots cannot silently pass.
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/server.RunRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The scenario ran; status says whether it matched
+          schema:
+            $ref: '#/definitions/server.RunResponse'
+        "400":
+          description: Body could not be decoded or failed validation
+          schema:
+            $ref: '#/definitions/server.RunResponse'
+        "409":
+          description: Another scenario is already running
+          schema:
+            $ref: '#/definitions/server.RunResponse'
+      summary: Run one scenario
+      tags:
+      - scenarios
+swagger: "2.0"
