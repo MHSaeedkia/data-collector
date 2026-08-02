@@ -93,6 +93,16 @@ var Ex5BitgetSnapshots = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 5, Price: "62820", Quantity: "1.5"},
+			{ExchangeID: 5, Price: "62821", Quantity: "0.5"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 5, Price: "62819.99", Quantity: "2"},
+			{ExchangeID: 5, Price: "62818", Quantity: "0.75"},
+		},
+	},
 }
 
 // Ex5MultiBookFrame — one Kafka record whose `data` array carries two book objects becomes two
@@ -230,6 +240,10 @@ var Ex5StaleSeq = Scenario{
 		},
 	},
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 5, Price: "62710", Quantity: "0.5"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Price: "62690", Quantity: "1.5"}},
+	},
 }
 
 // Ex5NoiseFrames — the parser's whitelist is strict about wire TYPES, not just shape: `seq` must
@@ -343,6 +357,13 @@ var Ex5NoiseFrames = Scenario{
 			},
 			Bids: []events.PriceLevel{{Price: "62598", Quantity: "0.9"}},
 		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 5, Price: "62601", Quantity: "0.4"},
+			{ExchangeID: 5, Price: "62605", Quantity: "1.1"},
+		},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Price: "62598", Quantity: "0.9"}},
 	},
 }
 

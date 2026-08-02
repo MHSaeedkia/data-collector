@@ -124,6 +124,23 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 		},
 	},
 	WantRejects: []string{"no_baseline"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62770", Quantity: "2.21924167"},
+			{ExchangeID: 8, Price: "62771", Quantity: "0.29045069"},
+			{ExchangeID: 8, Price: "62775", Quantity: "1.05"},
+			{ExchangeID: 8, Price: "62780", Quantity: "0.33476925"},
+			{ExchangeID: 8, Price: "62790", Quantity: "0.4"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62769", Quantity: "0.55175335"},
+			{ExchangeID: 8, Price: "62768", Quantity: "0.02744953"},
+			{ExchangeID: 8, Price: "62767", Quantity: "0.20630833"},
+			{ExchangeID: 8, Price: "62765", Quantity: "0.9"},
+			{ExchangeID: 8, Price: "62760", Quantity: "1.31062803"},
+			{ExchangeID: 8, Price: "62758", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex8HappyPath — snapshot then three consecutive updates; 04 omits bids entirely, so the bid side must survive untouched.
@@ -294,6 +311,22 @@ var Ex8HappyPath = Scenario{
 				{Price: "62785", Quantity: "4"},
 				{Price: "62780", Quantity: "5.5"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62800", Quantity: "0.9"},
+			{ExchangeID: 8, Price: "62801", Quantity: "0.85"},
+			{ExchangeID: 8, Price: "62803", Quantity: "0.33"},
+			{ExchangeID: 8, Price: "62805", Quantity: "0.4"},
+			{ExchangeID: 8, Price: "62807", Quantity: "0.7"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62799", Quantity: "1.45"},
+			{ExchangeID: 8, Price: "62795", Quantity: "2.4"},
+			{ExchangeID: 8, Price: "62790", Quantity: "0.95"},
+			{ExchangeID: 8, Price: "62785", Quantity: "4"},
+			{ExchangeID: 8, Price: "62780", Quantity: "5.5"},
 		},
 	},
 }
@@ -498,6 +531,18 @@ var Ex8SequenceGap = Scenario{
 		},
 	},
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "63000", Quantity: "2"},
+			{ExchangeID: 8, Price: "63010", Quantity: "0.9"},
+			{ExchangeID: 8, Price: "63020", Quantity: "0.75"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62990", Quantity: "2"},
+			{ExchangeID: 8, Price: "62980", Quantity: "2.5"},
+			{ExchangeID: 8, Price: "62970", Quantity: "3.3"},
+		},
+	},
 }
 
 // Ex8StaleDuplicate — a replayed update and a backwards snapshot are both stale; neither advances lastSeq, so 05 still lands.
@@ -650,6 +695,18 @@ var Ex8StaleDuplicate = Scenario{
 		},
 	},
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "63005", Quantity: "1.25"},
+			{ExchangeID: 8, Price: "63015", Quantity: "2.4"},
+			{ExchangeID: 8, Price: "63025", Quantity: "0.6"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62995", Quantity: "1.9"},
+			{ExchangeID: 8, Price: "62985", Quantity: "2.2"},
+			{ExchangeID: 8, Price: "62975", Quantity: "4.1"},
+		},
+	},
 }
 
 // Ex8PrecisionDust — truncation, colliding prices merged by summing, and dust quantities that truncate to a delete.
@@ -741,6 +798,19 @@ var Ex8PrecisionDust = Scenario{
 				{Price: "62898.99", Quantity: "7.25"},
 				{Price: "62895.44", Quantity: "9"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62900.12", Quantity: "5.12345679"},
+			{ExchangeID: 8, Price: "62902.99", Quantity: "4"},
+			{ExchangeID: 8, Price: "62906.12", Quantity: "0.00000001"},
+			{ExchangeID: 8, Price: "62910.25", Quantity: "7.5"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62899.05", Quantity: "6.98765432"},
+			{ExchangeID: 8, Price: "62898.99", Quantity: "7.25"},
+			{ExchangeID: 8, Price: "62895.44", Quantity: "9"},
 		},
 	},
 }
@@ -871,6 +941,18 @@ var Ex8NoiseFrames = Scenario{
 				{Price: "62940", Quantity: "3.1"},
 				{Price: "62935", Quantity: "0.9"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62950", Quantity: "1.2"},
+			{ExchangeID: 8, Price: "62960", Quantity: "2.4"},
+			{ExchangeID: 8, Price: "62970", Quantity: "0.6"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Price: "62945", Quantity: "1.65"},
+			{ExchangeID: 8, Price: "62940", Quantity: "3.1"},
+			{ExchangeID: 8, Price: "62935", Quantity: "0.9"},
 		},
 	},
 }

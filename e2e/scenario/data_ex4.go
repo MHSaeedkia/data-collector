@@ -219,6 +219,10 @@ var Ex4StaleOffset = Scenario{
 		},
 	},
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 4, Price: "62530", Quantity: "1.5"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 4, Price: "62520", Quantity: "0.5"}},
+	},
 }
 
 // Ex4NoiseFrames — everything that is not a Centrifugo orderbook publication for a known numeric
@@ -347,6 +351,16 @@ var Ex4NoiseFrames = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 4, Price: "62410.5", Quantity: "0.6"},
+			{ExchangeID: 4, Price: "62411", Quantity: "0.9"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 4, Price: "62400", Quantity: "0.3"},
+			{ExchangeID: 4, Price: "62399", Quantity: "1.2"},
+		},
+	},
 }
 
 // Ex4RebaseToman — ramzinex quotes BTC/IRT in rials and we store tomans, so market "2" carries
@@ -425,6 +439,13 @@ var Ex4RebaseToman = Scenario{
 				{Price: "3852345.65", Quantity: "0.65"},
 				{Price: "3851999.9", Quantity: "1.5"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 4, Price: "3856000", Quantity: "1"}},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 4, Price: "3852345.65", Quantity: "0.65"},
+			{ExchangeID: 4, Price: "3851999.9", Quantity: "1.5"},
 		},
 	},
 }

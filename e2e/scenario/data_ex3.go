@@ -262,6 +262,13 @@ var Ex3PrecisionDust = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 3, Price: "62502.5", Quantity: "1"}},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62200", Quantity: "0.068493"},
+			{ExchangeID: 3, Price: "62199.99", Quantity: "0.12345678"},
+		},
+	},
 }
 
 // Ex3NoiseFrames — everything that is not a well-formed depth message for a known market is
@@ -349,6 +356,16 @@ var Ex3NoiseFrames = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62451", Quantity: "0.9"},
+			{ExchangeID: 3, Price: "62452.25", Quantity: "0.6"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62450.5", Quantity: "0.3"},
+			{ExchangeID: 3, Price: "62449", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex3StaleReplay — pins ex3's known blind spot: a replayed older frame is accepted and the book
@@ -410,6 +427,13 @@ var Ex3StaleReplay = Scenario{
 				{Price: "62600.5", Quantity: "0.7"},
 				{Price: "62599", Quantity: "1.4"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 3, Price: "62600.5", Quantity: "0.7"},
+			{ExchangeID: 3, Price: "62599", Quantity: "1.4"},
 		},
 	},
 }

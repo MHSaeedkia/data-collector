@@ -252,6 +252,21 @@ var Ex2RestThenWsResync = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62900", Quantity: "1.8"},
+			{ExchangeID: 2, Price: "62905", Quantity: "0.7"},
+			{ExchangeID: 2, Price: "62910.8", Quantity: "0.4"},
+			{ExchangeID: 2, Price: "62930", Quantity: "0.3"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62899.5", Quantity: "0.95"},
+			{ExchangeID: 2, Price: "62898.2", Quantity: "0.11"},
+			{ExchangeID: 2, Price: "62895", Quantity: "0.9"},
+			{ExchangeID: 2, Price: "62890.4", Quantity: "1.2"},
+			{ExchangeID: 2, Price: "62875", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex2UpdateBeforeSnapshot — the shape a partial rollout produces continuously: parser live, REST feed not yet publishing.
@@ -366,6 +381,23 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 		},
 	},
 	WantRejects: []string{"no_baseline"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62700", Quantity: "2.21924167"},
+			{ExchangeID: 2, Price: "62701.3", Quantity: "0.29045069"},
+			{ExchangeID: 2, Price: "62705", Quantity: "1.05"},
+			{ExchangeID: 2, Price: "62710.8", Quantity: "0.33476925"},
+			{ExchangeID: 2, Price: "62720", Quantity: "0.4"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62699.5", Quantity: "0.55175335"},
+			{ExchangeID: 2, Price: "62698.2", Quantity: "0.02744953"},
+			{ExchangeID: 2, Price: "62697.1", Quantity: "0.20630833"},
+			{ExchangeID: 2, Price: "62695", Quantity: "0.9"},
+			{ExchangeID: 2, Price: "62690.4", Quantity: "1.31062803"},
+			{ExchangeID: 2, Price: "62688", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex2SequenceGap — same gap episode as ex1, under bitpin's two-typed event_time.
@@ -661,6 +693,21 @@ var Ex2SequenceGap = Scenario{
 		},
 	},
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "63100", Quantity: "1.8"},
+			{ExchangeID: 2, Price: "63105", Quantity: "0.7"},
+			{ExchangeID: 2, Price: "63110.8", Quantity: "0.4"},
+			{ExchangeID: 2, Price: "63130", Quantity: "0.3"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "63099.5", Quantity: "0.95"},
+			{ExchangeID: 2, Price: "63098.2", Quantity: "0.11"},
+			{ExchangeID: 2, Price: "63095", Quantity: "0.9"},
+			{ExchangeID: 2, Price: "63090.4", Quantity: "1.2"},
+			{ExchangeID: 2, Price: "63075", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex2NoiseFrames — 05 is the ex2-only one: a snapshot whose event_time is an ISO string where the REST shape needs a number is dropped silently.
@@ -835,6 +882,21 @@ var Ex2NoiseFrames = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62800", Quantity: "2.21924167"},
+			{ExchangeID: 2, Price: "62805", Quantity: "1.05"},
+			{ExchangeID: 2, Price: "62810.8", Quantity: "0.33476925"},
+			{ExchangeID: 2, Price: "62830", Quantity: "0.3"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62799.5", Quantity: "0.65"},
+			{ExchangeID: 2, Price: "62798.2", Quantity: "0.02744953"},
+			{ExchangeID: 2, Price: "62795", Quantity: "0.9"},
+			{ExchangeID: 2, Price: "62790.4", Quantity: "1.31062803"},
+			{ExchangeID: 2, Price: "62785", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex2StaleRestReplay — proves the epoch-millis snapshot and the ISO WS deltas land on one scale.
@@ -1006,6 +1068,21 @@ var Ex2StaleRestReplay = Scenario{
 		},
 	},
 	WantRejects: []string{"out_of_order"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62700", Quantity: "2.21924167"},
+			{ExchangeID: 2, Price: "62701.3", Quantity: "0.1"},
+			{ExchangeID: 2, Price: "62710.8", Quantity: "0.33476925"},
+			{ExchangeID: 2, Price: "62720", Quantity: "0.4"},
+			{ExchangeID: 2, Price: "62730", Quantity: "0.75"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 2, Price: "62699.5", Quantity: "0.6"},
+			{ExchangeID: 2, Price: "62698.2", Quantity: "0.02744953"},
+			{ExchangeID: 2, Price: "62690.4", Quantity: "1.31062803"},
+			{ExchangeID: 2, Price: "60000", Quantity: "5"},
+		},
+	},
 }
 
 // Ex2PrecisionDust — job 4 on a bitpin feed, the same two rules as ex1: prices colliding at the
