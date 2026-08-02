@@ -240,14 +240,40 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   protection" ex3 was always known to have (sample-raw-data.md § ex3) — if that scenario ever
   fails, the guard changed, it is not a flake.
 - **Job 6 is verified from the final aggregated record only, not the whole stream** (2026-08-01).
-  `Scenario.WantAggregated *AggregatedBook` (nil = don't read the topics) is checked by
+  `Scenario.WantAggregated *AggregatedBook` is checked by
   `verifyAggregated`, which reads `p{PairID}-asks` and `p{PairID}-bids` and asserts the LAST
   record on each. The aggregator emits one record per side per input snapshot, so asserting the
   full stream would restate `WantSnapshots` twice over for no extra signal — every intermediate
-  aggregate is just that snapshot with an `exchange_id` stamped on each level. Only four scenarios
-  opt in, chosen for what they prove about job 6 rather than for coverage's sake. `event_time` is
+  aggregate is just that snapshot with an `exchange_id` stamped on each level. `event_time` is
   deliberately not decoded: it is the max across the exchanges in the union, which is processing
   time whenever ex3 is involved.
+- **EVERY scenario asserts job 6; a nil `WantAggregated` is DERIVED, not skipped** (2026-08-02,
+  user's call, revising "only some scenarios opt in" above). `Scenario.wantAggregated()` falls back
+  to the last `WantSnapshots` entry with `ExchangeID` stamped on every level (`stampExchange`), so
+  all 41 scenarios check the aggregated topics and no scenario had to grow a literal. The
+  derivation is exact ONLY because a scenario feeds one exchange: the union is a union of one, both
+  jobs sort asks↑/bids↓, and the aggregator's quantity tie-break cannot fire within one exchange
+  because job 4 already merged same-price levels. **A multi-exchange scenario shape would break
+  this fallback and must set `WantAggregated` explicitly.** The one case still not read is
+  a scenario wanting zero snapshots — job 6 then has nothing to emit and the empty snapshot stream
+  already says so.
+- **All 41 scenarios now spell `WantAggregated` out; nil is only for HTTP-posted scenarios**
+  (2026-08-02, user's call, one step past the derivation above). The 29 that relied on the fallback
+  grew a literal, generated from `wantAggregated()` and inserted before each scenario's closing
+  brace (a throwaway `TestWantAggregatedExplicit` then re-checked all 41 literals against the
+  derivation, PASS, deleted after). They add readability, NOT independent signal — they are the
+  derivation written down, so a wrong derivation would produce wrong literals silently. Only a live
+  run can settle that. Keep the fallback in `wantAggregated()`: it still serves `POST /scenarios/run`
+  bodies. **A new scenario should carry its own literal** rather than lean on the fallback, so the
+  file stays self-describing and a future multi-exchange case cannot inherit a union-of-one guess.
+- **Dropping the snapshot assertion and keeping only the aggregated one was considered and
+  REJECTED** (2026-08-02). `verifyAggregated` reads only the LAST record, so a final-state-only
+  oracle would stop pinning: stream LENGTH (`Ex6SequenceGap`'s 5 snapshots for 6 sources,
+  `Ex5MultiBookFrame`'s one-record-two-snapshots fan-out, every `*NoiseFrames` case whose point is
+  that nothing is emitted), intermediate book state on the delta feeds, and `event_time` — which is
+  asserted on snapshots and deliberately not decoded on aggregated records. It also localizes a
+  failure to a job instead of to "the chain". Asserting the FULL aggregated stream instead would
+  recover the count oracle but still loses `event_time` and the localization.
 - **The suite cannot test the aggregator's actual job — union across exchanges** (2026-08-01).
   `warmup.Run` takes ONE exchange id and `Scenario` has one `Sources` list, so every scenario feeds
   a single exchange and every aggregated book is a union of one. Union-never-sum, equal prices from

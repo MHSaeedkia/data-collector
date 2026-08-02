@@ -252,6 +252,21 @@ var Ex1RestThenWsResync = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62850", Quantity: "1.8"},
+			{ExchangeID: 1, Price: "62855", Quantity: "0.7"},
+			{ExchangeID: 1, Price: "62860", Quantity: "0.4"},
+			{ExchangeID: 1, Price: "62880", Quantity: "0.3"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62849", Quantity: "0.95"},
+			{ExchangeID: 1, Price: "62848", Quantity: "0.11"},
+			{ExchangeID: 1, Price: "62845", Quantity: "0.9"},
+			{ExchangeID: 1, Price: "62840", Quantity: "1.2"},
+			{ExchangeID: 1, Price: "62825", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex1UpdateBeforeSnapshot — a WS delta before any REST snapshot has no baseline to apply to.
@@ -366,6 +381,23 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 		},
 	},
 	WantRejects: []string{"no_baseline"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62650", Quantity: "2.21924167"},
+			{ExchangeID: 1, Price: "62651", Quantity: "0.29045069"},
+			{ExchangeID: 1, Price: "62655", Quantity: "1.05"},
+			{ExchangeID: 1, Price: "62660", Quantity: "0.33476925"},
+			{ExchangeID: 1, Price: "62670", Quantity: "0.4"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62649", Quantity: "0.55175335"},
+			{ExchangeID: 1, Price: "62648", Quantity: "0.02744953"},
+			{ExchangeID: 1, Price: "62647", Quantity: "0.20630833"},
+			{ExchangeID: 1, Price: "62645", Quantity: "0.9"},
+			{ExchangeID: 1, Price: "62640", Quantity: "1.31062803"},
+			{ExchangeID: 1, Price: "62638", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex1SequenceGap — Centrifugo offsets step by exactly one, so any skip is a gap; only a REST snapshot can re-arm.
@@ -659,6 +691,21 @@ var Ex1SequenceGap = Scenario{
 		},
 	},
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "63050", Quantity: "1.8"},
+			{ExchangeID: 1, Price: "63055", Quantity: "0.7"},
+			{ExchangeID: 1, Price: "63060", Quantity: "0.4"},
+			{ExchangeID: 1, Price: "63080", Quantity: "0.3"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "63049", Quantity: "0.95"},
+			{ExchangeID: 1, Price: "63048", Quantity: "0.11"},
+			{ExchangeID: 1, Price: "63045", Quantity: "0.9"},
+			{ExchangeID: 1, Price: "63040", Quantity: "1.2"},
+			{ExchangeID: 1, Price: "63025", Quantity: "1.1"},
+		},
+	},
 }
 
 // Ex1NoiseFrames — Centrifugo noise is dropped without consuming an offset or arming a resync.
@@ -816,6 +863,21 @@ var Ex1NoiseFrames = Scenario{
 				{Price: "62940", Quantity: "1.31062803"},
 				{Price: "62935", Quantity: "1.1"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62950", Quantity: "2.21924167"},
+			{ExchangeID: 1, Price: "62955", Quantity: "1.05"},
+			{ExchangeID: 1, Price: "62960", Quantity: "0.33476925"},
+			{ExchangeID: 1, Price: "62980", Quantity: "0.3"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62949", Quantity: "0.65"},
+			{ExchangeID: 1, Price: "62948", Quantity: "0.02744953"},
+			{ExchangeID: 1, Price: "62945", Quantity: "0.9"},
+			{ExchangeID: 1, Price: "62940", Quantity: "1.31062803"},
+			{ExchangeID: 1, Price: "62935", Quantity: "1.1"},
 		},
 	},
 }
@@ -990,6 +1052,21 @@ var Ex1StaleRestReplay = Scenario{
 		},
 	},
 	WantRejects: []string{"out_of_order"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62650", Quantity: "2.21924167"},
+			{ExchangeID: 1, Price: "62651", Quantity: "0.1"},
+			{ExchangeID: 1, Price: "62660", Quantity: "0.33476925"},
+			{ExchangeID: 1, Price: "62670", Quantity: "0.4"},
+			{ExchangeID: 1, Price: "62680", Quantity: "0.75"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62649", Quantity: "0.6"},
+			{ExchangeID: 1, Price: "62648", Quantity: "0.02744953"},
+			{ExchangeID: 1, Price: "62640", Quantity: "1.31062803"},
+			{ExchangeID: 1, Price: "60000", Quantity: "5"},
+		},
+	},
 }
 
 // Ex1PrecisionDust — job 4 on a nobitex feed: prices that collide once truncated to the market's
@@ -1063,6 +1140,13 @@ var Ex1PrecisionDust = Scenario{
 				{Price: "62650.12", Quantity: "0.3"},
 				{Price: "62649.5", Quantity: "1"},
 			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 1, Price: "62653.99", Quantity: "0.75"}},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 1, Price: "62650.12", Quantity: "0.3"},
+			{ExchangeID: 1, Price: "62649.5", Quantity: "1"},
 		},
 	},
 }

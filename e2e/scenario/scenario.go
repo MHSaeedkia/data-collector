@@ -1,6 +1,7 @@
 // Package scenario runs one end-to-end case against the pipeline: it brings the
 // stack back to a clean start, feeds an exchange's raw topic and checks what
-// comes back out of the pipeline's two output topics.
+// comes back out of the pipeline's output topics — the book builder's snapshots,
+// its dead letters, and the aggregated book the pair ends on.
 package scenario
 
 import (
@@ -46,11 +47,14 @@ type Scenario struct {
 	WantRejects   []string                   `json:"want_rejects"` // reject_reason of each dead-letter, e.g. "sequence_gap"
 
 	// WantAggregated is the aggregated view of the pair once every source is
-	// through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`. Nil
-	// means the aggregated topics are not read at all, which is the default: the
-	// aggregator emits one record per side per snapshot, so asserting the whole
-	// stream would restate WantSnapshots twice over. Only the final state is
-	// worth pinning, and only on the scenarios where job 6 is the point.
+	// through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`.
+	// Every scenario in this package spells it out. Nil is for a scenario posted
+	// over HTTP, and does NOT mean "skip job 6": the expectation is then DERIVED
+	// from the last wanted snapshot, which is what the aggregated book must be
+	// when a single exchange feeds the pair.
+	// Only the final state is read — the aggregator emits one record per side
+	// per snapshot, so asserting the whole stream would restate WantSnapshots
+	// twice over.
 	WantAggregated *AggregatedBook `json:"want_aggregated"`
 
 	// IgnoreEventTime blanks EventTime on both sides before comparing. Only ex3
@@ -99,7 +103,9 @@ func (s Scenario) produce(ctx context.Context, cfg config.Config) error {
 	return nil
 }
 
-// verify reads both output topics and compares each to its wanted stream.
+// verify reads each output topic and compares it to its wanted stream: the
+// snapshot stream (job 5), the dead letters (jobs 2 and 3), then the pair's
+// final aggregated book (job 6).
 //
 // Snapshots are read first, for the full budget. Jobs 2 and 3 are upstream of
 // the book builder, so anything they were going to reject is already on the
@@ -133,9 +139,6 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 
 	log.Printf("matched %d snapshots and %d rejections", len(snapshots), len(rejects))
 
-	if s.WantAggregated == nil {
-		return nil
-	}
 	return s.verifyAggregated(ctx, cfg)
 }
 
@@ -143,13 +146,22 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 // topics. Those topics are the pair's, not the exchange's — the aggregator keys
 // on (pair_id, side) across every exchange — but a scenario feeds one exchange
 // and the warmup emptied the topics, so what is there is this run's.
+//
+// A scenario that wants no snapshot at all leaves job 6 nothing to emit, and
+// the empty snapshot stream has already been asserted, so there is nothing left
+// to read.
 func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config) error {
+	if s.WantAggregated == nil && len(s.WantSnapshots) == 0 {
+		return nil
+	}
+	want := s.wantAggregated()
+
 	for _, side := range []struct {
 		name string
 		want []events.AggregatedLevel
 	}{
-		{"asks", s.WantAggregated.Asks},
-		{"bids", s.WantAggregated.Bids},
+		{"asks", want.Asks},
+		{"bids", want.Bids},
 	} {
 		topic := fmt.Sprintf("p%d-%s", s.PairID, side.name)
 		records, err := consumer.ReadAggregated(ctx, cfg.KafkaBroker, cfg.SchemaRegistryURL, topic, aggregateWait)
@@ -171,6 +183,41 @@ func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config) error
 		log.Printf("matched the final aggregated book on %s (%d records seen)", topic, len(records))
 	}
 	return nil
+}
+
+// wantAggregated is the book the aggregated topics must end on: the scenario's
+// own WantAggregated when it has one, otherwise the last wanted snapshot with
+// the exchange stamped on every level.
+//
+// That derivation is exact because a scenario feeds ONE exchange: the union is
+// a union of one, so job 6's output is job 5's last book plus the exchange tag.
+// The order survives too — both jobs sort asks ascending and bids descending,
+// and the aggregator's quantity tie-break never fires within a single exchange
+// because job 4 has already merged levels that share a price.
+func (s Scenario) wantAggregated() AggregatedBook {
+	if s.WantAggregated != nil {
+		return *s.WantAggregated
+	}
+	last := s.WantSnapshots[len(s.WantSnapshots)-1]
+	return AggregatedBook{
+		Asks: stampExchange(s.ExchangeID, last.Asks),
+		Bids: stampExchange(s.ExchangeID, last.Bids),
+	}
+}
+
+// stampExchange rewrites one side of a book-builder snapshot in the aggregated
+// form: the same levels in the same order, each tagged with the exchange it
+// came from.
+func stampExchange(exchangeID int64, levels []events.PriceLevel) []events.AggregatedLevel {
+	stamped := make([]events.AggregatedLevel, 0, len(levels))
+	for _, level := range levels {
+		stamped = append(stamped, events.AggregatedLevel{
+			ExchangeID: exchangeID,
+			Price:      level.Price,
+			Quantity:   level.Quantity,
+		})
+	}
+	return stamped
 }
 
 // compare checks that a topic carried exactly the wanted records, in order.

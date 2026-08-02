@@ -206,7 +206,7 @@
                     }
                 },
                 "want_aggregated": {
-                    "description": "WantAggregated is the aggregated view of the pair once every source is\nthrough — the last record on `p{PairID}-asks` and on `p{PairID}-bids`. Nil\nmeans the aggregated topics are not read at all, which is the default: the\naggregator emits one record per side per snapshot, so asserting the whole\nstream would restate WantSnapshots twice over. Only the final state is\nworth pinning, and only on the scenarios where job 6 is the point.",
+                    "description": "WantAggregated is the aggregated view of the pair once every source is\nthrough — the last record on `p{PairID}-asks` and on `p{PairID}-bids`.\nEvery scenario in this package spells it out. Nil is for a scenario posted\nover HTTP, and does NOT mean \"skip job 6\": the expectation is then DERIVED\nfrom the last wanted snapshot, which is what the aggregated book must be\nwhen a single exchange feeds the pair.\nOnly the final state is read — the aggregator emits one record per side\nper snapshot, so asserting the whole stream would restate WantSnapshots\ntwice over.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/scenario.AggregatedBook"

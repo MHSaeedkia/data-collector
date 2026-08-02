@@ -119,6 +119,18 @@ var Ex6SnapshotThenDeltas = Scenario{
 			},
 		},
 	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Price: "62724.2", Quantity: "0.529037"},
+			{ExchangeID: 6, Price: "62724.4", Quantity: "0.029554"},
+			{ExchangeID: 6, Price: "62725", Quantity: "0.75"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Price: "62724.1", Quantity: "0.407233"},
+			{ExchangeID: 6, Price: "62723.6", Quantity: "0.00012"},
+			{ExchangeID: 6, Price: "62709.4", Quantity: "0.096404"},
+		},
+	},
 }
 
 // Ex6OneSidedDelta — a missing side key is a null side, and null is not empty. 02 and 03 leave the
@@ -473,6 +485,13 @@ var Ex6NoBaseline = Scenario{
 		},
 	},
 	WantRejects: []string{"no_baseline", "stale_or_duplicate"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Price: "63000", Quantity: "1"},
+			{ExchangeID: 6, Price: "63001", Quantity: "0.5"},
+		},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62999", Quantity: "2"}},
+	},
 }
 
 // Ex6NoiseFrames — everything that is not a well-formed bybit book frame for a known market is
@@ -570,6 +589,13 @@ var Ex6NoiseFrames = Scenario{
 			},
 			Bids: []events.PriceLevel{{Price: "62499", Quantity: "2"}},
 		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Price: "62500", Quantity: "1"},
+			{ExchangeID: 6, Price: "62501", Quantity: "0.4"},
+		},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62499", Quantity: "2"}},
 	},
 }
 
