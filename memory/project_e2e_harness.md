@@ -55,6 +55,11 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 - `e2e/main.go` — `main()` plus `runServer`: load config, make a context, `stack.Provision`, then
   either serve (`-serve`) or loop the `scenarios` list calling `scenario.Run` on each.
 
+**Build `e2e/` with `-mod=mod`, against the module cache. Do NOT run `go mod vendor`** (user's
+call, 2026-08-03). There is an untracked `e2e/vendor/` tree with no `modules.txt`, which makes a
+bare `go build` fail with "inconsistent vendoring" — the fix is the flag, not repopulating vendor.
+`swag` needs it too: `GOFLAGS=-mod=mod ./swagger-update.sh`.
+
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
 in front, a second run deletes the 9 and recreates them empty. All 6 normalizer jobs reach RUNNING; a second run cancels
@@ -382,6 +387,16 @@ running the built-in list. `go run .` with no flag is unchanged. One route:
   (nested `want_snapshots` + `want_aggregated` + `ignore_event_time`) decodes and reaches
   `scenario.Run`. **The HTTP layer is verified; a scenario has still never been run live** — the
   smoke test pointed at an unreachable registry and asserted only that the failure was rendered.
+- **`want_aggregated` needed NO transport work to be assertable over HTTP** (checked 2026-08-03,
+  when it was asked for as if it were missing). It is a field of the embedded `Scenario`, so the
+  json tag, the swag definition and `verifyAggregated` covered the API the moment job 6 validation
+  landed; the served example carries it because it is marshalled from `Ex1PrecisionDust` at serve
+  time. What WAS added: `validate` now rejects an aggregated level with a non-positive
+  `exchange_id` or an empty price/quantity with a 400. **That check exists because a run costs
+  minutes** — the mistake it catches is a caller copying a `want_snapshots` side across, which is
+  the same shape minus the exchange tag, and without the check they would wait out a full run to
+  see it in the diff. It is deliberately shallow: ordering and pipeline semantics are the
+  pipeline's verdict to give, not the validator's.
 
 ### Swagger (2026-08-02)
 
@@ -425,7 +440,9 @@ arrays that anyone would have to fill in from `data_ex*.go` first.
   there would silently vanish. On the definition it survives resolution.
 - **It is the live `Ex1PrecisionDust` var, not a copy.** That is the point of injecting rather than
   writing the JSON into an annotation: edit the scenario and the example follows, no regen, no
-  drift. `swag init` still has to be rerun for anything else.
+  drift. `swag init` still has to be rerun for anything else. Proved out 2026-08-03: giving that
+  scenario an explicit `WantAggregated` put `want_aggregated` into the served example with no
+  server-side change at all.
 - **The committed `docs/swagger.json` and `.yaml` do NOT carry the example** — injection happens at
   serve time only. Reading the static files is not the same as reading `/swagger/doc.json`.
 - Verified 2026-08-02 by a throwaway test (since deleted): the served `doc.json` carries a 1442-byte
