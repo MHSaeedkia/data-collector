@@ -1,3 +1,2 @@
 # local config (copy .env.example -> .env and edit)
 /.env
-/vendor/
