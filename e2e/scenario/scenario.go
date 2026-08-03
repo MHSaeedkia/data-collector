@@ -48,10 +48,10 @@ type Scenario struct {
 
 	// WantAggregated is the aggregated view of the pair once every source is
 	// through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`.
-	// Every scenario in this package spells it out. Nil is for a scenario posted
-	// over HTTP, and does NOT mean "skip job 6": the expectation is then DERIVED
-	// from the last wanted snapshot, which is what the aggregated book must be
-	// when a single exchange feeds the pair.
+	// Every scenario in this package spells it out, and a posted one should too.
+	// Nil does NOT mean "skip job 6": the expectation is then DERIVED from the
+	// last wanted snapshot, which is what the aggregated book must be when a
+	// single exchange feeds the pair.
 	// Only the final state is read — the aggregator emits one record per side
 	// per snapshot, so asserting the whole stream would restate WantSnapshots
 	// twice over.

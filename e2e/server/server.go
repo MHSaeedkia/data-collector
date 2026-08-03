@@ -18,6 +18,7 @@ import (
 
 	"orderbook-e2e/config"
 	_ "orderbook-e2e/docs" // the generated spec registers itself on import
+	"orderbook-e2e/events"
 	"orderbook-e2e/scenario"
 )
 
@@ -117,7 +118,9 @@ func specJSON() string {
 // run executes one scenario against the pipeline.
 //
 //	@Summary		Run one scenario
-//	@Description	Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected and (optionally) aggregated topics back and compares them to the `want_*` streams.
+//	@Description	Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected and aggregated topics back and compares them to the `want_*` streams.
+//	@Description
+//	@Description	Job 6 is always asserted: `want_aggregated` is the book the pair's `p{pair_id}-asks` / `p{pair_id}-bids` topics must END on, and every level carries the `exchange_id` it came from because the aggregator unions across exchanges instead of summing them. Only the final record on each side is read, not the whole stream. Omitting `want_aggregated` does NOT skip the check — the expectation is then derived from the last `want_snapshots` entry with the scenario's exchange stamped on every level, which is exact only because a scenario feeds ONE exchange. Send it explicitly to say what you mean.
 //	@Description
 //	@Description	A scenario that does not match is **200 with `"status":"failed"`**, not a 5xx: the run itself worked, the pipeline disagreed. A non-200 always means the scenario never ran.
 //	@Description
@@ -176,6 +179,28 @@ func validate(s scenario.Scenario) error {
 	}
 	if len(s.Sources) == 0 {
 		return fmt.Errorf("sources must not be empty")
+	}
+	// A run takes minutes, so a want_aggregated that cannot possibly match is
+	// worth catching here rather than in the diff at the end of it. The levels
+	// are the aggregated form, not the snapshot form: an untagged level is the
+	// mistake a caller makes when they copy a want_snapshots side across.
+	if s.WantAggregated != nil {
+		for _, side := range []struct {
+			name   string
+			levels []events.AggregatedLevel
+		}{
+			{"asks", s.WantAggregated.Asks},
+			{"bids", s.WantAggregated.Bids},
+		} {
+			for i, level := range side.levels {
+				if level.ExchangeID <= 0 {
+					return fmt.Errorf("want_aggregated.%s[%d]: exchange_id must be positive — aggregated levels carry the exchange they came from", side.name, i)
+				}
+				if level.Price == "" || level.Quantity == "" {
+					return fmt.Errorf("want_aggregated.%s[%d]: price and quantity must not be empty", side.name, i)
+				}
+			}
+		}
 	}
 	return nil
 }

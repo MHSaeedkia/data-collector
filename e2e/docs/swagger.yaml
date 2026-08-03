@@ -107,10 +107,10 @@ definitions:
         description: |-
           WantAggregated is the aggregated view of the pair once every source is
           through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`.
-          Every scenario in this package spells it out. Nil is for a scenario posted
-          over HTTP, and does NOT mean "skip job 6": the expectation is then DERIVED
-          from the last wanted snapshot, which is what the aggregated book must be
-          when a single exchange feeds the pair.
+          Every scenario in this package spells it out, and a posted one should too.
+          Nil does NOT mean "skip job 6": the expectation is then DERIVED from the
+          last wanted snapshot, which is what the aggregated book must be when a
+          single exchange feeds the pair.
           Only the final state is read — the aggregator emits one record per side
           per snapshot, so asserting the whole stream would restate WantSnapshots
           twice over.
@@ -156,7 +156,9 @@ paths:
       consumes:
       - application/json
       description: |-
-        Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected and (optionally) aggregated topics back and compares them to the `want_*` streams.
+        Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected and aggregated topics back and compares them to the `want_*` streams.
+
+        Job 6 is always asserted: `want_aggregated` is the book the pair's `p{pair_id}-asks` / `p{pair_id}-bids` topics must END on, and every level carries the `exchange_id` it came from because the aggregator unions across exchanges instead of summing them. Only the final record on each side is read, not the whole stream. Omitting `want_aggregated` does NOT skip the check — the expectation is then derived from the last `want_snapshots` entry with the scenario's exchange stamped on every level, which is exact only because a scenario feeds ONE exchange. Send it explicitly to say what you mean.
 
         A scenario that does not match is **200 with `"status":"failed"`**, not a 5xx: the run itself worked, the pipeline disagreed. A non-200 always means the scenario never ran.
 
