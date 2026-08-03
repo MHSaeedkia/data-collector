@@ -71,7 +71,12 @@ func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 		if !ok {
 			ex = domain.Exchange{ID: rl.ExchangeID, Name: "unknown", Label: "نامشخص"}
 		}
-		levels = append(levels, domain.Level{Price: rl.Price, Quantity: rl.Quantity, Exchange: ex})
+		levels = append(levels, domain.Level{
+			Price:      rl.Price,
+			Quantity:   rl.Quantity,
+			Simulation: rl.Simulation,
+			Exchange:   ex,
+		})
 	}
 
 	return domain.Book{

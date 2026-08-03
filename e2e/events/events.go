@@ -3,8 +3,12 @@
 package events
 
 type OrderbookSnapshot struct {
-	ExchangeID      int64            `json:"exchange_id"`
-	PairID          int64            `json:"pair_id"`
+	ExchangeID int64 `json:"exchange_id"`
+	PairID     int64 `json:"pair_id"`
+	// Simulation is NiFi's flag carried up the pipeline: 0 = live data, 1 =
+	// simulation data, other values not yet defined. The book builder stamps
+	// the emitted book with the flag of the event that produced it.
+	Simulation      int64            `json:"simulation"`
 	EventTime       string           `json:"event_time"`
 	Asks            []PriceLevel     `json:"asks"`
 	Bids            []PriceLevel     `json:"bids"`
@@ -28,8 +32,13 @@ type AggregatedSide struct {
 // AggregatedLevel is one level of the aggregated book. Levels from different
 // exchanges are unioned, never summed, so each one stays tagged with the
 // exchange it came from even when two exchanges quote the same price.
+//
+// Simulation is tagged per level for the same reason ExchangeID is: one
+// aggregated record mixes exchanges, so the flag only means something attached
+// to the level it came with, never to the record as a whole.
 type AggregatedLevel struct {
 	ExchangeID int64  `json:"exchange_id"`
+	Simulation int64  `json:"simulation"`
 	Price      string `json:"price"`
 	Quantity   string `json:"quantity"`
 }

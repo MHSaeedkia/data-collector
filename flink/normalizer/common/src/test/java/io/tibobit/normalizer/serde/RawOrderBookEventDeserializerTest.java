@@ -92,6 +92,28 @@ class RawOrderBookEventDeserializerTest {
     }
 
     /**
+     * Given events flagged live, simulated and with an as-yet-undefined value, When round-tripped,
+     * Then the flag survives verbatim — the wire must not reinterpret or clamp it.
+     */
+    @Test
+    @DisplayName("round-trips the simulation flag verbatim, including undefined values")
+    void roundTripsSimulationFlag() {
+        RawOrderBookEvent live = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), List.of());
+        assertThat(roundTrip(live).getSimulation()).isZero();
+
+        RawOrderBookEvent simulated = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), List.of());
+        simulated.setSimulation(1);
+        assertThat(roundTrip(simulated).getSimulation()).isEqualTo(1);
+
+        RawOrderBookEvent undefined = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), List.of());
+        undefined.setSimulation(7);
+        assertThat(roundTrip(undefined).getSimulation()).isEqualTo(7);
+    }
+
+    /**
      * Given any element, When {@code isEndOfStream} is queried, Then it is always false — an
      * unbounded live stream must never signal completion.
      */

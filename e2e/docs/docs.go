@@ -74,6 +74,9 @@ const docTemplate = `{
                 },
                 "quantity": {
                     "type": "string"
+                },
+                "simulation": {
+                    "type": "integer"
                 }
             }
         },
@@ -111,6 +114,10 @@ const docTemplate = `{
                 },
                 "pipeline_timings": {
                     "$ref": "#/definitions/events.PipelineTimings"
+                },
+                "simulation": {
+                    "description": "Simulation is NiFi's flag carried up the pipeline: 0 = live data, 1 =\nsimulation data, other values not yet defined. The book builder stamps\nthe emitted book with the flag of the event that produced it.",
+                    "type": "integer"
                 }
             }
         },

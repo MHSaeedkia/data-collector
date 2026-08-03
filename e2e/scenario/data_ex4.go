@@ -35,6 +35,7 @@ var Ex4RamzinexSnapshots = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -56,6 +57,7 @@ var Ex4RamzinexSnapshots = Scenario{
 }`,
 		// 02 snapshot — every 01 level is gone, and a zero-quantity level rests nowhere
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -76,6 +78,7 @@ var Ex4RamzinexSnapshots = Scenario{
 }`,
 		// 03 snapshot — 2-element levels alongside full 7-element ones
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -97,6 +100,7 @@ var Ex4RamzinexSnapshots = Scenario{
 		{ // after 01 — sells came in descending, the book is ascending
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62650.75", Quantity: "0.25"},
 				{Price: "62655.5", Quantity: "1.5"},
@@ -111,6 +115,7 @@ var Ex4RamzinexSnapshots = Scenario{
 		{ // after 02 — wholesale replace, and 62652.5 never rested
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62651.5", Quantity: "0.6"},
 				{Price: "62670", Quantity: "1"},
@@ -123,6 +128,7 @@ var Ex4RamzinexSnapshots = Scenario{
 		{ // after 03 — the 2-element level parsed like any other
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62680", Quantity: "0.9"},
 			},
@@ -134,11 +140,11 @@ var Ex4RamzinexSnapshots = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "62680", Quantity: "0.9"},
+			{ExchangeID: 4, Simulation: 1, Price: "62680", Quantity: "0.9"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "62655", Quantity: "0.8"},
-			{ExchangeID: 4, Price: "62654.5", Quantity: "1.1"},
+			{ExchangeID: 4, Simulation: 1, Price: "62655", Quantity: "0.8"},
+			{ExchangeID: 4, Simulation: 1, Price: "62654.5", Quantity: "1.1"},
 		},
 	},
 }
@@ -153,6 +159,7 @@ var Ex4StaleOffset = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -166,6 +173,7 @@ var Ex4StaleOffset = Scenario{
 }`,
 		// 02 the same offset again — a duplicate publication
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -179,6 +187,7 @@ var Ex4StaleOffset = Scenario{
 }`,
 		// 03 an older offset — a replay that must not overwrite the newer book
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -192,6 +201,7 @@ var Ex4StaleOffset = Scenario{
 }`,
 		// 04 a far-forward offset — accepted, because a snapshot feed has no gap rule
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -208,20 +218,22 @@ var Ex4StaleOffset = Scenario{
 		{ // after 01
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{{Price: "62510", Quantity: "2"}},
 			Bids:       []events.PriceLevel{{Price: "62500", Quantity: "1"}},
 		},
 		{ // after 04 — 02 and 03 were dead-lettered, so the book skipped straight here
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{{Price: "62530", Quantity: "1.5"}},
 			Bids:       []events.PriceLevel{{Price: "62520", Quantity: "0.5"}},
 		},
 	},
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 4, Price: "62530", Quantity: "1.5"}},
-		Bids: []events.AggregatedLevel{{ExchangeID: 4, Price: "62520", Quantity: "0.5"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 4, Simulation: 1, Price: "62530", Quantity: "1.5"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 4, Simulation: 1, Price: "62520", Quantity: "0.5"}},
 	},
 }
 
@@ -234,6 +246,7 @@ var Ex4NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -246,9 +259,11 @@ var Ex4NoiseFrames = Scenario{
 	}
 }`,
 		// 02 not a publication at all
-		`{ "ping": 1 }`,
+		`{
+	"simulation": 1, "ping": 1 }`,
 		// 03 a publication, but not the orderbook channel
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "trades:12",
 		"pub": {
@@ -262,6 +277,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 04 no sells key — a half book is not a shape ex4 ever sends
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -274,6 +290,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 05 a market id ex4 has no exchange_markets row for
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:99999",
 		"pub": {
@@ -287,6 +304,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 06 string levels — ex4's wire is JSON numbers, so the whole frame is unparseable
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -300,6 +318,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 07 a 1-element level — below the [price, qty] minimum, so the frame is dropped whole
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -313,6 +332,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 08 snapshot
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
 		"pub": {
@@ -335,12 +355,14 @@ var Ex4NoiseFrames = Scenario{
 		{ // after 01
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{{Price: "62410", Quantity: "1.1"}},
 			Bids:       []events.PriceLevel{{Price: "62400", Quantity: "0.3"}},
 		},
 		{ // after 08 — 02 through 07 emitted nothing at all
 			ExchangeID: 4,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62410.5", Quantity: "0.6"},
 				{Price: "62411", Quantity: "0.9"},
@@ -353,12 +375,12 @@ var Ex4NoiseFrames = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "62410.5", Quantity: "0.6"},
-			{ExchangeID: 4, Price: "62411", Quantity: "0.9"},
+			{ExchangeID: 4, Simulation: 1, Price: "62410.5", Quantity: "0.6"},
+			{ExchangeID: 4, Simulation: 1, Price: "62411", Quantity: "0.9"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "62400", Quantity: "0.3"},
-			{ExchangeID: 4, Price: "62399", Quantity: "1.2"},
+			{ExchangeID: 4, Simulation: 1, Price: "62400", Quantity: "0.3"},
+			{ExchangeID: 4, Simulation: 1, Price: "62399", Quantity: "1.2"},
 		},
 	},
 }
@@ -375,6 +397,7 @@ var Ex4RebaseToman = Scenario{
 	Sources: []string{
 		// 01 snapshot, prices in rials
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:2",
 		"pub": {
@@ -395,6 +418,7 @@ var Ex4RebaseToman = Scenario{
 }`,
 		// 02 snapshot — the first two buys are distinct rials but the same toman
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:2",
 		"pub": {
@@ -418,6 +442,7 @@ var Ex4RebaseToman = Scenario{
 		{ // after 01 — 38523456.55 rials is 3852345.655 tomans, truncated DOWN to 2 places
 			ExchangeID: 4,
 			PairID:     2,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "3853055.9", Quantity: "1.5"},
 				{Price: "3854100", Quantity: "0.8"},
@@ -432,6 +457,7 @@ var Ex4RebaseToman = Scenario{
 			// and the 9e-9 ask quantity truncated to zero so that level never rested
 			ExchangeID: 4,
 			PairID:     2,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "3856000", Quantity: "1"},
 			},
@@ -442,10 +468,10 @@ var Ex4RebaseToman = Scenario{
 		},
 	},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 4, Price: "3856000", Quantity: "1"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 4, Simulation: 1, Price: "3856000", Quantity: "1"}},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "3852345.65", Quantity: "0.65"},
-			{ExchangeID: 4, Price: "3851999.9", Quantity: "1.5"},
+			{ExchangeID: 4, Simulation: 1, Price: "3852345.65", Quantity: "0.65"},
+			{ExchangeID: 4, Simulation: 1, Price: "3851999.9", Quantity: "1.5"},
 		},
 	},
 }
@@ -462,6 +488,7 @@ var Ex4RebaseScaledUnit = Scenario{
 	Sources: []string{
 		// 01 snapshot, priced per 100 PEPE
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:552",
 		"pub": {
@@ -482,6 +509,7 @@ var Ex4RebaseScaledUnit = Scenario{
 		// 02 snapshot — a price with more places than the market keeps, and two dust quantities
 		// either side of the line the +2 shift moves
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:552",
 		"pub": {
@@ -504,6 +532,7 @@ var Ex4RebaseScaledUnit = Scenario{
 		{ // after 01 — price / 100, quantity * 100
 			ExchangeID: 4,
 			PairID:     17,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "0.0000124", Quantity: "300000"},
 				{Price: "0.00001245", Quantity: "800000"},
@@ -517,6 +546,7 @@ var Ex4RebaseScaledUnit = Scenario{
 			// the lot precision and was deleted, 5e-12 * 100 is exactly at it and rests
 			ExchangeID: 4,
 			PairID:     17,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "0.0000126", Quantity: "0.0000000005"},
 			},
@@ -528,11 +558,11 @@ var Ex4RebaseScaledUnit = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "0.0000126", Quantity: "0.0000000005"},
+			{ExchangeID: 4, Simulation: 1, Price: "0.0000126", Quantity: "0.0000000005"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 4, Price: "0.0000123456", Quantity: "400000"},
-			{ExchangeID: 4, Price: "0.0000123", Quantity: "600000"},
+			{ExchangeID: 4, Simulation: 1, Price: "0.0000123456", Quantity: "400000"},
+			{ExchangeID: 4, Simulation: 1, Price: "0.0000123", Quantity: "600000"},
 		},
 	},
 }

@@ -49,6 +49,7 @@ public class AggregatedOrderBookSerializer implements SerializationSchema<Aggreg
         for (AggregatedLevel level : book.getLevels()) {
             levels.add(new GenericRecordBuilder(levelSchema)
                     .set("exchange_id", level.getExchangeId())
+                    .set("simulation", level.getSimulation())
                     .set("price", level.getPrice())
                     .set("quantity", level.getQuantity())
                     .build());

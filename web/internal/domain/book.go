@@ -4,7 +4,11 @@ package domain
 // (identity only: pair_id / exchange_id, no display fields).
 
 type RawLevel struct {
-	ExchangeID int    `json:"exchange_id"`
+	ExchangeID int `json:"exchange_id"`
+	// Simulation is per level, not per book: the aggregator unions across
+	// exchanges, so one book can mix live and simulated sources.
+	// 0 = live data, 1 = simulation data.
+	Simulation int    `json:"simulation"`
 	Price      string `json:"price"`
 	Quantity   string `json:"quantity"`
 }
@@ -20,9 +24,10 @@ type RawBook struct {
 // fields (base, quote, exchange name/label) resolved.
 
 type Level struct {
-	Price    string   `json:"price"`
-	Quantity string   `json:"quantity"`
-	Exchange Exchange `json:"exchange"`
+	Price      string   `json:"price"`
+	Quantity   string   `json:"quantity"`
+	Simulation int      `json:"simulation"`
+	Exchange   Exchange `json:"exchange"`
 }
 
 type Book struct {

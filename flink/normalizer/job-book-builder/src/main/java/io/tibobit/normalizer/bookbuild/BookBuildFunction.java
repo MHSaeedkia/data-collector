@@ -74,6 +74,10 @@ public class BookBuildFunction
         OrderBookSnapshot book = new OrderBookSnapshot(
                 event.getExchangeId(), event.getPairId(), event.getEventTime(),
                 event.getSequenceId(), sorted(asks, ASCENDING), sorted(bids, DESCENDING));
+        // The book is state built from many events, but simulation is a property of the feed, not of
+        // a level — so the emitted book carries the flag of the event that produced it. Kept out of
+        // MapState deliberately: it is not per-price, and a feed does not switch mid-stream.
+        book.setSimulation(event.getSimulation());
         book.setPipelineTimings(event.getPipelineTimings());
 
         book.getPipelineTimings().setBookBuildOut(System.currentTimeMillis());

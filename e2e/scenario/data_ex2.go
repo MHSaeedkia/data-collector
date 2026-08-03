@@ -12,6 +12,7 @@ var Ex2RestThenWsResync = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000000000,
@@ -32,6 +33,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -55,6 +57,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 03 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -77,6 +80,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 04 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000003000,
@@ -95,6 +99,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -117,6 +122,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 06 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -142,6 +148,7 @@ var Ex2RestThenWsResync = Scenario{
 		{ // after 01 rest snapshot
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -161,6 +168,7 @@ var Ex2RestThenWsResync = Scenario{
 		{ // after 02 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -181,6 +189,7 @@ var Ex2RestThenWsResync = Scenario{
 		{ // after 03 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -201,6 +210,7 @@ var Ex2RestThenWsResync = Scenario{
 		{ // after 04 rest snapshot
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
 			Asks: []events.PriceLevel{
 				{Price: "62900", Quantity: "1.8"},
@@ -218,6 +228,7 @@ var Ex2RestThenWsResync = Scenario{
 		{ // after 05 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:04Z",
 			Asks: []events.PriceLevel{
 				{Price: "62900", Quantity: "1.8"},
@@ -236,6 +247,7 @@ var Ex2RestThenWsResync = Scenario{
 		{ // after 06 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:05Z",
 			Asks: []events.PriceLevel{
 				{Price: "62900", Quantity: "1.8"},
@@ -254,17 +266,17 @@ var Ex2RestThenWsResync = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62900", Quantity: "1.8"},
-			{ExchangeID: 2, Price: "62905", Quantity: "0.7"},
-			{ExchangeID: 2, Price: "62910.8", Quantity: "0.4"},
-			{ExchangeID: 2, Price: "62930", Quantity: "0.3"},
+			{ExchangeID: 2, Simulation: 1, Price: "62900", Quantity: "1.8"},
+			{ExchangeID: 2, Simulation: 1, Price: "62905", Quantity: "0.7"},
+			{ExchangeID: 2, Simulation: 1, Price: "62910.8", Quantity: "0.4"},
+			{ExchangeID: 2, Simulation: 1, Price: "62930", Quantity: "0.3"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62899.5", Quantity: "0.95"},
-			{ExchangeID: 2, Price: "62898.2", Quantity: "0.11"},
-			{ExchangeID: 2, Price: "62895", Quantity: "0.9"},
-			{ExchangeID: 2, Price: "62890.4", Quantity: "1.2"},
-			{ExchangeID: 2, Price: "62875", Quantity: "1.1"},
+			{ExchangeID: 2, Simulation: 1, Price: "62899.5", Quantity: "0.95"},
+			{ExchangeID: 2, Simulation: 1, Price: "62898.2", Quantity: "0.11"},
+			{ExchangeID: 2, Simulation: 1, Price: "62895", Quantity: "0.9"},
+			{ExchangeID: 2, Simulation: 1, Price: "62890.4", Quantity: "1.2"},
+			{ExchangeID: 2, Simulation: 1, Price: "62875", Quantity: "1.1"},
 		},
 	},
 }
@@ -276,6 +288,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 	Sources: []string{
 		// 01 ws update no baseline
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -297,6 +310,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 }`,
 		// 02 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000001000,
@@ -317,6 +331,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 }`,
 		// 03 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -343,6 +358,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 		{ // after 02 rest snapshot
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -362,6 +378,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 		{ // after 03 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -383,19 +400,19 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 	WantRejects: []string{"no_baseline"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62700", Quantity: "2.21924167"},
-			{ExchangeID: 2, Price: "62701.3", Quantity: "0.29045069"},
-			{ExchangeID: 2, Price: "62705", Quantity: "1.05"},
-			{ExchangeID: 2, Price: "62710.8", Quantity: "0.33476925"},
-			{ExchangeID: 2, Price: "62720", Quantity: "0.4"},
+			{ExchangeID: 2, Simulation: 1, Price: "62700", Quantity: "2.21924167"},
+			{ExchangeID: 2, Simulation: 1, Price: "62701.3", Quantity: "0.29045069"},
+			{ExchangeID: 2, Simulation: 1, Price: "62705", Quantity: "1.05"},
+			{ExchangeID: 2, Simulation: 1, Price: "62710.8", Quantity: "0.33476925"},
+			{ExchangeID: 2, Simulation: 1, Price: "62720", Quantity: "0.4"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62699.5", Quantity: "0.55175335"},
-			{ExchangeID: 2, Price: "62698.2", Quantity: "0.02744953"},
-			{ExchangeID: 2, Price: "62697.1", Quantity: "0.20630833"},
-			{ExchangeID: 2, Price: "62695", Quantity: "0.9"},
-			{ExchangeID: 2, Price: "62690.4", Quantity: "1.31062803"},
-			{ExchangeID: 2, Price: "62688", Quantity: "1.1"},
+			{ExchangeID: 2, Simulation: 1, Price: "62699.5", Quantity: "0.55175335"},
+			{ExchangeID: 2, Simulation: 1, Price: "62698.2", Quantity: "0.02744953"},
+			{ExchangeID: 2, Simulation: 1, Price: "62697.1", Quantity: "0.20630833"},
+			{ExchangeID: 2, Simulation: 1, Price: "62695", Quantity: "0.9"},
+			{ExchangeID: 2, Simulation: 1, Price: "62690.4", Quantity: "1.31062803"},
+			{ExchangeID: 2, Simulation: 1, Price: "62688", Quantity: "1.1"},
 		},
 	},
 }
@@ -407,6 +424,7 @@ var Ex2SequenceGap = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000000000,
@@ -427,6 +445,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -448,6 +467,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 03 ws update ok
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -468,6 +488,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 04 ws update gap
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -488,6 +509,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 05 ws update awaiting
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -508,6 +530,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 06 rest snapshot resync
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000005000,
@@ -526,6 +549,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 07 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -548,6 +572,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 08 ws update ok
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -573,6 +598,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 01 rest snapshot
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -592,6 +618,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 02 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -612,6 +639,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 03 ws update ok
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -634,6 +662,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 04 ws update gap (reset)
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
@@ -641,6 +670,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 06 rest snapshot resync
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:05Z",
 			Asks: []events.PriceLevel{
 				{Price: "63100", Quantity: "1.8"},
@@ -658,6 +688,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 07 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:06Z",
 			Asks: []events.PriceLevel{
 				{Price: "63100", Quantity: "1.8"},
@@ -676,6 +707,7 @@ var Ex2SequenceGap = Scenario{
 		{ // after 08 ws update ok
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:07Z",
 			Asks: []events.PriceLevel{
 				{Price: "63100", Quantity: "1.8"},
@@ -695,17 +727,17 @@ var Ex2SequenceGap = Scenario{
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "63100", Quantity: "1.8"},
-			{ExchangeID: 2, Price: "63105", Quantity: "0.7"},
-			{ExchangeID: 2, Price: "63110.8", Quantity: "0.4"},
-			{ExchangeID: 2, Price: "63130", Quantity: "0.3"},
+			{ExchangeID: 2, Simulation: 1, Price: "63100", Quantity: "1.8"},
+			{ExchangeID: 2, Simulation: 1, Price: "63105", Quantity: "0.7"},
+			{ExchangeID: 2, Simulation: 1, Price: "63110.8", Quantity: "0.4"},
+			{ExchangeID: 2, Simulation: 1, Price: "63130", Quantity: "0.3"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "63099.5", Quantity: "0.95"},
-			{ExchangeID: 2, Price: "63098.2", Quantity: "0.11"},
-			{ExchangeID: 2, Price: "63095", Quantity: "0.9"},
-			{ExchangeID: 2, Price: "63090.4", Quantity: "1.2"},
-			{ExchangeID: 2, Price: "63075", Quantity: "1.1"},
+			{ExchangeID: 2, Simulation: 1, Price: "63099.5", Quantity: "0.95"},
+			{ExchangeID: 2, Simulation: 1, Price: "63098.2", Quantity: "0.11"},
+			{ExchangeID: 2, Simulation: 1, Price: "63095", Quantity: "0.9"},
+			{ExchangeID: 2, Simulation: 1, Price: "63090.4", Quantity: "1.2"},
+			{ExchangeID: 2, Simulation: 1, Price: "63075", Quantity: "1.1"},
 		},
 	},
 }
@@ -717,6 +749,7 @@ var Ex2NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 connect ack
 		`{
+	"simulation": 1,
 	"connect": {
 		"client": "b7e1c2f4-3a5d-4e6f-9a0b-1c2d3e4f5a6b",
 		"version": "5.0.0"
@@ -724,6 +757,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 02 foreign channel
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "trades:BTC_USDT",
 		"pub": {
@@ -740,6 +774,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 03 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000000000,
@@ -758,6 +793,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 04 malformed book
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -772,6 +808,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 05 rest snapshot string event time
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": "2027-01-15T08:00:00Z",
@@ -784,6 +821,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 06 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -806,6 +844,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 07 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -831,6 +870,7 @@ var Ex2NoiseFrames = Scenario{
 		{ // after 03 rest snapshot
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "2.21924167"},
@@ -848,6 +888,7 @@ var Ex2NoiseFrames = Scenario{
 		{ // after 06 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "2.21924167"},
@@ -866,6 +907,7 @@ var Ex2NoiseFrames = Scenario{
 		{ // after 07 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "2.21924167"},
@@ -884,17 +926,17 @@ var Ex2NoiseFrames = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62800", Quantity: "2.21924167"},
-			{ExchangeID: 2, Price: "62805", Quantity: "1.05"},
-			{ExchangeID: 2, Price: "62810.8", Quantity: "0.33476925"},
-			{ExchangeID: 2, Price: "62830", Quantity: "0.3"},
+			{ExchangeID: 2, Simulation: 1, Price: "62800", Quantity: "2.21924167"},
+			{ExchangeID: 2, Simulation: 1, Price: "62805", Quantity: "1.05"},
+			{ExchangeID: 2, Simulation: 1, Price: "62810.8", Quantity: "0.33476925"},
+			{ExchangeID: 2, Simulation: 1, Price: "62830", Quantity: "0.3"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62799.5", Quantity: "0.65"},
-			{ExchangeID: 2, Price: "62798.2", Quantity: "0.02744953"},
-			{ExchangeID: 2, Price: "62795", Quantity: "0.9"},
-			{ExchangeID: 2, Price: "62790.4", Quantity: "1.31062803"},
-			{ExchangeID: 2, Price: "62785", Quantity: "1.1"},
+			{ExchangeID: 2, Simulation: 1, Price: "62799.5", Quantity: "0.65"},
+			{ExchangeID: 2, Simulation: 1, Price: "62798.2", Quantity: "0.02744953"},
+			{ExchangeID: 2, Simulation: 1, Price: "62795", Quantity: "0.9"},
+			{ExchangeID: 2, Simulation: 1, Price: "62790.4", Quantity: "1.31062803"},
+			{ExchangeID: 2, Simulation: 1, Price: "62785", Quantity: "1.1"},
 		},
 	},
 }
@@ -906,6 +948,7 @@ var Ex2StaleRestReplay = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000000000,
@@ -922,6 +965,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -943,6 +987,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 03 ws update loud
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -963,6 +1008,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 04 rest snapshot stale replay
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000000000,
@@ -979,6 +1025,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -1002,6 +1049,7 @@ var Ex2StaleRestReplay = Scenario{
 		{ // after 01 rest snapshot
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -1017,6 +1065,7 @@ var Ex2StaleRestReplay = Scenario{
 		{ // after 02 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -1033,6 +1082,7 @@ var Ex2StaleRestReplay = Scenario{
 		{ // after 03 ws update loud
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -1051,6 +1101,7 @@ var Ex2StaleRestReplay = Scenario{
 		{ // after 05 ws update
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700", Quantity: "2.21924167"},
@@ -1070,17 +1121,17 @@ var Ex2StaleRestReplay = Scenario{
 	WantRejects: []string{"out_of_order"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62700", Quantity: "2.21924167"},
-			{ExchangeID: 2, Price: "62701.3", Quantity: "0.1"},
-			{ExchangeID: 2, Price: "62710.8", Quantity: "0.33476925"},
-			{ExchangeID: 2, Price: "62720", Quantity: "0.4"},
-			{ExchangeID: 2, Price: "62730", Quantity: "0.75"},
+			{ExchangeID: 2, Simulation: 1, Price: "62700", Quantity: "2.21924167"},
+			{ExchangeID: 2, Simulation: 1, Price: "62701.3", Quantity: "0.1"},
+			{ExchangeID: 2, Simulation: 1, Price: "62710.8", Quantity: "0.33476925"},
+			{ExchangeID: 2, Simulation: 1, Price: "62720", Quantity: "0.4"},
+			{ExchangeID: 2, Simulation: 1, Price: "62730", Quantity: "0.75"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62699.5", Quantity: "0.6"},
-			{ExchangeID: 2, Price: "62698.2", Quantity: "0.02744953"},
-			{ExchangeID: 2, Price: "62690.4", Quantity: "1.31062803"},
-			{ExchangeID: 2, Price: "60000", Quantity: "5"},
+			{ExchangeID: 2, Simulation: 1, Price: "62699.5", Quantity: "0.6"},
+			{ExchangeID: 2, Simulation: 1, Price: "62698.2", Quantity: "0.02744953"},
+			{ExchangeID: 2, Simulation: 1, Price: "62690.4", Quantity: "1.31062803"},
+			{ExchangeID: 2, Simulation: 1, Price: "60000", Quantity: "5"},
 		},
 	},
 }
@@ -1095,6 +1146,7 @@ var Ex2PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
 	"event_time": 1800000000000,
@@ -1110,6 +1162,7 @@ var Ex2PrecisionDust = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
 		"pub": {
@@ -1135,6 +1188,7 @@ var Ex2PrecisionDust = Scenario{
 		{ // after 01 rest snapshot — .117 and .119 merged at .11, the dust ask never rested
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62700.11", Quantity: "0.5"},
@@ -1147,6 +1201,7 @@ var Ex2PrecisionDust = Scenario{
 		{ // after 02 ws update — dust deleted the resting ask, and the merged bid replaced it
 			ExchangeID: 2,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62705.99", Quantity: "0.6"},
@@ -1159,11 +1214,11 @@ var Ex2PrecisionDust = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62705.99", Quantity: "0.6"},
+			{ExchangeID: 2, Simulation: 1, Price: "62705.99", Quantity: "0.6"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 2, Price: "62699.99", Quantity: "1"},
-			{ExchangeID: 2, Price: "62698.25", Quantity: "0.5"},
+			{ExchangeID: 2, Simulation: 1, Price: "62699.99", Quantity: "1"},
+			{ExchangeID: 2, Simulation: 1, Price: "62698.25", Quantity: "0.5"},
 		},
 	},
 }

@@ -26,6 +26,12 @@
 						}
 					},
 					{
+						"name": "simulation",
+						"type": "int",
+						"default": 0,
+						"doc": "Carried from the raw event that was rejected. 0 = live, 1 = simulation."
+					},
+					{
 						"name": "sequence_id",
 						"type": ["null", "long"],
 						"default": null

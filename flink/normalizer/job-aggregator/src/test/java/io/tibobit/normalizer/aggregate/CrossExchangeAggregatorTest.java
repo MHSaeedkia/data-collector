@@ -51,8 +51,13 @@ class CrossExchangeAggregatorTest {
 
     // ---- helpers ----------------------------------------------------------------
 
+    /** A live (simulation 0) level — the default for every case that isn't about the flag. */
     private static AggregatedLevel lvl(int exchangeId, String price, String qty) {
-        return new AggregatedLevel(exchangeId, price, qty);
+        return new AggregatedLevel(exchangeId, 0, price, qty);
+    }
+
+    private static AggregatedLevel simLvl(int exchangeId, int simulation, String price, String qty) {
+        return new AggregatedLevel(exchangeId, simulation, price, qty);
     }
 
     private static ExchangeBook book(int exchangeId, String side, long eventTime,
@@ -170,6 +175,24 @@ class CrossExchangeAggregatorTest {
                 .extracting(AggregatedLevel::getExchangeId, AggregatedLevel::getPrice)
                 .containsExactly(tuple(1, "100")); // only ex1 remains
         assertThat(lastBook().getEventTime()).isEqualTo(200); // ex2's event_time still counts
+    }
+
+    // ---- simulation flag --------------------------------------------------------
+
+    @Test
+    @DisplayName("each level keeps its own exchange's simulation flag through the union and sort")
+    void simulationIsPerLevelNotPerBook() throws Exception {
+        send(book(1, "asks", 100, simLvl(1, 1, "101", "1")));   // simulated exchange
+        send(book(2, "asks", 100, simLvl(2, 0, "100", "1")));   // live exchange
+
+        // Sorted together into one record, but the flag stays attached to the level it came with —
+        // there is no book-level simulation, because a book mixes exchanges.
+        assertThat(lastLevels())
+                .extracting(AggregatedLevel::getExchangeId, AggregatedLevel::getSimulation,
+                        AggregatedLevel::getPrice)
+                .containsExactly(
+                        tuple(2, 0, "100"),
+                        tuple(1, 1, "101"));
     }
 
     // ---- routing fields ---------------------------------------------------------

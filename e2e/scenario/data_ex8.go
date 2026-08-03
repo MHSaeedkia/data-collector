@@ -13,6 +13,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	Sources: []string{
 		// 01 update no baseline
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -32,6 +33,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 }`,
 		// 02 snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -60,6 +62,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 }`,
 		// 03 update
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -86,6 +89,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 		{ // after 02 snapshot
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62770", Quantity: "2.21924167"},
@@ -105,6 +109,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 		{ // after 03 update
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62770", Quantity: "2.21924167"},
@@ -126,19 +131,19 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	WantRejects: []string{"no_baseline"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62770", Quantity: "2.21924167"},
-			{ExchangeID: 8, Price: "62771", Quantity: "0.29045069"},
-			{ExchangeID: 8, Price: "62775", Quantity: "1.05"},
-			{ExchangeID: 8, Price: "62780", Quantity: "0.33476925"},
-			{ExchangeID: 8, Price: "62790", Quantity: "0.4"},
+			{ExchangeID: 8, Simulation: 1, Price: "62770", Quantity: "2.21924167"},
+			{ExchangeID: 8, Simulation: 1, Price: "62771", Quantity: "0.29045069"},
+			{ExchangeID: 8, Simulation: 1, Price: "62775", Quantity: "1.05"},
+			{ExchangeID: 8, Simulation: 1, Price: "62780", Quantity: "0.33476925"},
+			{ExchangeID: 8, Simulation: 1, Price: "62790", Quantity: "0.4"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62769", Quantity: "0.55175335"},
-			{ExchangeID: 8, Price: "62768", Quantity: "0.02744953"},
-			{ExchangeID: 8, Price: "62767", Quantity: "0.20630833"},
-			{ExchangeID: 8, Price: "62765", Quantity: "0.9"},
-			{ExchangeID: 8, Price: "62760", Quantity: "1.31062803"},
-			{ExchangeID: 8, Price: "62758", Quantity: "1.1"},
+			{ExchangeID: 8, Simulation: 1, Price: "62769", Quantity: "0.55175335"},
+			{ExchangeID: 8, Simulation: 1, Price: "62768", Quantity: "0.02744953"},
+			{ExchangeID: 8, Simulation: 1, Price: "62767", Quantity: "0.20630833"},
+			{ExchangeID: 8, Simulation: 1, Price: "62765", Quantity: "0.9"},
+			{ExchangeID: 8, Simulation: 1, Price: "62760", Quantity: "1.31062803"},
+			{ExchangeID: 8, Simulation: 1, Price: "62758", Quantity: "1.1"},
 		},
 	},
 }
@@ -150,6 +155,7 @@ var Ex8HappyPath = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -178,6 +184,7 @@ var Ex8HappyPath = Scenario{
 }`,
 		// 02 update modify add delete
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -198,6 +205,7 @@ var Ex8HappyPath = Scenario{
 }`,
 		// 03 update delete bid
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -217,6 +225,7 @@ var Ex8HappyPath = Scenario{
 }`,
 		// 04 update asks only
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -238,6 +247,7 @@ var Ex8HappyPath = Scenario{
 		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "1.5"},
@@ -257,6 +267,7 @@ var Ex8HappyPath = Scenario{
 		{ // after 02 update modify add delete
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "1"},
@@ -276,6 +287,7 @@ var Ex8HappyPath = Scenario{
 		{ // after 03 update delete bid
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "1"},
@@ -296,6 +308,7 @@ var Ex8HappyPath = Scenario{
 		{ // after 04 update asks only
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "0.9"},
@@ -315,18 +328,18 @@ var Ex8HappyPath = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62800", Quantity: "0.9"},
-			{ExchangeID: 8, Price: "62801", Quantity: "0.85"},
-			{ExchangeID: 8, Price: "62803", Quantity: "0.33"},
-			{ExchangeID: 8, Price: "62805", Quantity: "0.4"},
-			{ExchangeID: 8, Price: "62807", Quantity: "0.7"},
+			{ExchangeID: 8, Simulation: 1, Price: "62800", Quantity: "0.9"},
+			{ExchangeID: 8, Simulation: 1, Price: "62801", Quantity: "0.85"},
+			{ExchangeID: 8, Simulation: 1, Price: "62803", Quantity: "0.33"},
+			{ExchangeID: 8, Simulation: 1, Price: "62805", Quantity: "0.4"},
+			{ExchangeID: 8, Simulation: 1, Price: "62807", Quantity: "0.7"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62799", Quantity: "1.45"},
-			{ExchangeID: 8, Price: "62795", Quantity: "2.4"},
-			{ExchangeID: 8, Price: "62790", Quantity: "0.95"},
-			{ExchangeID: 8, Price: "62785", Quantity: "4"},
-			{ExchangeID: 8, Price: "62780", Quantity: "5.5"},
+			{ExchangeID: 8, Simulation: 1, Price: "62799", Quantity: "1.45"},
+			{ExchangeID: 8, Simulation: 1, Price: "62795", Quantity: "2.4"},
+			{ExchangeID: 8, Simulation: 1, Price: "62790", Quantity: "0.95"},
+			{ExchangeID: 8, Simulation: 1, Price: "62785", Quantity: "4"},
+			{ExchangeID: 8, Simulation: 1, Price: "62780", Quantity: "5.5"},
 		},
 	},
 }
@@ -338,6 +351,7 @@ var Ex8SequenceGap = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -366,6 +380,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 02 update ok
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -382,6 +397,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 03 update gap
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -398,6 +414,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 04 update awaiting snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -414,6 +431,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 05 snapshot resync
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -438,6 +456,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 06 update ok
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -457,6 +476,7 @@ var Ex8SequenceGap = Scenario{
 		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "1.5"},
@@ -476,6 +496,7 @@ var Ex8SequenceGap = Scenario{
 		{ // after 02 update ok
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "1.5"},
@@ -495,6 +516,7 @@ var Ex8SequenceGap = Scenario{
 		{ // after 03 update gap (reset)
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
@@ -502,6 +524,7 @@ var Ex8SequenceGap = Scenario{
 		{ // after 05 snapshot resync
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "63000", Quantity: "2"},
@@ -517,6 +540,7 @@ var Ex8SequenceGap = Scenario{
 		{ // after 06 update ok
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "63000", Quantity: "2"},
@@ -533,14 +557,14 @@ var Ex8SequenceGap = Scenario{
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "63000", Quantity: "2"},
-			{ExchangeID: 8, Price: "63010", Quantity: "0.9"},
-			{ExchangeID: 8, Price: "63020", Quantity: "0.75"},
+			{ExchangeID: 8, Simulation: 1, Price: "63000", Quantity: "2"},
+			{ExchangeID: 8, Simulation: 1, Price: "63010", Quantity: "0.9"},
+			{ExchangeID: 8, Simulation: 1, Price: "63020", Quantity: "0.75"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62990", Quantity: "2"},
-			{ExchangeID: 8, Price: "62980", Quantity: "2.5"},
-			{ExchangeID: 8, Price: "62970", Quantity: "3.3"},
+			{ExchangeID: 8, Simulation: 1, Price: "62990", Quantity: "2"},
+			{ExchangeID: 8, Simulation: 1, Price: "62980", Quantity: "2.5"},
+			{ExchangeID: 8, Simulation: 1, Price: "62970", Quantity: "3.3"},
 		},
 	},
 }
@@ -552,6 +576,7 @@ var Ex8StaleDuplicate = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -576,6 +601,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 02 update ok
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -592,6 +618,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 03 update replay duplicate
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -608,6 +635,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 04 snapshot out of order
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -624,6 +652,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 05 snapshot ok
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -651,6 +680,7 @@ var Ex8StaleDuplicate = Scenario{
 		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "63000", Quantity: "2"},
@@ -666,6 +696,7 @@ var Ex8StaleDuplicate = Scenario{
 		{ // after 02 update ok
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "63000", Quantity: "1.75"},
@@ -681,6 +712,7 @@ var Ex8StaleDuplicate = Scenario{
 		{ // after 05 snapshot ok
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "63005", Quantity: "1.25"},
@@ -697,14 +729,14 @@ var Ex8StaleDuplicate = Scenario{
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "63005", Quantity: "1.25"},
-			{ExchangeID: 8, Price: "63015", Quantity: "2.4"},
-			{ExchangeID: 8, Price: "63025", Quantity: "0.6"},
+			{ExchangeID: 8, Simulation: 1, Price: "63005", Quantity: "1.25"},
+			{ExchangeID: 8, Simulation: 1, Price: "63015", Quantity: "2.4"},
+			{ExchangeID: 8, Simulation: 1, Price: "63025", Quantity: "0.6"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62995", Quantity: "1.9"},
-			{ExchangeID: 8, Price: "62985", Quantity: "2.2"},
-			{ExchangeID: 8, Price: "62975", Quantity: "4.1"},
+			{ExchangeID: 8, Simulation: 1, Price: "62995", Quantity: "1.9"},
+			{ExchangeID: 8, Simulation: 1, Price: "62985", Quantity: "2.2"},
+			{ExchangeID: 8, Simulation: 1, Price: "62975", Quantity: "4.1"},
 		},
 	},
 }
@@ -716,6 +748,7 @@ var Ex8PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -746,6 +779,7 @@ var Ex8PrecisionDust = Scenario{
 }`,
 		// 02 update dust delete
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -769,6 +803,7 @@ var Ex8PrecisionDust = Scenario{
 		{ // after 01 snapshot
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62900.12", Quantity: "5.12345679"},
@@ -786,6 +821,7 @@ var Ex8PrecisionDust = Scenario{
 		{ // after 02 update dust delete
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62900.12", Quantity: "5.12345679"},
@@ -802,15 +838,15 @@ var Ex8PrecisionDust = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62900.12", Quantity: "5.12345679"},
-			{ExchangeID: 8, Price: "62902.99", Quantity: "4"},
-			{ExchangeID: 8, Price: "62906.12", Quantity: "0.00000001"},
-			{ExchangeID: 8, Price: "62910.25", Quantity: "7.5"},
+			{ExchangeID: 8, Simulation: 1, Price: "62900.12", Quantity: "5.12345679"},
+			{ExchangeID: 8, Simulation: 1, Price: "62902.99", Quantity: "4"},
+			{ExchangeID: 8, Simulation: 1, Price: "62906.12", Quantity: "0.00000001"},
+			{ExchangeID: 8, Simulation: 1, Price: "62910.25", Quantity: "7.5"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62899.05", Quantity: "6.98765432"},
-			{ExchangeID: 8, Price: "62898.99", Quantity: "7.25"},
-			{ExchangeID: 8, Price: "62895.44", Quantity: "9"},
+			{ExchangeID: 8, Simulation: 1, Price: "62899.05", Quantity: "6.98765432"},
+			{ExchangeID: 8, Simulation: 1, Price: "62898.99", Quantity: "7.25"},
+			{ExchangeID: 8, Simulation: 1, Price: "62895.44", Quantity: "9"},
 		},
 	},
 }
@@ -822,6 +858,7 @@ var Ex8NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 subscribe ack
 		`{
+	"simulation": 1,
 	"event": "subscribe",
 	"arg": {
 		"channel": "books-grouped",
@@ -832,6 +869,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 02 error frame
 		`{
+	"simulation": 1,
 	"event": "error",
 	"code": "60012",
 	"msg": "Invalid request: unknown channel",
@@ -839,6 +877,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 03 snapshot
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -863,6 +902,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 04 unknown action
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -879,6 +919,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 05 other channel
 		`{
+	"simulation": 1,
 	"arg": { "channel": "trades", "instId": "BTC-USDT" },
 	"data": [
 		{
@@ -893,6 +934,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 06 update
 		`{
+	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
 		"instId": "BTC-USDT",
@@ -915,6 +957,7 @@ var Ex8NoiseFrames = Scenario{
 		{ // after 03 snapshot
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62950", Quantity: "1.2"},
@@ -930,6 +973,7 @@ var Ex8NoiseFrames = Scenario{
 		{ // after 06 update
 			ExchangeID: 8,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62950", Quantity: "1.2"},
@@ -945,14 +989,14 @@ var Ex8NoiseFrames = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62950", Quantity: "1.2"},
-			{ExchangeID: 8, Price: "62960", Quantity: "2.4"},
-			{ExchangeID: 8, Price: "62970", Quantity: "0.6"},
+			{ExchangeID: 8, Simulation: 1, Price: "62950", Quantity: "1.2"},
+			{ExchangeID: 8, Simulation: 1, Price: "62960", Quantity: "2.4"},
+			{ExchangeID: 8, Simulation: 1, Price: "62970", Quantity: "0.6"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 8, Price: "62945", Quantity: "1.65"},
-			{ExchangeID: 8, Price: "62940", Quantity: "3.1"},
-			{ExchangeID: 8, Price: "62935", Quantity: "0.9"},
+			{ExchangeID: 8, Simulation: 1, Price: "62945", Quantity: "1.65"},
+			{ExchangeID: 8, Simulation: 1, Price: "62940", Quantity: "3.1"},
+			{ExchangeID: 8, Simulation: 1, Price: "62935", Quantity: "0.9"},
 		},
 	},
 }

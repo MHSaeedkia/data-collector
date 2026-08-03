@@ -134,6 +134,7 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 	var wire struct {
 		ExchangeID int64               `json:"exchange_id"`
 		PairID     int64               `json:"pair_id"`
+		Simulation int64               `json:"simulation"`
 		EventTime  int64               `json:"event_time"`
 		Asks       []events.PriceLevel `json:"asks"`
 		Bids       []events.PriceLevel `json:"bids"`
@@ -145,6 +146,7 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 	return events.OrderbookSnapshot{
 		ExchangeID: wire.ExchangeID,
 		PairID:     wire.PairID,
+		Simulation: wire.Simulation,
 		EventTime:  time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
 		Asks:       wire.Asks,
 		Bids:       wire.Bids,

@@ -14,6 +14,9 @@ import java.util.List;
  *       the type validator passes such events through unchecked.</li>
  *   <li>{@code sequenceJump}: &gt;0 = delta feed, gap rule {@code seq == last + jump}
  *       (ex6=1, ex8=300); 0 = snapshot feed — out-of-order check only.</li>
+ *   <li>{@code simulation}: NiFi's flag from the raw payload — 0 = live, 1 = simulation, other
+ *       values undefined, absent = 0. Set by job 1 and carried unchanged by jobs 2–4. It is NOT
+ *       part of any keying or validation rule; it only rides along.</li>
  * </ul>
  */
 public class RawOrderBookEvent {
@@ -21,6 +24,7 @@ public class RawOrderBookEvent {
     private int exchangeId;
     private int pairId;
     private String type;
+    private int simulation;
     private Long sequenceId;
     private long sequenceJump;
     private long eventTime;
@@ -66,6 +70,14 @@ public class RawOrderBookEvent {
 
     public void setType(String type) {
         this.type = type;
+    }
+
+    public int getSimulation() {
+        return simulation;
+    }
+
+    public void setSimulation(int simulation) {
+        this.simulation = simulation;
     }
 
     public Long getSequenceId() {

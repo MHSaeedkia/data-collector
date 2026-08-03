@@ -92,3 +92,5 @@ field-for-field identical). `PipelineTimings` is duplicated field-for-field acro
 same identical-redefinition rule as `PriceLevel`/`Type`.
 
 [[kafka-topic-strategy]]
+
+**2026-08-03 — `simulation` (int, default 0) added to ALL FOUR schemas** (`AggregatedLevel` gets it per level, not per record). Same re-registration trap as `pipeline_timings`: a stale registered subject makes the Avro sink throw. See [[simulation-flag]].

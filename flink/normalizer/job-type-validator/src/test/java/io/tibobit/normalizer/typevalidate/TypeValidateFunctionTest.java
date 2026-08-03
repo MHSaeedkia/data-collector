@@ -228,6 +228,40 @@ class TypeValidateFunctionTest {
                         TypeValidateFunction.AWAITING_SNAPSHOT);
     }
 
+    // ---- simulation flag ---------------------------------------------------------
+
+    @Test
+    @DisplayName("a passed-through event keeps its simulation flag")
+    void validEventKeepsSimulationFlag() throws Exception {
+        RawOrderBookEvent simulated = delta(6, 1, "snapshot", 10L, 1L);
+        simulated.setSimulation(1);
+
+        send(simulated);
+
+        assertThat(valid()).singleElement()
+                .extracting(RawOrderBookEvent::getSimulation).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("the synthetic reset marker inherits the gap event's simulation flag")
+    void resetMarkerInheritsSimulationFlag() throws Exception {
+        RawOrderBookEvent seed = delta(6, 1, "snapshot", 10L, 1L);
+        seed.setSimulation(1);
+        send(seed);
+
+        RawOrderBookEvent gap = delta(6, 1, "update", 15L, 1L); // gap -> reset
+        gap.setSimulation(1);
+        send(gap);
+
+        // The marker is built fresh rather than forwarded, so without this the reset that empties a
+        // simulated exchange's book would come out flagged as live data.
+        RawOrderBookEvent reset = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(reset.getSimulation()).isEqualTo(1);
+    }
+
     // ---- ex1 nobitex: null-seq REST snapshot resyncs the WS delta stream ---------
 
     @Test

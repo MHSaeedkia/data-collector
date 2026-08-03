@@ -35,6 +35,12 @@
 							"type": "int"
 						},
 						{
+							"name": "simulation",
+							"type": "int",
+							"default": 0,
+							"doc": "The contributing exchange's simulation flag, per level: the union is across exchanges, so a level carries the flag of the book it came from. 0 = live, 1 = simulation."
+						},
+						{
 							"name": "price",
 							"type": "string"
 						},

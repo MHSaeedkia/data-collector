@@ -122,3 +122,5 @@ Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نام
 
 `cd web && go run .` → http://localhost:3000  (or `go build -o orderbook-web . && ./orderbook-web`)
 Docker: `docker compose up -d --build web`.
+
+**2026-08-03 — `simulation` plumbed through** `wireLevel` → `domain.RawLevel` → `domain.Level` → the WebSocket JSON the browser receives. **Not rendered in the UI** — the data reaches the client, displaying it was not in scope. See [[simulation-flag]].

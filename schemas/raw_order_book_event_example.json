@@ -2,6 +2,7 @@
 	"exchange_id": 6,
 	"pair_id": 1,
 	"type": "update",
+	"simulation": 0,
 	"sequence_id": 126776812,
 	"sequence_jump": 1,
 	"event_time": "2026-07-14T06:23:25.123Z",

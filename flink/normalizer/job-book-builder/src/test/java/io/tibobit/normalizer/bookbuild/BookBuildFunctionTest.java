@@ -239,6 +239,53 @@ class BookBuildFunctionTest {
                 .isGreaterThanOrEqualTo(out.getPipelineTimings().getBookBuildIn());
     }
 
+    // ---- simulation flag ---------------------------------------------------------
+
+    @Test
+    @DisplayName("the emitted book carries the producing event's simulation flag")
+    void carriesSimulationFlag() throws Exception {
+        RawOrderBookEvent simulated = event("snapshot", levels("10", "1"), levels("9", "3"));
+        simulated.setSimulation(1);
+
+        assertThat(process(simulated).getSimulation()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("an unflagged event emits a live (0) book")
+    void defaultsToLive() throws Exception {
+        assertThat(process(event("snapshot", levels("10", "1"), List.of())).getSimulation())
+                .isZero();
+    }
+
+    @Test
+    @DisplayName("the flag follows the latest event, it is not sticky book state")
+    void flagFollowsLatestEvent() throws Exception {
+        RawOrderBookEvent simulated = event("snapshot", levels("10", "1"), List.of());
+        simulated.setSimulation(1);
+        assertThat(process(simulated).getSimulation()).isEqualTo(1);
+
+        // The book is unchanged state, but the flag is a property of the feed, not of the levels.
+        assertThat(process(event("update", levels("11", "2"), List.of())).getSimulation()).isZero();
+    }
+
+    @Test
+    @DisplayName("a reset empties the book and still reports the reset event's flag")
+    void resetKeepsFlag() throws Exception {
+        RawOrderBookEvent simulated = event("snapshot", levels("10", "1"), levels("9", "3"));
+        simulated.setSimulation(1);
+        process(simulated);
+
+        RawOrderBookEvent reset = event("reset", null, null, null);
+        reset.setSimulation(1);
+        OrderBookSnapshot out = process(reset);
+
+        assertThat(out.getAsks()).isEmpty();
+        assertThat(out.getBids()).isEmpty();
+        // Job 6 drops the exchange on an empty book — but while it is still in flight the record
+        // must not claim to be live data.
+        assertThat(out.getSimulation()).isEqualTo(1);
+    }
+
     // ---- keying ------------------------------------------------------------------
 
     @Test

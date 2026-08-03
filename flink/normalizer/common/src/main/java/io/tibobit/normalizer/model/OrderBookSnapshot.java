@@ -7,11 +7,17 @@ import java.util.List;
  * event (schema schemas/order_book_snapshot.avsc, subject order-book-snapshot). Both sides are
  * required here — a built book always has both, possibly empty. {@code lastSequenceId} is null
  * only for feeds with no ordering field (ex3 wallex).
+ *
+ * <p>{@code simulation} is NiFi's flag carried up the pipeline (0 = live, 1 = simulation). The book
+ * is state built from many events, so the emitted snapshot carries the flag of the LAST accepted
+ * event for this (exchange, pair) — in practice a feed does not switch mid-stream. Job 6 stamps it
+ * onto every level so the aggregated book stays attributable per exchange.
  */
 public class OrderBookSnapshot {
 
     private int exchangeId;
     private int pairId;
+    private int simulation;
     private long eventTime;
     private Long lastSequenceId;
     private List<PriceLevel> asks;
@@ -45,6 +51,14 @@ public class OrderBookSnapshot {
 
     public void setPairId(int pairId) {
         this.pairId = pairId;
+    }
+
+    public int getSimulation() {
+        return simulation;
+    }
+
+    public void setSimulation(int simulation) {
+        this.simulation = simulation;
     }
 
     public long getEventTime() {

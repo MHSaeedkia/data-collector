@@ -5,11 +5,13 @@
 	"levels": [
 		{
 			"exchange_id": 1,
+			"simulation": 0,
 			"price": "97240.5",
 			"quantity": "0.42"
 		},
 		{
 			"exchange_id": 2,
+			"simulation": 1,
 			"price": "97240.5",
 			"quantity": "0.10"
 		}

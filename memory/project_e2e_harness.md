@@ -450,3 +450,5 @@ arrays that anyone would have to fill in from `data_ex*.go` first.
   `DisallowUnknownFields` + `validate` — to exactly `Ex1PrecisionDust`, 2 sources / 2 wanted
   snapshots on ex1/p1. **Not** verified: that Swagger UI's JS actually renders it into the textarea
   (that needs a browser), nor that the scenario passes against a live stack — no scenario ever has.
+
+**2026-08-03 — every example now sets `simulation: 1`** (user instruction): 177 source payloads, 125 `WantSnapshots`, 215 `WantAggregated` levels, plus `Simulation` on `events.OrderbookSnapshot`/`events.AggregatedLevel` and `stampExchange`. So a job that drops the flag fails e2e immediately. One ex3 case was re-pointed: its "a third element the envelope does not have" negative test is now a FOURTH element, since three is the real shape. `swag init` rerun. See [[simulation-flag]].

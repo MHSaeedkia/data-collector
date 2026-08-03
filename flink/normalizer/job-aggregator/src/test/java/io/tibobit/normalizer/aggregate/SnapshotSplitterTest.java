@@ -64,6 +64,32 @@ class SnapshotSplitterTest {
     }
 
     @Test
+    @DisplayName("the snapshot's simulation flag is stamped onto every level of both sides")
+    void stampsSimulationOnEveryLevel() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
+                8, 1, 1_700_000_000_000L, 42L,
+                levels("100", "1", "101", "2"), levels("99", "3"));
+        snapshot.setSimulation(1);
+
+        List<ExchangeBook> out = split(snapshot);
+
+        assertThat(out).flatExtracting(ExchangeBook::getLevels)
+                .extracting(AggregatedLevel::getSimulation)
+                .containsOnly(1);
+    }
+
+    @Test
+    @DisplayName("an unflagged snapshot leaves every level at 0 (live data)")
+    void defaultsSimulationToZero() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
+                3, 1, 1_700_000_000_000L, null, levels("100", "1"), levels("99", "1"));
+
+        assertThat(split(snapshot)).flatExtracting(ExchangeBook::getLevels)
+                .extracting(AggregatedLevel::getSimulation)
+                .containsOnly(0);
+    }
+
+    @Test
     @DisplayName("an empty book (reset) yields two empty ExchangeBooks so the exchange drops out")
     void emptyBookYieldsEmptySides() {
         OrderBookSnapshot reset = new OrderBookSnapshot(

@@ -63,3 +63,5 @@ from BOTH sides (the milestone's core check)**; snapshot re-sync ⇒ ex8 returns
 the `"reset"` enum symbol being registered AND the jobs resubmitted** ([[type-validator]] live-bug
 note) — otherwise job 2 NPEs and no p1 event arrives. Written + syntax-checked 2026-07-22; **NOT run
 live yet.**
+
+**2026-08-03 — `AggregatedLevel` is now `exchange_id, simulation, price, quantity`.** The flag is per LEVEL because the union mixes exchanges, so a record-level flag would be a lie; `SnapshotSplitter` stamps it from each snapshot. See [[simulation-flag]].

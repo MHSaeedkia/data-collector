@@ -30,6 +30,7 @@ const aggregatedOrderBookEventSchema = `{
 			"name": "AggregatedLevel",
 			"fields": [
 				{"name": "exchange_id", "type": "int"},
+				{"name": "simulation", "type": "int", "default": 0},
 				{"name": "price", "type": "string"},
 				{"name": "quantity", "type": "string"}
 			]
@@ -74,7 +75,7 @@ func TestDecoder_Decode_ValidMessageAndCachesSchema(t *testing.T) {
 		PairID:    1,
 		Side:      "asks",
 		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
-		Levels:    []wireLevel{{ExchangeID: 3, Price: "97240.50", Quantity: "0.42"}},
+		Levels:    []wireLevel{{ExchangeID: 3, Simulation: 1, Price: "97240.50", Quantity: "0.42"}},
 	})
 
 	rb, err := dec.Decode(value)
@@ -84,6 +85,7 @@ func TestDecoder_Decode_ValidMessageAndCachesSchema(t *testing.T) {
 	assert.Equal(t, int64(1_700_000_000_000), rb.EventTime)
 	require.Len(t, rb.Levels, 1)
 	assert.Equal(t, 3, rb.Levels[0].ExchangeID)
+	assert.Equal(t, 1, rb.Levels[0].Simulation)
 	assert.Equal(t, "97240.50", rb.Levels[0].Price)
 	assert.Equal(t, "0.42", rb.Levels[0].Quantity)
 
@@ -122,6 +124,30 @@ func TestDecoder_Decode_SchemaRegistryUnreachableReturnsError(t *testing.T) {
 	_, err := dec.Decode(header)
 
 	assert.Error(t, err)
+}
+
+// The aggregator unions across exchanges, so one record can carry levels from a
+// live exchange and a simulated one at the same time. The flag must stay
+// attached to the level it arrived on, never collapse to a per-record value.
+func TestDecoder_Decode_SimulationIsPerLevel(t *testing.T) {
+	registryURL, _ := newTestRegistry(t, 2)
+	dec := NewDecoder(registryURL)
+
+	value := wireMessage(t, 2, wireEvent{
+		PairID:    1,
+		Side:      "asks",
+		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
+		Levels: []wireLevel{
+			{ExchangeID: 3, Simulation: 0, Price: "100", Quantity: "1"},
+			{ExchangeID: 6, Simulation: 1, Price: "100", Quantity: "2"},
+		},
+	})
+
+	rb, err := dec.Decode(value)
+	require.NoError(t, err)
+	require.Len(t, rb.Levels, 2)
+	assert.Equal(t, 0, rb.Levels[0].Simulation)
+	assert.Equal(t, 1, rb.Levels[1].Simulation)
 }
 
 func mustQuoteJSON(s string) string {

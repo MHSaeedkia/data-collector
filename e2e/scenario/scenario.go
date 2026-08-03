@@ -200,19 +200,20 @@ func (s Scenario) wantAggregated() AggregatedBook {
 	}
 	last := s.WantSnapshots[len(s.WantSnapshots)-1]
 	return AggregatedBook{
-		Asks: stampExchange(s.ExchangeID, last.Asks),
-		Bids: stampExchange(s.ExchangeID, last.Bids),
+		Asks: stampExchange(s.ExchangeID, last.Simulation, last.Asks),
+		Bids: stampExchange(s.ExchangeID, last.Simulation, last.Bids),
 	}
 }
 
 // stampExchange rewrites one side of a book-builder snapshot in the aggregated
 // form: the same levels in the same order, each tagged with the exchange it
-// came from.
-func stampExchange(exchangeID int64, levels []events.PriceLevel) []events.AggregatedLevel {
+// came from and that book's simulation flag.
+func stampExchange(exchangeID, simulation int64, levels []events.PriceLevel) []events.AggregatedLevel {
 	stamped := make([]events.AggregatedLevel, 0, len(levels))
 	for _, level := range levels {
 		stamped = append(stamped, events.AggregatedLevel{
 			ExchangeID: exchangeID,
+			Simulation: simulation,
 			Price:      level.Price,
 			Quantity:   level.Quantity,
 		})

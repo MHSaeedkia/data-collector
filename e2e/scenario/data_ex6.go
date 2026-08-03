@@ -30,6 +30,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
 	"type": "snapshot",
@@ -44,6 +45,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 }`,
 		// 02 delta — an existing ask is re-quoted, a brand-new bid appears
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
 	"type": "delta",
@@ -58,6 +60,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 }`,
 		// 03 delta — quantity "0" deletes on both sides, and 62725 is inserted
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
 	"type": "delta",
@@ -75,6 +78,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 		{ // after 01
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62724.2", Quantity: "0.529827"},
@@ -90,6 +94,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 		{ // after 02 — a delta merges, it does not replace
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62724.2", Quantity: "0.529037"},
@@ -106,6 +111,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 		{ // after 03 — 62724.3 and 62722.6 removed, 62725 inserted
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62724.2", Quantity: "0.529037"},
@@ -121,14 +127,14 @@ var Ex6SnapshotThenDeltas = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 6, Price: "62724.2", Quantity: "0.529037"},
-			{ExchangeID: 6, Price: "62724.4", Quantity: "0.029554"},
-			{ExchangeID: 6, Price: "62725", Quantity: "0.75"},
+			{ExchangeID: 6, Simulation: 1, Price: "62724.2", Quantity: "0.529037"},
+			{ExchangeID: 6, Simulation: 1, Price: "62724.4", Quantity: "0.029554"},
+			{ExchangeID: 6, Simulation: 1, Price: "62725", Quantity: "0.75"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 6, Price: "62724.1", Quantity: "0.407233"},
-			{ExchangeID: 6, Price: "62723.6", Quantity: "0.00012"},
-			{ExchangeID: 6, Price: "62709.4", Quantity: "0.096404"},
+			{ExchangeID: 6, Simulation: 1, Price: "62724.1", Quantity: "0.407233"},
+			{ExchangeID: 6, Simulation: 1, Price: "62723.6", Quantity: "0.00012"},
+			{ExchangeID: 6, Simulation: 1, Price: "62709.4", Quantity: "0.096404"},
 		},
 	},
 }
@@ -142,6 +148,7 @@ var Ex6OneSidedDelta = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
 	"type": "snapshot",
@@ -156,6 +163,7 @@ var Ex6OneSidedDelta = Scenario{
 }`,
 		// 02 delta, asks only — no "b" key at all
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
 	"type": "delta",
@@ -169,6 +177,7 @@ var Ex6OneSidedDelta = Scenario{
 }`,
 		// 03 delta, bids only — deletes 62799, says nothing about the asks
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
 	"type": "delta",
@@ -182,6 +191,7 @@ var Ex6OneSidedDelta = Scenario{
 }`,
 		// 04 snapshot, asks only — a wholesale replace of one side, the other untouched
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000003006,
 	"type": "snapshot",
@@ -198,6 +208,7 @@ var Ex6OneSidedDelta = Scenario{
 		{ // after 01
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "1"},
@@ -211,6 +222,7 @@ var Ex6OneSidedDelta = Scenario{
 		{ // after 02 — bids untouched by an asks-only delta
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "0.5"},
@@ -224,6 +236,7 @@ var Ex6OneSidedDelta = Scenario{
 		{ // after 03 — asks untouched by a bids-only delta
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
 				{Price: "62800", Quantity: "0.5"},
@@ -236,6 +249,7 @@ var Ex6OneSidedDelta = Scenario{
 		{ // after 04 — the asks were replaced wholesale, the unreported bids survived
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
 			Asks: []events.PriceLevel{
 				{Price: "62810", Quantity: "1.5"},
@@ -246,8 +260,8 @@ var Ex6OneSidedDelta = Scenario{
 		},
 	},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 6, Price: "62810", Quantity: "1.5"}},
-		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62798", Quantity: "4"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62810", Quantity: "1.5"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62798", Quantity: "4"}},
 	},
 }
 
@@ -261,6 +275,7 @@ var Ex6SequenceGap = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
 	"type": "snapshot",
@@ -275,6 +290,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 02 delta, contiguous
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
 	"type": "delta",
@@ -289,6 +305,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 03 delta, u jumps 301 -> 305
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
 	"type": "delta",
@@ -303,6 +320,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 04 delta while still waiting for a re-sync
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000003006,
 	"type": "delta",
@@ -317,6 +335,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 05 snapshot — re-sync, on a fresh sequence
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000004006,
 	"type": "snapshot",
@@ -331,6 +350,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 06 delta, contiguous again
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000005006,
 	"type": "delta",
@@ -347,6 +367,7 @@ var Ex6SequenceGap = Scenario{
 		{ // after 01
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62900", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62899", Quantity: "2"}},
@@ -354,6 +375,7 @@ var Ex6SequenceGap = Scenario{
 		{ // after 02
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62900", Quantity: "1"},
@@ -368,6 +390,7 @@ var Ex6SequenceGap = Scenario{
 			// 03's own levels never reached the book; it was dead-lettered.
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
@@ -375,6 +398,7 @@ var Ex6SequenceGap = Scenario{
 		{ // after 05 — 04 was rejected, so the book is exactly the re-sync snapshot
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:04Z",
 			Asks:       []events.PriceLevel{{Price: "62910", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62909", Quantity: "2"}},
@@ -382,6 +406,7 @@ var Ex6SequenceGap = Scenario{
 		{ // after 06 — contiguity resumed from the snapshot's u
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:05Z",
 			Asks: []events.PriceLevel{
 				{Price: "62910", Quantity: "1"},
@@ -395,10 +420,10 @@ var Ex6SequenceGap = Scenario{
 	// one, so a gap costs bybit its place in the union only until the next snapshot.
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 6, Price: "62910", Quantity: "1"},
-			{ExchangeID: 6, Price: "62911", Quantity: "0.25"},
+			{ExchangeID: 6, Simulation: 1, Price: "62910", Quantity: "1"},
+			{ExchangeID: 6, Simulation: 1, Price: "62911", Quantity: "0.25"},
 		},
-		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62909", Quantity: "2"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62909", Quantity: "2"}},
 	},
 }
 
@@ -411,6 +436,7 @@ var Ex6NoBaseline = Scenario{
 	Sources: []string{
 		// 01 delta, cold — nothing to merge into
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
 	"type": "delta",
@@ -425,6 +451,7 @@ var Ex6NoBaseline = Scenario{
 }`,
 		// 02 snapshot — the first real baseline
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
 	"type": "snapshot",
@@ -439,6 +466,7 @@ var Ex6NoBaseline = Scenario{
 }`,
 		// 03 delta replaying the snapshot's own u
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
 	"type": "delta",
@@ -453,6 +481,7 @@ var Ex6NoBaseline = Scenario{
 }`,
 		// 04 delta, contiguous with the snapshot
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000003006,
 	"type": "delta",
@@ -469,6 +498,7 @@ var Ex6NoBaseline = Scenario{
 		{ // after 02 — 01 never reached the book builder
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{{Price: "63000", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62999", Quantity: "2"}},
@@ -476,6 +506,7 @@ var Ex6NoBaseline = Scenario{
 		{ // after 04 — 03 was rejected, so 62997/63003 are nowhere
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
 			Asks: []events.PriceLevel{
 				{Price: "63000", Quantity: "1"},
@@ -487,10 +518,10 @@ var Ex6NoBaseline = Scenario{
 	WantRejects: []string{"no_baseline", "stale_or_duplicate"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 6, Price: "63000", Quantity: "1"},
-			{ExchangeID: 6, Price: "63001", Quantity: "0.5"},
+			{ExchangeID: 6, Simulation: 1, Price: "63000", Quantity: "1"},
+			{ExchangeID: 6, Simulation: 1, Price: "63001", Quantity: "0.5"},
 		},
-		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62999", Quantity: "2"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62999", Quantity: "2"}},
 	},
 }
 
@@ -502,6 +533,7 @@ var Ex6NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
 	"type": "snapshot",
@@ -516,6 +548,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 02 a type that is neither snapshot nor delta
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000106,
 	"type": "unsubscribe",
@@ -524,6 +557,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 03 no cts — the event time is not optional
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000206,
 	"type": "delta",
@@ -531,6 +565,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 04 u as a string
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000306,
 	"type": "delta",
@@ -539,6 +574,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 05 neither side present — nothing to report
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000406,
 	"type": "delta",
@@ -548,6 +584,7 @@ var Ex6NoiseFrames = Scenario{
 		// 06 a market ex6 has no exchange_markets row for — dropped before job 2, so its far
 		// forward u never poisons the sequence state
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.FOOBARUSDT",
 	"ts": 1800000000506,
 	"type": "snapshot",
@@ -556,6 +593,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 07 numeric levels — ex6's wire is string pairs, so the whole frame is unparseable
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000606,
 	"type": "delta",
@@ -564,6 +602,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 08 delta, contiguous with 01
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
 	"type": "delta",
@@ -575,6 +614,7 @@ var Ex6NoiseFrames = Scenario{
 		{ // after 01
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62500", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62499", Quantity: "2"}},
@@ -582,6 +622,7 @@ var Ex6NoiseFrames = Scenario{
 		{ // after 08 — 02 through 07 emitted nothing, so u 601 is still contiguous with 600
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62500", Quantity: "1"},
@@ -592,10 +633,10 @@ var Ex6NoiseFrames = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 6, Price: "62500", Quantity: "1"},
-			{ExchangeID: 6, Price: "62501", Quantity: "0.4"},
+			{ExchangeID: 6, Simulation: 1, Price: "62500", Quantity: "1"},
+			{ExchangeID: 6, Simulation: 1, Price: "62501", Quantity: "0.4"},
 		},
-		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62499", Quantity: "2"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62499", Quantity: "2"}},
 	},
 }
 
@@ -609,6 +650,7 @@ var Ex6PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 snapshot — two asks collide, two bids collide, one ask is dust
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
 	"type": "snapshot",
@@ -623,6 +665,7 @@ var Ex6PrecisionDust = Scenario{
 }`,
 		// 02 delta — dust on a price that is already in the book, and a colliding bid pair
 		`{
+	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
 	"type": "delta",
@@ -641,6 +684,7 @@ var Ex6PrecisionDust = Scenario{
 			// with 1.75; 62801.5's 4e-9 truncated to zero and rested nowhere
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62800.11", Quantity: "0.5"}},
 			Bids:       []events.PriceLevel{{Price: "62799.99", Quantity: "1.75"}},
@@ -649,6 +693,7 @@ var Ex6PrecisionDust = Scenario{
 			// the resting level; the merged 0.3 REPLACED the resting 1.75, it did not add to it
 			ExchangeID: 6,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{{Price: "62799.99", Quantity: "0.3"}},
@@ -656,6 +701,6 @@ var Ex6PrecisionDust = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{},
-		Bids: []events.AggregatedLevel{{ExchangeID: 6, Price: "62799.99", Quantity: "0.3"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62799.99", Quantity: "0.3"}},
 	},
 }

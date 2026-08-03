@@ -2,11 +2,14 @@
 //
 // What makes ex3 different from every other exchange in the suite:
 //
-//   - The envelope is a 2-element array `["{market}@{side}", [levels…]]`; buyDepth is bids,
-//     sellDepth is asks, and the side that is not in the message stays NULL — "no report for
+//   - The envelope is an array `["{market}@{side}", [levels…], {"simulation": N}]`; buyDepth is
+//     bids, sellDepth is asks, and the side that is not in the message stays NULL — "no report for
 //     this side", which job 5 must leave alone even though the event is a snapshot.
 //   - Levels are objects with JSON-NUMBER price/quantity (every other exchange sends strings),
 //     so the values come off the wire as BigDecimal-from-literal.
+//   - It is the one exchange whose `simulation` flag is NOT a root field: an array has no root
+//     fields, so NiFi appends it as that trailing third element instead. A 2-element frame is
+//     still accepted and reads as 0 (live); a 4-element one is malformed and dropped.
 //   - There is no sequence field and no timestamp anywhere on the wire. Job 1 stamps processing
 //     time, so `EventTime` is wall-clock and every scenario here sets IgnoreEventTime.
 //
@@ -35,7 +38,8 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62942.5, "quantity": 0.8, "sum": 50354.0 },
 		{ "price": 62937.5, "quantity": 1.6, "sum": 100700.0 },
 		{ "price": 62932.5, "quantity": 2.9, "sum": 182504.25 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 02 sell depth
 		`[
@@ -44,7 +48,8 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62952.5, "quantity": 0.7, "sum": 44066.75 },
 		{ "price": 62957.5, "quantity": 1.4, "sum": 88140.5 },
 		{ "price": 62962.5, "quantity": 2.2, "sum": 138517.5 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 03 buy depth refresh
 		`[
@@ -52,13 +57,15 @@ var Ex3WallexHalfBook = Scenario{
 	[
 		{ "price": 62942.5, "quantity": 0.5, "sum": 31471.25 },
 		{ "price": 62927.5, "quantity": 3.5, "sum": 220246.25 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
 		{ // after 01 buy depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62942.5", Quantity: "0.8"},
@@ -69,6 +76,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ // after 02 sell depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62952.5", Quantity: "0.7"},
 				{Price: "62957.5", Quantity: "1.4"},
@@ -83,6 +91,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ // after 03 buy depth refresh
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62952.5", Quantity: "0.7"},
 				{Price: "62957.5", Quantity: "1.4"},
@@ -97,13 +106,13 @@ var Ex3WallexHalfBook = Scenario{
 	// The two sides were reported by separate messages; the aggregated view is one book.
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62952.5", Quantity: "0.7"},
-			{ExchangeID: 3, Price: "62957.5", Quantity: "1.4"},
-			{ExchangeID: 3, Price: "62962.5", Quantity: "2.2"},
+			{ExchangeID: 3, Simulation: 1, Price: "62952.5", Quantity: "0.7"},
+			{ExchangeID: 3, Simulation: 1, Price: "62957.5", Quantity: "1.4"},
+			{ExchangeID: 3, Simulation: 1, Price: "62962.5", Quantity: "2.2"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62942.5", Quantity: "0.5"},
-			{ExchangeID: 3, Price: "62927.5", Quantity: "3.5"},
+			{ExchangeID: 3, Simulation: 1, Price: "62942.5", Quantity: "0.5"},
+			{ExchangeID: 3, Simulation: 1, Price: "62927.5", Quantity: "3.5"},
 		},
 	},
 }
@@ -121,7 +130,8 @@ var Ex3EmptySideWipe = Scenario{
 	[
 		{ "price": 62500.25, "quantity": 0.5, "sum": 31250.125 },
 		{ "price": 62499.5, "quantity": 1.25, "sum": 78124.375 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 02 sell depth
 		`[
@@ -129,12 +139,14 @@ var Ex3EmptySideWipe = Scenario{
 	[
 		{ "price": 62501.75, "quantity": 0.4, "sum": 25000.7 },
 		{ "price": 62502, "quantity": 2, "sum": 125004 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 03 buy depth, empty — wallex reporting no bids at all
 		`[
 	"BTCUSDT@buyDepth",
-	[]
+	[],
+	{ "simulation": 1 }
 ]`,
 		// 04 sell depth carrying a zero-quantity level
 		`[
@@ -142,13 +154,15 @@ var Ex3EmptySideWipe = Scenario{
 	[
 		{ "price": 62503.5, "quantity": 0, "sum": 0 },
 		{ "price": 62504, "quantity": 1.5, "sum": 93756 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
 		{ // after 01 buy depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62500.25", Quantity: "0.5"},
@@ -158,6 +172,7 @@ var Ex3EmptySideWipe = Scenario{
 		{ // after 02 sell depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62501.75", Quantity: "0.4"},
 				{Price: "62502", Quantity: "2"},
@@ -170,6 +185,7 @@ var Ex3EmptySideWipe = Scenario{
 		{ // after 03 empty buy depth — bids wiped, asks untouched
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62501.75", Quantity: "0.4"},
 				{Price: "62502", Quantity: "2"},
@@ -179,6 +195,7 @@ var Ex3EmptySideWipe = Scenario{
 		{ // after 04 sell depth with a zero level — the side is replaced, the zero rests nowhere
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62504", Quantity: "1.5"},
 			},
@@ -189,7 +206,7 @@ var Ex3EmptySideWipe = Scenario{
 	// shape the aggregator produces when a reset drops an exchange out of the union.
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62504", Quantity: "1.5"},
+			{ExchangeID: 3, Simulation: 1, Price: "62504", Quantity: "1.5"},
 		},
 		Bids: []events.AggregatedLevel{},
 	},
@@ -210,7 +227,8 @@ var Ex3PrecisionDust = Scenario{
 		{ "price": 62500.123, "quantity": 0.4, "sum": 25000.0492 },
 		{ "price": 62500.129, "quantity": 0.25, "sum": 15625.03225 },
 		{ "price": 62499.999, "quantity": 1.5, "sum": 93749.9985 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 02 sell depth — the first quantity is dust below the market's lot precision
 		`[
@@ -218,7 +236,8 @@ var Ex3PrecisionDust = Scenario{
 	[
 		{ "price": 62501.01, "quantity": 0.000000005, "sum": 0.00031250505 },
 		{ "price": 62502.5, "quantity": 1.000000009, "sum": 62502.5005625225 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 03 buy depth — an integer price literal, and truncation that must not round up
 		`[
@@ -226,13 +245,15 @@ var Ex3PrecisionDust = Scenario{
 	[
 		{ "price": 62200, "quantity": 0.068493, "sum": 4260.2646 },
 		{ "price": 62199.999, "quantity": 0.123456789, "sum": 7679.012152343211 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
 		{ // after 01 buy depth — .123 and .129 merged at .12, quantities summed to 0.65
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62500.12", Quantity: "0.65"},
@@ -242,6 +263,7 @@ var Ex3PrecisionDust = Scenario{
 		{ // after 02 sell depth — the dust level truncated to 0 and was deleted, not rested
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62502.5", Quantity: "1"},
 			},
@@ -253,6 +275,7 @@ var Ex3PrecisionDust = Scenario{
 		{ // after 03 buy depth — 62199.999 truncates DOWN to 62199.99, never up to 62200
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62502.5", Quantity: "1"},
 			},
@@ -263,10 +286,10 @@ var Ex3PrecisionDust = Scenario{
 		},
 	},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 3, Price: "62502.5", Quantity: "1"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 3, Simulation: 1, Price: "62502.5", Quantity: "1"}},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62200", Quantity: "0.068493"},
-			{ExchangeID: 3, Price: "62199.99", Quantity: "0.12345678"},
+			{ExchangeID: 3, Simulation: 1, Price: "62200", Quantity: "0.068493"},
+			{ExchangeID: 3, Simulation: 1, Price: "62199.99", Quantity: "0.12345678"},
 		},
 	},
 }
@@ -284,30 +307,35 @@ var Ex3NoiseFrames = Scenario{
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 },
 		{ "price": 62449, "quantity": 1.1, "sum": 68693.9 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 02 not the array envelope at all
-		`{ "ping": 1 }`,
+		`{ "simulation": 1, "ping": 1 }`,
 		// 03 a known market, but not a depth channel
 		`[
 	"BTCUSDT@trades",
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 04 no @ in the key, so there is no side to read
 		`[
 	"BTCUSDT",
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
-		// 05 a third element the envelope does not have
+		// 05 a FOURTH element the envelope does not have — the third is now the
+		// simulation metadata object, so only a longer array is still malformed
 		`[
 	"BTCUSDT@buyDepth",
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 }
 	],
+	{ "simulation": 1 },
 	"extra"
 ]`,
 		// 06 a market ex3 has no exchange_markets row for
@@ -315,14 +343,16 @@ var Ex3NoiseFrames = Scenario{
 	"FOOBARUSDT@buyDepth",
 	[
 		{ "price": 1.5, "quantity": 10, "sum": 15 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 07 string levels — ex3's wire is JSON numbers, so the whole frame is unparseable
 		`[
 	"BTCUSDT@sellDepth",
 	[
 		{ "price": "62451", "quantity": "0.9" }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 08 sell depth
 		`[
@@ -330,13 +360,15 @@ var Ex3NoiseFrames = Scenario{
 	[
 		{ "price": 62451, "quantity": 0.9, "sum": 56205.9 },
 		{ "price": 62452.25, "quantity": 0.6, "sum": 37471.35 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
 		{ // after 01 buy depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62450.5", Quantity: "0.3"},
@@ -346,6 +378,7 @@ var Ex3NoiseFrames = Scenario{
 		{ // after 08 sell depth — 02 through 07 emitted nothing, and the bids are still 01's
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks: []events.PriceLevel{
 				{Price: "62451", Quantity: "0.9"},
 				{Price: "62452.25", Quantity: "0.6"},
@@ -358,12 +391,12 @@ var Ex3NoiseFrames = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62451", Quantity: "0.9"},
-			{ExchangeID: 3, Price: "62452.25", Quantity: "0.6"},
+			{ExchangeID: 3, Simulation: 1, Price: "62451", Quantity: "0.9"},
+			{ExchangeID: 3, Simulation: 1, Price: "62452.25", Quantity: "0.6"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62450.5", Quantity: "0.3"},
-			{ExchangeID: 3, Price: "62449", Quantity: "1.1"},
+			{ExchangeID: 3, Simulation: 1, Price: "62450.5", Quantity: "0.3"},
+			{ExchangeID: 3, Simulation: 1, Price: "62449", Quantity: "1.1"},
 		},
 	},
 }
@@ -383,14 +416,16 @@ var Ex3StaleReplay = Scenario{
 	[
 		{ "price": 62600.5, "quantity": 0.7, "sum": 43820.35 },
 		{ "price": 62599, "quantity": 1.4, "sum": 87638.6 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 02 buy depth, newer
 		`[
 	"BTCUSDT@buyDepth",
 	[
 		{ "price": 62610.5, "quantity": 0.9, "sum": 56349.45 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 		// 03 the frame from 01 again, replayed after the newer one
 		`[
@@ -398,13 +433,15 @@ var Ex3StaleReplay = Scenario{
 	[
 		{ "price": 62600.5, "quantity": 0.7, "sum": 43820.35 },
 		{ "price": 62599, "quantity": 1.4, "sum": 87638.6 }
-	]
+	],
+	{ "simulation": 1 }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
 		{ // after 01 buy depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62600.5", Quantity: "0.7"},
@@ -414,6 +451,7 @@ var Ex3StaleReplay = Scenario{
 		{ // after 02 buy depth
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62610.5", Quantity: "0.9"},
@@ -422,6 +460,7 @@ var Ex3StaleReplay = Scenario{
 		{ // after 03 replay — back to 01's book, no rejection anywhere
 			ExchangeID: 3,
 			PairID:     1,
+			Simulation: 1,
 			Asks:       []events.PriceLevel{},
 			Bids: []events.PriceLevel{
 				{Price: "62600.5", Quantity: "0.7"},
@@ -432,8 +471,8 @@ var Ex3StaleReplay = Scenario{
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 3, Price: "62600.5", Quantity: "0.7"},
-			{ExchangeID: 3, Price: "62599", Quantity: "1.4"},
+			{ExchangeID: 3, Simulation: 1, Price: "62600.5", Quantity: "0.7"},
+			{ExchangeID: 3, Simulation: 1, Price: "62599", Quantity: "1.4"},
 		},
 	},
 }

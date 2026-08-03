@@ -19,7 +19,8 @@ public class RamzinexParser implements RawExchangeParser {
 
     @Override
     public List<ParsedBookEvent> parse(byte[] payload) throws Exception {
-        JsonNode push = Centrifugo.push(Json.MAPPER.readTree(payload));
+        JsonNode root = Json.MAPPER.readTree(payload);
+        JsonNode push = Centrifugo.push(root);
         if (push == null || !push.get("channel").asText().startsWith(CHANNEL_PREFIX)) {
             return List.of();
         }
@@ -33,6 +34,7 @@ public class RamzinexParser implements RawExchangeParser {
                 System.currentTimeMillis(),
                 Levels.fromNumericArrays(data.get("sells")),
                 Levels.fromNumericArrays(data.get("buys")));
+        event.setSimulation(Json.simulation(root));
         return List.of(new ParsedBookEvent(market, event));
     }
 }

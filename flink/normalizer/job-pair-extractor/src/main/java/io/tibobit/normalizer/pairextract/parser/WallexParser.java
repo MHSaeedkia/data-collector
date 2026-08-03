@@ -6,19 +6,24 @@ import io.tibobit.normalizer.model.RawOrderBookEvent;
 import java.util.List;
 
 /**
- * ex3 wallex — 2-element array envelope {@code ["{market}@{side}", [levels...]]}, full
- * snapshot per SIDE (buyDepth = bids, sellDepth = asks; the other side stays null = "not
- * part of this event"). Levels are objects with JSON-NUMBER price/quantity. The ONLY
- * exchange with no ordering field: sequence_id stays null (job 2 passes ex3 through
- * unchecked) and event time is job-1 processing time — nothing on the wire to use.
- * See sample-raw-data.md § ex3.
+ * ex3 wallex — array envelope {@code ["{market}@{side}", [levels...]]}, full snapshot per SIDE
+ * (buyDepth = bids, sellDepth = asks; the other side stays null = "not part of this event").
+ * Levels are objects with JSON-NUMBER price/quantity. The ONLY exchange with no ordering field:
+ * sequence_id stays null (job 2 passes ex3 through unchecked) and event time is job-1 processing
+ * time — nothing on the wire to use. See sample-raw-data.md § ex3.
+ *
+ * <p><b>The simulation flag rides in a THIRD element</b> (user 2026-08-03):
+ * {@code ["{market}@{side}", [levels...], {"simulation": 1}]}. Every other exchange has an object
+ * payload root, so NiFi injects the flag as a root FIELD there; ex3's root is an array, so it is
+ * appended as a trailing object instead. Both the 2- and 3-element forms are accepted — the older
+ * 2-element frame simply has no flag and reads as 0 (live data).
  */
 public class WallexParser implements RawExchangeParser {
 
     @Override
     public List<ParsedBookEvent> parse(byte[] payload) throws Exception {
         JsonNode root = Json.MAPPER.readTree(payload);
-        if (!root.isArray() || root.size() != 2
+        if (!root.isArray() || root.size() < 2 || root.size() > 3
                 || !root.get(0).isTextual() || !root.get(1).isArray()) {
             return List.of();
         }
@@ -31,6 +36,8 @@ public class WallexParser implements RawExchangeParser {
         String side = key.substring(at + 1);
         RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "snapshot",
                 null, 0L, System.currentTimeMillis(), null, null);
+        // Trailing metadata object; absent on the 2-element form, which then reads as 0.
+        event.setSimulation(Json.simulation(root.path(2)));
         switch (side) {
             case "sellDepth" -> event.setAsks(Levels.fromPriceQuantityObjects(root.get(1)));
             case "buyDepth" -> event.setBids(Levels.fromPriceQuantityObjects(root.get(1)));

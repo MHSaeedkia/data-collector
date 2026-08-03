@@ -34,6 +34,7 @@ var Ex5BitgetSnapshots = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -49,6 +50,7 @@ var Ex5BitgetSnapshots = Scenario{
 }`,
 		// 02 snapshot — a price that truncates onto a trailing zero, and a zero quantity
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -67,6 +69,7 @@ var Ex5BitgetSnapshots = Scenario{
 		{ // after 01
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "62815", Quantity: "0.021591"},
@@ -82,6 +85,7 @@ var Ex5BitgetSnapshots = Scenario{
 		{ // after 02 — 62821.005 truncates to 62821.00 and canonicalizes to 62821; 62822 never rested
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62820", Quantity: "1.5"},
@@ -95,12 +99,12 @@ var Ex5BitgetSnapshots = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 5, Price: "62820", Quantity: "1.5"},
-			{ExchangeID: 5, Price: "62821", Quantity: "0.5"},
+			{ExchangeID: 5, Simulation: 1, Price: "62820", Quantity: "1.5"},
+			{ExchangeID: 5, Simulation: 1, Price: "62821", Quantity: "0.5"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 5, Price: "62819.99", Quantity: "2"},
-			{ExchangeID: 5, Price: "62818", Quantity: "0.75"},
+			{ExchangeID: 5, Simulation: 1, Price: "62819.99", Quantity: "2"},
+			{ExchangeID: 5, Simulation: 1, Price: "62818", Quantity: "0.75"},
 		},
 	},
 }
@@ -114,6 +118,7 @@ var Ex5MultiBookFrame = Scenario{
 	Sources: []string{
 		// 01 one book
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -129,6 +134,7 @@ var Ex5MultiBookFrame = Scenario{
 }`,
 		// 02 two books in one record
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -154,6 +160,7 @@ var Ex5MultiBookFrame = Scenario{
 		{ // after 01
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62900", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62899", Quantity: "2"}},
@@ -161,6 +168,7 @@ var Ex5MultiBookFrame = Scenario{
 		{ // after the first book of 02
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{{Price: "62901", Quantity: "0.5"}},
 			Bids:       []events.PriceLevel{{Price: "62898", Quantity: "1.5"}},
@@ -168,14 +176,15 @@ var Ex5MultiBookFrame = Scenario{
 		{ // after the second book of 02 — same record, its own snapshot
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks:       []events.PriceLevel{{Price: "62902", Quantity: "0.25"}},
 			Bids:       []events.PriceLevel{{Price: "62897", Quantity: "3"}},
 		},
 	},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 5, Price: "62902", Quantity: "0.25"}},
-		Bids: []events.AggregatedLevel{{ExchangeID: 5, Price: "62897", Quantity: "3"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "62902", Quantity: "0.25"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "62897", Quantity: "3"}},
 	},
 }
 
@@ -188,6 +197,7 @@ var Ex5StaleSeq = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -197,6 +207,7 @@ var Ex5StaleSeq = Scenario{
 }`,
 		// 02 the same seq again
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -206,6 +217,7 @@ var Ex5StaleSeq = Scenario{
 }`,
 		// 03 an older seq
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -215,6 +227,7 @@ var Ex5StaleSeq = Scenario{
 }`,
 		// 04 a far-forward seq
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -227,6 +240,7 @@ var Ex5StaleSeq = Scenario{
 		{ // after 01
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62700", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62699", Quantity: "2"}},
@@ -234,6 +248,7 @@ var Ex5StaleSeq = Scenario{
 		{ // after 04 — 02 and 03 were dead-lettered before the book builder saw them
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{{Price: "62710", Quantity: "0.5"}},
 			Bids:       []events.PriceLevel{{Price: "62690", Quantity: "1.5"}},
@@ -241,8 +256,8 @@ var Ex5StaleSeq = Scenario{
 	},
 	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate"},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 5, Price: "62710", Quantity: "0.5"}},
-		Bids: []events.AggregatedLevel{{ExchangeID: 5, Price: "62690", Quantity: "1.5"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "62710", Quantity: "0.5"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "62690", Quantity: "1.5"}},
 	},
 }
 
@@ -255,6 +270,7 @@ var Ex5NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -264,6 +280,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 02 an action bitget does not send on this channel
 		`{
+	"simulation": 1,
 	"action": "update",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -273,6 +290,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 03 seq as a string
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -282,6 +300,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 04 ts as a number — the outer ts is one, the inner one never is
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -291,6 +310,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 05 data as an object rather than the array it always is
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": { "asks": [["62604", "1"]], "bids": [["62595", "2"]], "ts": "1800000000400", "seq": 303, "pseq": 300 },
@@ -298,6 +318,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 06 no instId, so there is no market key
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50" },
 	"data": [
@@ -307,6 +328,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 07 a market ex5 has no exchange_markets row for
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "FOOBARUSDT" },
 	"data": [
@@ -316,6 +338,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 08 numeric levels — ex5's wire is string pairs, so the whole frame is unparseable
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -325,6 +348,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 09 snapshot
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -343,6 +367,7 @@ var Ex5NoiseFrames = Scenario{
 		{ // after 01
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62600", Quantity: "1"}},
 			Bids:       []events.PriceLevel{{Price: "62599", Quantity: "2"}},
@@ -350,6 +375,7 @@ var Ex5NoiseFrames = Scenario{
 		{ // after 09 — 02 through 08 emitted nothing, so seq 301 is still forward of 300
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "62601", Quantity: "0.4"},
@@ -360,10 +386,10 @@ var Ex5NoiseFrames = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 5, Price: "62601", Quantity: "0.4"},
-			{ExchangeID: 5, Price: "62605", Quantity: "1.1"},
+			{ExchangeID: 5, Simulation: 1, Price: "62601", Quantity: "0.4"},
+			{ExchangeID: 5, Simulation: 1, Price: "62605", Quantity: "1.1"},
 		},
-		Bids: []events.AggregatedLevel{{ExchangeID: 5, Price: "62598", Quantity: "0.9"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "62598", Quantity: "0.9"}},
 	},
 }
 
@@ -376,6 +402,7 @@ var Ex5PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 snapshot — two asks collide at 2 places, and both bids do too
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -391,6 +418,7 @@ var Ex5PrecisionDust = Scenario{
 }`,
 		// 02 snapshot — every ask is dust, so the side comes out empty
 		`{
+	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
 	"data": [
@@ -410,6 +438,7 @@ var Ex5PrecisionDust = Scenario{
 			// their exact sum 1.62345678999 truncated once, to 1.62345678
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks:       []events.PriceLevel{{Price: "62700.11", Quantity: "0.5"}},
 			Bids:       []events.PriceLevel{{Price: "62699.99", Quantity: "1.62345678"}},
@@ -417,6 +446,7 @@ var Ex5PrecisionDust = Scenario{
 		{ // after 02 — the only ask truncated to zero quantity, so nothing rests on that side
 			ExchangeID: 5,
 			PairID:     1,
+			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{{Price: "62698.5", Quantity: "0.4"}},
@@ -424,6 +454,6 @@ var Ex5PrecisionDust = Scenario{
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{},
-		Bids: []events.AggregatedLevel{{ExchangeID: 5, Price: "62698.5", Quantity: "0.4"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "62698.5", Quantity: "0.4"}},
 	},
 }

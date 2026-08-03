@@ -44,6 +44,7 @@ public class OrderBookSnapshotDeserializer implements DeserializationSchema<Orde
                 (Long) record.get("last_sequence_id"),
                 PriceLevels.fromRecords(record.get("asks")),
                 PriceLevels.fromRecords(record.get("bids")));
+        snapshot.setSimulation((int) record.get("simulation"));
         snapshot.setPipelineTimings(PipelineTimingsRecords.fromRecord(record.get("pipeline_timings")));
         return snapshot;
     }

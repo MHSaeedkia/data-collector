@@ -43,6 +43,7 @@ public class OrderBookSnapshotSerializer implements SerializationSchema<OrderBoo
         return new GenericRecordBuilder(schema)
                 .set("exchange_id", snapshot.getExchangeId())
                 .set("pair_id", snapshot.getPairId())
+                .set("simulation", snapshot.getSimulation())
                 .set("event_time", snapshot.getEventTime())
                 .set("last_sequence_id", snapshot.getLastSequenceId())
                 .set("asks", PriceLevels.toRecords(snapshot.getAsks(), levelSchema))

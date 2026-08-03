@@ -8,6 +8,8 @@ definitions:
         type: string
       quantity:
         type: string
+      simulation:
+        type: integer
     type: object
   events.AvroTime:
     properties:
@@ -32,6 +34,12 @@ definitions:
         type: integer
       pipeline_timings:
         $ref: '#/definitions/events.PipelineTimings'
+      simulation:
+        description: |-
+          Simulation is NiFi's flag carried up the pipeline: 0 = live data, 1 =
+          simulation data, other values not yet defined. The book builder stamps
+          the emitted book with the flag of the event that produced it.
+        type: integer
     type: object
   events.PipelineTimings:
     properties:

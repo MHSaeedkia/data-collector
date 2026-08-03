@@ -12,6 +12,12 @@
 			"type": "int"
 		},
 		{
+			"name": "simulation",
+			"type": "int",
+			"default": 0,
+			"doc": "Carried from the raw event that produced this book (last accepted event wins). 0 = live, 1 = simulation."
+		},
+		{
 			"name": "event_time",
 			"type": {
 				"type": "long",

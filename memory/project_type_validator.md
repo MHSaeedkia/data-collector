@@ -179,3 +179,5 @@ transiently FAIL on the 25s consumer read-timeout (now a two-hop chain) — re-r
 sequence validation (job 5 does NOT re-check sequences). **How to apply:** the gap/jump rule keys
 off `sequence_jump` stamped by job 1's parsers — if an exchange's jump changes, fix it in the
 parser (job 1), not here; job 2 is exchange-agnostic.
+
+**2026-08-03 — `simulation` pass-through.** Valid events forward the same object, so the flag rides for free; but `emitReset` builds a FRESH event, so it explicitly copies the gap event's flag — otherwise emptying a simulated exchange's book would emit a record claiming to be live. See [[simulation-flag]].

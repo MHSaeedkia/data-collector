@@ -1,6 +1,7 @@
 {
 	"exchange_id": 6,
 	"pair_id": 1,
+	"simulation": 0,
 	"event_time": "2026-07-14T06:23:25.123Z",
 	"last_sequence_id": 126776812,
 	"asks": [

@@ -150,11 +150,15 @@ public class TypeValidateFunction
      * the {@code awaitingSnapshot} reject above. A fresh {@link
      * io.tibobit.normalizer.model.PipelineTimings} (not the gap event's) is used so stamping
      * {@code type_validate_out} here does not leak onto the event that is still being dead-lettered.
+     *
+     * <p>{@code simulation} IS inherited from the gap event: the marker stands in for that
+     * exchange's stream, so an emptied simulation book must not come back out flagged as live.
      */
     private void emitReset(RawOrderBookEvent gap, Collector<RawOrderBookEvent> out) {
         RawOrderBookEvent reset = new RawOrderBookEvent(
                 gap.getExchangeId(), gap.getPairId(), RESET, null, 0L, gap.getEventTime(),
                 null, null);
+        reset.setSimulation(gap.getSimulation());
         reset.getPipelineTimings().setTypeValidateIn(gap.getPipelineTimings().getTypeValidateIn());
         reset.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
         out.collect(reset);

@@ -12,7 +12,8 @@ import java.util.List;
 /**
  * Splits each job-5 {@link OrderBookSnapshot} into two per-side {@link ExchangeBook}s (asks, bids)
  * so the ported {@link CrossExchangeAggregator} (keyed {@code (pair_id, side)}) can be reused
- * near-verbatim. Each level is stamped with the snapshot's {@code exchange_id}.
+ * near-verbatim. Each level is stamped with the snapshot's {@code exchange_id} and its
+ * {@code simulation} flag — the union mixes exchanges, so both only mean anything per level.
  *
  * <p>An emitted book always carries both sides; on job 5's reset both sides are empty, which
  * produces two empty ExchangeBooks and drops that exchange from the union. A null side (defensive —
@@ -32,7 +33,8 @@ public class SnapshotSplitter implements FlatMapFunction<OrderBookSnapshot, Exch
         if (levels != null) {
             for (PriceLevel level : levels) {
                 aggregated.add(new AggregatedLevel(
-                        snapshot.getExchangeId(), level.getPrice(), level.getQuantity()));
+                        snapshot.getExchangeId(), snapshot.getSimulation(),
+                        level.getPrice(), level.getQuantity()));
             }
         }
         return new ExchangeBook(snapshot.getPairId(), snapshot.getExchangeId(), side,

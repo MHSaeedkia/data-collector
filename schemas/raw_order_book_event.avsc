@@ -20,6 +20,12 @@
 			}
 		},
 		{
+			"name": "simulation",
+			"type": "int",
+			"default": 0,
+			"doc": "Injected by NiFi on the raw payload: a root field for the object-root exchanges, a trailing {\"simulation\": N} element for ex3/wallex's array envelope. 0 = live data, 1 = simulation data; other values undefined. Carried unchanged through every job; absent = 0."
+		},
+		{
 			"name": "sequence_id",
 			"type": ["null", "long"],
 			"default": null

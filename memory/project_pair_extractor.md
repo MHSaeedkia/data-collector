@@ -185,3 +185,5 @@ above were resolved here, not in the earlier design docs.
 **How to apply:** when adding an exchange, add ONE parser + one `Parsers` map entry + a
 fixture section in sample-raw-data.md; when changing event_time/ordering semantics, update
 job 2's expectations too.
+
+**2026-08-03 — `simulation` flag.** All 7 parsers lift it off the payload via `Json.simulation(carrier)`. ⚠ **ex3/wallex's envelope grew a THIRD element** — `["{market}@{side}", [levels…], {"simulation":N}]` — because its root is an array with no field to inject; the other six read it as a root field. `WallexParser` takes 2 or 3 elements, drops 4+. Cross-parser rule is tested once in `SimulationFlagTest`, not per parser. See [[simulation-flag]].

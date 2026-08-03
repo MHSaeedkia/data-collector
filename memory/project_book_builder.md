@@ -78,3 +78,5 @@ truth — every earlier job could be reasoned about one message at a time, this 
 upstream, the timings say which stage) or wrong *accumulated state* (look at ordering and at
 whether a null side was mistaken for an empty one — those are the only two ways this job loses
 information).
+
+**2026-08-03 — `simulation` stamping.** The emitted book carries the flag of the event that produced it (last-event-wins). Deliberately NOT in `MapState`: it is a property of the feed, not of a price level. A `reset` still reports its own flag while emptying the book. See [[simulation-flag]].

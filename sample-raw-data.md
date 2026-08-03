@@ -200,7 +200,7 @@ Samples (pretty-printed; level arrays trimmed — each real message carried **50
   {"price": 62525.04, "quantity": 0.000451, "sum": 28.19879304},
   {"price": 62424.28, "quantity": 0.02624,  "sum": 1638.0131072},
   {"price": 62200,    "quantity": 0.068493, "sum": 4260.2646}
-]]
+], {"simulation":1}]
 ```
 
 ```json
@@ -208,14 +208,19 @@ Samples (pretty-printed; level arrays trimmed — each real message carried **50
   {"price": 62579.56, "quantity": 0.004585, "sum": 286.9272826},
   {"price": 62619.76, "quantity": 0.002,    "sum": 125.23952},
   {"price": 62634.08, "quantity": 0.048566, "sum": 3041.88672928}
-]]
+], {"simulation":1}]
 ```
 
 Parsing notes (job 1):
 
-- **Envelope**: NOT Centrifugo — the top level is a 2-element JSON **array**:
-  `["{market}@{side}", [levels…]]`. Market key + side both live in that first string
-  (`BTCUSDT@buyDepth` / `BTCUSDT@sellDepth`); `buyDepth` = bids, `sellDepth` = asks.
+- **Envelope**: NOT Centrifugo — the top level is a JSON **array**:
+  `["{market}@{side}", [levels…], {"simulation": N}]`. Market key + side both live in that first
+  string (`BTCUSDT@buyDepth` / `BTCUSDT@sellDepth`); `buyDepth` = bids, `sellDepth` = asks.
+- **⚠ `simulation` rides in a THIRD element (user 2026-08-03)**, not as a root field. Every other
+  exchange has an OBJECT payload root, so NiFi injects `"simulation": N` there directly; ex3's root
+  is an array, so it is appended as a trailing metadata object instead. Job 1 accepts both the 2-
+  and 3-element forms — a 2-element frame carries no flag and reads as `0` (live data). A 4th
+  element is not a shape we publish and is dropped by the whitelist rule.
 - **⚠ Levels are objects with JSON-NUMBER `price`/`quantity`** (re-confirms the discarded-capture
   lead) — parsing MUST use Jackson `USE_BIG_DECIMAL_FOR_FLOATS` so BigDecimal comes from the
   decimal literal, never via double. Prices may lack decimals (`62200`).

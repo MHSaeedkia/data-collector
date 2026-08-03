@@ -23,6 +23,7 @@ const magicByte = 0x0
 // timestamp-millis logical type to time.Time, not int64.
 type wireLevel struct {
 	ExchangeID int    `avro:"exchange_id"`
+	Simulation int    `avro:"simulation"`
 	Price      string `avro:"price"`
 	Quantity   string `avro:"quantity"`
 }
@@ -73,7 +74,12 @@ func (d *Decoder) Decode(value []byte) (domain.RawBook, error) {
 
 	levels := make([]domain.RawLevel, len(we.Levels))
 	for i, l := range we.Levels {
-		levels[i] = domain.RawLevel{ExchangeID: l.ExchangeID, Price: l.Price, Quantity: l.Quantity}
+		levels[i] = domain.RawLevel{
+			ExchangeID: l.ExchangeID,
+			Simulation: l.Simulation,
+			Price:      l.Price,
+			Quantity:   l.Quantity,
+		}
 	}
 	return domain.RawBook{
 		PairID:    we.PairID,

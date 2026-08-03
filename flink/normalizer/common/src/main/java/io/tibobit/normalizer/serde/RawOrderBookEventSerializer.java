@@ -46,6 +46,7 @@ public class RawOrderBookEventSerializer implements SerializationSchema<RawOrder
                 .set("exchange_id", event.getExchangeId())
                 .set("pair_id", event.getPairId())
                 .set("type", new GenericData.EnumSymbol(typeSchema, event.getType()))
+                .set("simulation", event.getSimulation())
                 .set("sequence_id", event.getSequenceId())
                 .set("sequence_jump", event.getSequenceJump())
                 .set("event_time", event.getEventTime())
