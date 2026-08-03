@@ -35,3 +35,5 @@
 - [ ] Verify the four upstream steps (raw / type-validated / rebased / applied-precision) have their wanted values too
 - [ ] No scenarios for ex7 (ompfinex, postponed — no parser) or ex9 (no raw sample). ex8/okx still has 6 scenarios commented out in `main.go` under stale 01–06 numbering
 - [ ] `data_ex1.go:2`, `data_ex2.go:2` and `data_ex8.go:3` still point at `data.go`, which no longer exists — only `data_ex3.go` was fixed
+- [x] `simulation` verified live — `06-ex1-precision-dust` run against the local stack after `mvn clean package` passes end to end (2 snapshots, 0 rejections, both aggregated sides matched); the server's all-41 `Simulation:0` failure is stale job jars, not code. See [[project_e2e_harness]] on the missing `clean` (2026-08-03)
+- [x] `e2e/flink/flink.go` `build()` now runs `mvn clean package -q -DskipTests` — a stale `target/` can no longer ship a pre-change jar, so nobody has to remember to clean by hand before a run. Left per-scenario rather than hoisted to once-per-process: a full clean reactor build is ~5s against a ~80s scenario (2026-08-03, build/vet/gofmt clean, `06-ex1-precision-dust` re-run live through the changed path and PASSED)

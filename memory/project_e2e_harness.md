@@ -117,6 +117,26 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   rebuilds `common` six times for the same jars; the harness runs `mvn -f <dir>/pom.xml package -q
   -DskipTests` once and then globs each `<module>/target/*-1.0-SNAPSHOT.jar`, skipping shade's
   `original-*` copy.
+- **`build()` runs `mvn clean package` — the `clean` is load-bearing, do not drop it to save time.**
+  A stale `target/` fails as WRONG DATA, not as an error. On 2026-08-03 a server run failed all 41 scenarios on the `Simulation` field alone
+  (`got 0`, `want 1`, every other field identical). That signature is diagnostic: the writer never
+  called `.set("simulation", …)` and Avro substituted the schema's `"default": 0`. It cannot be an
+  old registry schema (`GenericRecordBuilder.set` throws on an unknown field, so job 5 would die),
+  cannot be a registration failure (`schemaregistry.register` propagates any non-200), and cannot be
+  a stale Go harness (the `want` side already said 1 — `go run` always recompiles). The only branch
+  left is **job jars built from pre-change source**, which `mvn package` without `clean` produced
+  two ways: incremental compile skips when `target/` class mtimes are not older than the sources
+  (any copy/rsync/tar that preserves mtimes does this), and `jarPath`'s lexicographic glob will
+  happily pick up a jar left over from an older artifactId forever. Reproduced locally: the running
+  jars shaded an `OrderBookSnapshot.class` with no `simulation` string in it at all; after
+  `mvn clean package`, `06-ex1-precision-dust` passed end to end (2 snapshots, 0 rejections, both
+  aggregated sides). Fixed by putting `clean` in `build()` itself so nobody has to remember it; it
+  stays per-scenario because a full clean reactor build is ~5s against a ~80s scenario, so hoisting
+  it to once-per-process buys nothing worth the extra state. **Diagnostic if it ever recurs:**
+  `unzip -p <module>/target/<module>-1.0-SNAPSHOT.jar
+  io/tibobit/normalizer/model/OrderBookSnapshot.class | strings | grep simulation` — nothing back
+  means the jar predates the field. Whenever a run fails on ONE field across every scenario, suspect
+  the jars before the code.
 - **The scenario payload goes in raw, as the exchange sends it.** `Scenario.produce` produces each
   `Sources` entry verbatim (compacted) to `ex{ExchangeID}-raw` — the same topic NiFi writes to —
   so the run exercises the whole pipeline from the pair-extractor down. No key, no Avro encoding:

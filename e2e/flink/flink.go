@@ -57,14 +57,21 @@ func RunJobs(ctx context.Context, api, normalizerDir string) error {
 
 // build runs one reactor build for all modules. run-job.sh builds each module
 // separately with -am, which rebuilds common six times for the same jars.
+//
+// clean is not optional. Without it a stale target/ fails as WRONG DATA rather
+// than as an error: an incremental compile skips whenever the class mtimes are
+// not older than the sources (any copy/rsync/tar that preserves mtimes leaves a
+// checkout in that state), so the harness ships a jar built from pre-change
+// source, the job runs fine, and the only symptom is a new field arriving as its
+// Avro default on every scenario. That cost a full debugging session once.
 func build(ctx context.Context, normalizerDir string) error {
 	log.Print("building normalizer jobs...")
 
-	cmd := exec.CommandContext(ctx, "mvn", "-f", filepath.Join(normalizerDir, "pom.xml"), "package", "-q", "-DskipTests")
+	cmd := exec.CommandContext(ctx, "mvn", "-f", filepath.Join(normalizerDir, "pom.xml"), "clean", "package", "-q", "-DskipTests")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mvn package: %w", err)
+		return fmt.Errorf("mvn clean package: %w", err)
 	}
 	return nil
 }
