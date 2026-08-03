@@ -328,4 +328,22 @@ class PrecisionFunctionTest {
                 .isNotNull()
                 .isGreaterThanOrEqualTo(out.getPipelineTimings().getPrecisionIn());
     }
+
+    /**
+     * Precision, like the rebaser, mutates in place and forwards — but it writes to a topic, so it
+     * is a hop and re-stamps. This is the last id a raw event carries before job 5 turns it into a
+     * book, so it is the id that shows up in a snapshot's source_ids.
+     */
+    @Test
+    @DisplayName("a truncated event takes the incoming id as its source and mints a new one")
+    void truncatedEventIsRestamped() throws Exception {
+        openWith(Map.of(1, new MarketPrecision(2, 8)));
+        RawOrderBookEvent in = event(1, levels("62770.5", "0.5"), null);
+        in.setSinkId("job3-id");
+
+        RawOrderBookEvent out = process(in);
+
+        assertThat(out.getSourceIds()).containsExactly("job3-id");
+        assertThat(out.getSinkId()).isNotBlank().isNotEqualTo("job3-id");
+    }
 }

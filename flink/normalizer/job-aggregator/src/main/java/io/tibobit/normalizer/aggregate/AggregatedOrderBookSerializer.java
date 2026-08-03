@@ -50,6 +50,7 @@ public class AggregatedOrderBookSerializer implements SerializationSchema<Aggreg
             levels.add(new GenericRecordBuilder(levelSchema)
                     .set("exchange_id", level.getExchangeId())
                     .set("simulation", level.getSimulation())
+                    .set("source_id", level.getSourceId())
                     .set("price", level.getPrice())
                     .set("quantity", level.getQuantity())
                     .build());
@@ -58,6 +59,7 @@ public class AggregatedOrderBookSerializer implements SerializationSchema<Aggreg
         return new GenericRecordBuilder(schema)
                 .set("pair_id", book.getPairId())
                 .set("side", new GenericData.EnumSymbol(sideSchema, book.getSide()))
+                .set("sink_id", book.getSinkId())
                 .set("event_time", book.getEventTime())
                 .set("levels", levels)
                 .build();

@@ -45,6 +45,8 @@ public class RejectedOrderBookEventSerializer implements SerializationSchema<Rej
 
         return new GenericRecordBuilder(schema)
                 .set("event", RawOrderBookEventSerializer.toGenericRecord(rejection.getEvent(), eventSchema))
+                .set("sink_id", rejection.getSinkId())
+                .set("source_ids", rejection.getSourceIds())
                 .set("reject_reason", rejection.getRejectReason())
                 .set("rejected_at", rejection.getRejectedAt())
                 .build();

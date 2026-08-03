@@ -35,6 +35,7 @@ public class RamzinexParser implements RawExchangeParser {
                 Levels.fromNumericArrays(data.get("sells")),
                 Levels.fromNumericArrays(data.get("buys")));
         event.setSimulation(Json.simulation(root));
+        event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));
     }
 }

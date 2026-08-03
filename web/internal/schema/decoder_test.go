@@ -24,6 +24,7 @@ const aggregatedOrderBookEventSchema = `{
 	"fields": [
 		{"name": "pair_id", "type": "int"},
 		{"name": "side", "type": {"type": "enum", "name": "Side", "symbols": ["asks", "bids"]}},
+		{"name": "sink_id", "type": "string", "default": ""},
 		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
 		{"name": "levels", "type": {"type": "array", "items": {
 			"type": "record",
@@ -31,6 +32,7 @@ const aggregatedOrderBookEventSchema = `{
 			"fields": [
 				{"name": "exchange_id", "type": "int"},
 				{"name": "simulation", "type": "int", "default": 0},
+				{"name": "source_id", "type": "string", "default": ""},
 				{"name": "price", "type": "string"},
 				{"name": "quantity", "type": "string"}
 			]
@@ -74,18 +76,27 @@ func TestDecoder_Decode_ValidMessageAndCachesSchema(t *testing.T) {
 	value := wireMessage(t, 2, wireEvent{
 		PairID:    1,
 		Side:      "asks",
+		SinkID:    "77777777-7777-4777-8777-777777777777",
 		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
-		Levels:    []wireLevel{{ExchangeID: 3, Simulation: 1, Price: "97240.50", Quantity: "0.42"}},
+		Levels: []wireLevel{{
+			ExchangeID: 3,
+			Simulation: 1,
+			SourceID:   "66666666-6666-4666-8666-666666666666",
+			Price:      "97240.50",
+			Quantity:   "0.42",
+		}},
 	})
 
 	rb, err := dec.Decode(value)
 	require.NoError(t, err)
 	assert.Equal(t, 1, rb.PairID)
 	assert.Equal(t, "asks", rb.Side)
+	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.SinkID)
 	assert.Equal(t, int64(1_700_000_000_000), rb.EventTime)
 	require.Len(t, rb.Levels, 1)
 	assert.Equal(t, 3, rb.Levels[0].ExchangeID)
 	assert.Equal(t, 1, rb.Levels[0].Simulation)
+	assert.Equal(t, "66666666-6666-4666-8666-666666666666", rb.Levels[0].SourceID)
 	assert.Equal(t, "97240.50", rb.Levels[0].Price)
 	assert.Equal(t, "0.42", rb.Levels[0].Quantity)
 
@@ -148,6 +159,32 @@ func TestDecoder_Decode_SimulationIsPerLevel(t *testing.T) {
 	require.Len(t, rb.Levels, 2)
 	assert.Equal(t, 0, rb.Levels[0].Simulation)
 	assert.Equal(t, 1, rb.Levels[1].Simulation)
+}
+
+// source_id is per level for exactly the same reason simulation is: the levels
+// of one record come from different exchanges, so they come from different
+// job-5 snapshots. Two levels at the same price must keep different parents.
+func TestDecoder_Decode_SourceIDIsPerLevel(t *testing.T) {
+	registryURL, _ := newTestRegistry(t, 2)
+	dec := NewDecoder(registryURL)
+
+	value := wireMessage(t, 2, wireEvent{
+		PairID:    1,
+		Side:      "asks",
+		SinkID:    "77777777-7777-4777-8777-777777777777",
+		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
+		Levels: []wireLevel{
+			{ExchangeID: 3, SourceID: "snapshot-ex3", Price: "100", Quantity: "1"},
+			{ExchangeID: 6, SourceID: "snapshot-ex6", Price: "100", Quantity: "2"},
+		},
+	})
+
+	rb, err := dec.Decode(value)
+	require.NoError(t, err)
+	require.Len(t, rb.Levels, 2)
+	assert.Equal(t, "snapshot-ex3", rb.Levels[0].SourceID)
+	assert.Equal(t, "snapshot-ex6", rb.Levels[1].SourceID)
+	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.SinkID)
 }
 
 func mustQuoteJSON(s string) string {

@@ -199,4 +199,40 @@ class RebaseFunctionTest {
         assertThat(rejectedTimings.getRebaseIn()).isNotNull();
         assertThat(rejectedTimings.getRebaseOut()).isNull();
     }
+
+    // ---- lineage ----------------------------------------------------------------
+
+    /**
+     * The rebaser mutates the event in place and forwards it, but it still WRITES to a topic, so it
+     * is a real hop: the id it received becomes the source and a fresh one is minted. Unlike the
+     * simulation flag, lineage is not something a pass-through step may leave alone.
+     */
+    @Test
+    @DisplayName("a rebased event takes the incoming id as its source and mints a new one")
+    void rebasedEventIsRestamped() throws Exception {
+        openWith(Map.of("1|1", new RebaseFactors(2, -3)));
+        RawOrderBookEvent in = event(1, 1, levels("5", "1"), null);
+        in.setSinkId("job2-id");
+
+        harness.processElement(new StreamRecord<>(in));
+
+        RawOrderBookEvent out = output().get(0);
+        assertThat(out.getSourceIds()).containsExactly("job2-id");
+        assertThat(out.getSinkId()).isNotBlank().isNotEqualTo("job2-id");
+    }
+
+    @Test
+    @DisplayName("a no_rebase_row rejection gets its own sink id and names the event as its source")
+    void rejectionHasItsOwnLineage() throws Exception {
+        openWith(Map.of("1|1", new RebaseFactors(0, 0)));
+        RawOrderBookEvent in = event(9, 9, levels("5", "1"), null); // no row for 9|9
+        in.setSinkId("job2-id");
+
+        harness.processElement(new StreamRecord<>(in));
+
+        RejectedOrderBookEvent rejection = rejects().get(0);
+        assertThat(rejection.getSourceIds()).containsExactly("job2-id");
+        assertThat(rejection.getSinkId()).isNotBlank().isNotEqualTo("job2-id");
+        assertThat(rejection.getEvent().getSinkId()).isEqualTo("job2-id");
+    }
 }

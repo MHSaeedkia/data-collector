@@ -299,4 +299,94 @@ class BookBuildFunctionTest {
 
         pricesOf(out.getAsks()).containsExactly("20");
     }
+
+    // ---- lineage -----------------------------------------------------------------
+
+    /** Job 4 stamped an id on every event that reaches here; these stand in for those. */
+    private static RawOrderBookEvent from(RawOrderBookEvent event, String sinkId) {
+        event.setSinkId(sinkId);
+        return event;
+    }
+
+    /**
+     * The defining case for this job: a book assembled from three separate events reports all three
+     * as its sources. This is the one place in the pipeline where source_ids is not a single parent,
+     * and it is why the state has to remember which event set each level.
+     */
+    @Test
+    @DisplayName("a book made of several events lists every one of them as a source")
+    void collectsEveryContributingEvent() throws Exception {
+        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-a"));
+        process(from(event("update", levels("11", "2"), List.of()), "ev-b"));
+        OrderBookSnapshot out = process(from(event("update", List.of(), levels("9", "3")), "ev-c"));
+
+        // Triggering event first, then the resting levels in emitted order (asks, then bids).
+        assertThat(out.getSourceIds()).containsExactly("ev-c", "ev-a", "ev-b");
+        assertThat(out.getSinkId()).isNotBlank();
+    }
+
+    /**
+     * A level updated by a later event belongs to that event. The earlier one drops out of the
+     * lineage once nothing it set is still resting — otherwise source_ids would only ever grow.
+     */
+    @Test
+    @DisplayName("overwriting a level transfers it to the newer event, retiring the older one")
+    void overwrittenLevelChangesOwner() throws Exception {
+        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-old"));
+        OrderBookSnapshot out = process(from(event("update", levels("10", "5"), List.of()), "ev-new"));
+
+        assertThat(out.getSourceIds()).containsExactly("ev-new");
+    }
+
+    /**
+     * An event that only DELETES a level leaves nothing resting, but it still caused this record —
+     * so it must appear. Without the unconditional triggering-event entry this record would name a
+     * parent set that does not include the event that produced it.
+     */
+    @Test
+    @DisplayName("a delete-only event is still a source of the book it produced")
+    void deleteOnlyEventIsStillASource() throws Exception {
+        process(from(event("snapshot", levels("10", "1", "11", "2"), List.of()), "ev-seed"));
+        OrderBookSnapshot out = process(from(event("update", levels("11", "0"), List.of()), "ev-del"));
+
+        pricesOf(out.getAsks()).containsExactly("10");
+        assertThat(out.getSourceIds()).containsExactly("ev-del", "ev-seed");
+    }
+
+    /** A reset empties the book, so the marker is the only thing left to point at. */
+    @Test
+    @DisplayName("a reset's emptied book still names the reset marker as its source")
+    void resetKeepsItsOwnSource() throws Exception {
+        process(from(event("snapshot", levels("10", "1"), levels("9", "1")), "ev-seed"));
+        OrderBookSnapshot out = process(from(event("reset", null, null, null), "ev-reset"));
+
+        assertThat(out.getAsks()).isEmpty();
+        assertThat(out.getBids()).isEmpty();
+        assertThat(out.getSourceIds()).containsExactly("ev-reset");
+    }
+
+    /** One event setting many levels is one source, not one per level. */
+    @Test
+    @DisplayName("source_ids are deduplicated across levels")
+    void sourcesAreDeduplicated() throws Exception {
+        OrderBookSnapshot out = process(from(
+                event("snapshot", levels("10", "1", "11", "2", "12", "3"), levels("9", "1")),
+                "ev-one"));
+
+        assertThat(out.getAsks()).hasSize(3);
+        assertThat(out.getSourceIds()).containsExactly("ev-one");
+    }
+
+    @Test
+    @DisplayName("every emitted book gets its own distinct sink id")
+    void mintsDistinctSinkIdPerBook() throws Exception {
+        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-a"));
+        process(from(event("update", levels("11", "2"), List.of()), "ev-b"));
+
+        List<OrderBookSnapshot> all = harness.extractOutputValues();
+        assertThat(all).hasSize(2);
+        assertThat(all).extracting(OrderBookSnapshot::getSinkId)
+                .doesNotHaveDuplicates()
+                .allSatisfy(id -> assertThat(id).isNotBlank());
+    }
 }

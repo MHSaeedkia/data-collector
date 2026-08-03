@@ -18,6 +18,18 @@
 			"doc": "Carried from the raw event that produced this book (last accepted event wins). 0 = live, 1 = simulation."
 		},
 		{
+			"name": "sink_id",
+			"type": "string",
+			"default": "",
+			"doc": "UUID minted by job 5 for this emitted book — unique per record."
+		},
+		{
+			"name": "source_ids",
+			"type": { "type": "array", "items": "string" },
+			"default": [],
+			"doc": "The genuine fan-in of the pipeline: sink_ids of EVERY event that still holds a resting level in this book, plus the event that triggered this emit. A book is state accumulated over many events, so this grows with book depth rather than being a single parent. Deduplicated; the triggering event is always first."
+		},
+		{
 			"name": "event_time",
 			"type": {
 				"type": "long",

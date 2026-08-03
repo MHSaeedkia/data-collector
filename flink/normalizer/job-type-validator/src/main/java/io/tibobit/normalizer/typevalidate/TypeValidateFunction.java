@@ -1,5 +1,6 @@
 package io.tibobit.normalizer.typevalidate;
 
+import io.tibobit.normalizer.model.Lineage;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
 
@@ -9,6 +10,8 @@ import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
+
+import java.util.List;
 
 /**
  * Job 2 — type validation, keyed by {@code (exchange_id, pair_id)}. Applies the sequence rules
@@ -153,12 +156,19 @@ public class TypeValidateFunction
      *
      * <p>{@code simulation} IS inherited from the gap event: the marker stands in for that
      * exchange's stream, so an emptied simulation book must not come back out flagged as live.
+     *
+     * <p>Lineage is NOT inherited — it is derived. The marker is a new record caused by the gap
+     * event, so the gap event is its source and the marker gets a sink id of its own. The gap event
+     * is simultaneously dead-lettered, so its one sink id legitimately appears as the parent of two
+     * different records.
      */
     private void emitReset(RawOrderBookEvent gap, Collector<RawOrderBookEvent> out) {
         RawOrderBookEvent reset = new RawOrderBookEvent(
                 gap.getExchangeId(), gap.getPairId(), RESET, null, 0L, gap.getEventTime(),
                 null, null);
         reset.setSimulation(gap.getSimulation());
+        reset.setSourceIds(List.of(gap.getSinkId()));
+        reset.setSinkId(Lineage.newSinkId());
         reset.getPipelineTimings().setTypeValidateIn(gap.getPipelineTimings().getTypeValidateIn());
         reset.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
         out.collect(reset);
@@ -168,6 +178,7 @@ public class TypeValidateFunction
         // Track the event time of the last accepted event so a later null-seq snapshot can be
         // ordered against it (the out-of-order guard above).
         lastEventTime.update(event.getEventTime());
+        Lineage.restamp(event);
         event.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
         out.collect(event);
     }
@@ -175,6 +186,14 @@ public class TypeValidateFunction
     private void reject(RawOrderBookEvent event, String reason, Context ctx) {
         // typeValidateIn is already stamped; leave typeValidateOut null — the event never leaves
         // the validator onto the main stream. rejectedAt records when it was dead-lettered.
-        ctx.output(REJECTED, new RejectedOrderBookEvent(event, reason, System.currentTimeMillis()));
+        //
+        // The envelope gets its own sink id: the dead-letter topic is a topic. The event inside
+        // keeps the id job 1 gave it — deliberately NOT restamped, since it is being recorded, not
+        // forwarded, and that id is what links this record back to the raw stream.
+        RejectedOrderBookEvent rejection =
+                new RejectedOrderBookEvent(event, reason, System.currentTimeMillis());
+        rejection.setSourceIds(List.of(event.getSinkId()));
+        rejection.setSinkId(Lineage.newSinkId());
+        ctx.output(REJECTED, rejection);
     }
 }

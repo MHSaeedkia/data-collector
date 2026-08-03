@@ -84,6 +84,24 @@ class OrderBookSnapshotSerdeTest {
     }
 
     /**
+     * The snapshot is the one record whose source_ids legitimately holds MANY ids — a book is made
+     * of every event still holding a level. Order must survive too: the triggering event is first by
+     * contract, and downstream reads it positionally.
+     */
+    @Test
+    @DisplayName("round-trips a multi-source book with its order intact")
+    void roundTripsMultipleSources() {
+        OrderBookSnapshot in = new OrderBookSnapshot(6, 1, 123L, 1L, List.of(), List.of());
+        in.setSinkId("66666666-6666-4666-8666-666666666666");
+        in.setSourceIds(List.of("trigger", "resting-a", "resting-b"));
+
+        OrderBookSnapshot out = roundTrip(in);
+
+        assertThat(out.getSinkId()).isEqualTo("66666666-6666-4666-8666-666666666666");
+        assertThat(out.getSourceIds()).containsExactly("trigger", "resting-a", "resting-b");
+    }
+
+    /**
      * Given the deserializer, When queried, Then it never ends the stream and advertises
      * {@link OrderBookSnapshot} as its produced type.
      */

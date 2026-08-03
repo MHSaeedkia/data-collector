@@ -74,4 +74,33 @@ class RejectedOrderBookEventSerializerTest {
         assertThat(nestedTimings.get("type_validate_in")).isEqualTo(150L);
         assertThat(nestedTimings.get("type_validate_out")).isNull();
     }
+
+    /**
+     * Given a dead-letter record, When mapped, Then the ENVELOPE's lineage and the NESTED event's
+     * lineage land on their own fields and stay distinct. They are two different records: the
+     * envelope is the thing written to the dead-letter topic, the nested event is the thing being
+     * recorded, and the envelope names it as its source. Collapsing the two would make the
+     * dead-letter record claim to be the event it is reporting on.
+     */
+    @Test
+    @DisplayName("keeps the envelope's lineage distinct from the nested event's")
+    void mapsEnvelopeAndNestedLineageSeparately() {
+        RawOrderBookEvent event = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), null);
+        event.setSinkId("22222222-2222-4222-8222-222222222222");
+        event.setSourceIds(List.of("11111111-1111-4111-8111-111111111111"));
+        RejectedOrderBookEvent rejection = new RejectedOrderBookEvent(event, "sequence gap", 160L);
+        rejection.setSinkId("33333333-3333-4333-8333-333333333333");
+        rejection.setSourceIds(List.of(event.getSinkId()));
+
+        GenericRecord record = RejectedOrderBookEventSerializer.toGenericRecord(rejection, SCHEMA);
+
+        assertThat(record.get("sink_id")).isEqualTo("33333333-3333-4333-8333-333333333333");
+        assertThat(record.get("source_ids"))
+                .isEqualTo(List.of("22222222-2222-4222-8222-222222222222"));
+        GenericRecord nested = (GenericRecord) record.get("event");
+        assertThat(nested.get("sink_id")).isEqualTo("22222222-2222-4222-8222-222222222222");
+        assertThat(nested.get("source_ids"))
+                .isEqualTo(List.of("11111111-1111-4111-8111-111111111111"));
+    }
 }

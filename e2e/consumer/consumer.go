@@ -135,6 +135,8 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 		ExchangeID int64               `json:"exchange_id"`
 		PairID     int64               `json:"pair_id"`
 		Simulation int64               `json:"simulation"`
+		SinkID     string              `json:"sink_id"`
+		SourceIDs  []string            `json:"source_ids"`
 		EventTime  int64               `json:"event_time"`
 		Asks       []events.PriceLevel `json:"asks"`
 		Bids       []events.PriceLevel `json:"bids"`
@@ -147,6 +149,8 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 		ExchangeID: wire.ExchangeID,
 		PairID:     wire.PairID,
 		Simulation: wire.Simulation,
+		SinkID:     wire.SinkID,
+		SourceIDs:  wire.SourceIDs,
 		EventTime:  time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
 		Asks:       wire.Asks,
 		Bids:       wire.Bids,
@@ -165,13 +169,19 @@ func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, 
 	var wire struct {
 		PairID int64                    `json:"pair_id"`
 		Side   string                   `json:"side"`
+		SinkID string                   `json:"sink_id"`
 		Levels []events.AggregatedLevel `json:"levels"`
 	}
 	if err := json.Unmarshal(text, &wire); err != nil {
 		return events.AggregatedSide{}, fmt.Errorf("decode aggregated: %w", err)
 	}
 
-	return events.AggregatedSide{PairID: wire.PairID, Side: wire.Side, Levels: wire.Levels}, nil
+	return events.AggregatedSide{
+		PairID: wire.PairID,
+		Side:   wire.Side,
+		SinkID: wire.SinkID,
+		Levels: wire.Levels,
+	}, nil
 }
 
 func decodeRejection(registryURL string, value []byte) (string, error) {

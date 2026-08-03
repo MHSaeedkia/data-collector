@@ -51,13 +51,22 @@ class CrossExchangeAggregatorTest {
 
     // ---- helpers ----------------------------------------------------------------
 
-    /** A live (simulation 0) level — the default for every case that isn't about the flag. */
+    /**
+     * A live (simulation 0) level — the default for every case that isn't about the flag. The
+     * source_id is derived from the exchange so a level can be traced back to its origin book in
+     * assertions without every case having to spell one out.
+     */
     private static AggregatedLevel lvl(int exchangeId, String price, String qty) {
-        return new AggregatedLevel(exchangeId, 0, price, qty);
+        return new AggregatedLevel(exchangeId, 0, sourceOf(exchangeId), price, qty);
     }
 
     private static AggregatedLevel simLvl(int exchangeId, int simulation, String price, String qty) {
-        return new AggregatedLevel(exchangeId, simulation, price, qty);
+        return new AggregatedLevel(exchangeId, simulation, sourceOf(exchangeId), price, qty);
+    }
+
+    /** Stands in for the job-5 snapshot sink id that SnapshotSplitter stamps onto each level. */
+    private static String sourceOf(int exchangeId) {
+        return "snapshot-of-ex" + exchangeId;
     }
 
     private static ExchangeBook book(int exchangeId, String side, long eventTime,
@@ -193,6 +202,51 @@ class CrossExchangeAggregatorTest {
                 .containsExactly(
                         tuple(2, 0, "100"),
                         tuple(1, 1, "101"));
+    }
+
+    // ---- lineage ----------------------------------------------------------------
+
+    @Test
+    @DisplayName("each level keeps the source_id of the snapshot it came from through the union")
+    void sourceIdIsPerLevelNotPerBook() throws Exception {
+        send(book(1, "asks", 100, lvl(1, "101", "1")));
+        send(book(2, "asks", 100, lvl(2, "100", "1")));
+
+        // Same reasoning as the simulation flag: the union mixes exchanges, so a single parent on
+        // the record would have to drop the exchange it belongs to. Note the levels are sorted by
+        // price, so ex2 comes first — the source travels WITH the level, not by position.
+        assertThat(lastLevels())
+                .extracting(AggregatedLevel::getExchangeId, AggregatedLevel::getSourceId)
+                .containsExactly(
+                        tuple(2, sourceOf(2)),
+                        tuple(1, sourceOf(1)));
+    }
+
+    @Test
+    @DisplayName("every emitted record gets its own distinct sink id")
+    void mintsDistinctSinkIdPerRecord() throws Exception {
+        send(book(1, "asks", 100, lvl(1, "100", "1")));
+        send(book(2, "asks", 200, lvl(2, "101", "1")));
+
+        List<AggregatedOrderBook> all = harness.extractOutputValues();
+        assertThat(all).hasSize(2);
+        assertThat(all).allSatisfy(b -> assertThat(b.getSinkId()).isNotBlank());
+        assertThat(all).extracting(AggregatedOrderBook::getSinkId).doesNotHaveDuplicates();
+    }
+
+    /**
+     * A level that leaves the union (its exchange reset) takes its source with it. Otherwise a stale
+     * parent would keep being reported on records it no longer contributes to.
+     */
+    @Test
+    @DisplayName("a reset exchange's source_id drops out with its levels")
+    void resetExchangeSourceDropsOut() throws Exception {
+        send(book(1, "asks", 100, lvl(1, "100", "1")));
+        send(book(2, "asks", 100, lvl(2, "101", "1")));
+        send(book(2, "asks", 200)); // ex2 reset -> empty book
+
+        assertThat(lastLevels()).extracting(AggregatedLevel::getSourceId)
+                .containsExactly(sourceOf(1));
     }
 
     // ---- routing fields ---------------------------------------------------------

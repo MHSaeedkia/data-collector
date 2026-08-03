@@ -12,12 +12,19 @@ import java.util.List;
  * is state built from many events, so the emitted snapshot carries the flag of the LAST accepted
  * event for this (exchange, pair) — in practice a feed does not switch mid-stream. Job 6 stamps it
  * onto every level so the aggregated book stays attributable per exchange.
+ *
+ * <p>{@code sourceIds} is where the pipeline genuinely fans in. Everywhere else a record has ONE
+ * parent; here the book is state accumulated over many events, so it lists the sink id of every
+ * event that still holds a resting level, plus the event that triggered this emit. It therefore
+ * grows with book depth, not with pipeline length. See memory/project_record_lineage.md.
  */
 public class OrderBookSnapshot {
 
     private int exchangeId;
     private int pairId;
     private int simulation;
+    private String sinkId = "";
+    private List<String> sourceIds = List.of();
     private long eventTime;
     private Long lastSequenceId;
     private List<PriceLevel> asks;
@@ -59,6 +66,22 @@ public class OrderBookSnapshot {
 
     public void setSimulation(int simulation) {
         this.simulation = simulation;
+    }
+
+    public String getSinkId() {
+        return sinkId;
+    }
+
+    public void setSinkId(String sinkId) {
+        this.sinkId = sinkId;
+    }
+
+    public List<String> getSourceIds() {
+        return sourceIds;
+    }
+
+    public void setSourceIds(List<String> sourceIds) {
+        this.sourceIds = sourceIds;
     }
 
     public long getEventTime() {

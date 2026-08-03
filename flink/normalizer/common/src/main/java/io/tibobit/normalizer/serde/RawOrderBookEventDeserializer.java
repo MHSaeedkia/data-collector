@@ -47,6 +47,8 @@ public class RawOrderBookEventDeserializer implements DeserializationSchema<RawO
                 PriceLevels.fromRecords(record.get("asks")),
                 PriceLevels.fromRecords(record.get("bids")));
         event.setSimulation((int) record.get("simulation"));
+        event.setSinkId(LineageRecords.sinkId(record.get("sink_id")));
+        event.setSourceIds(LineageRecords.sourceIds(record.get("source_ids")));
         event.setPipelineTimings(PipelineTimingsRecords.fromRecord(record.get("pipeline_timings")));
         return event;
     }

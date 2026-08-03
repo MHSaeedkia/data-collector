@@ -24,6 +24,7 @@ const magicByte = 0x0
 type wireLevel struct {
 	ExchangeID int    `avro:"exchange_id"`
 	Simulation int    `avro:"simulation"`
+	SourceID   string `avro:"source_id"`
 	Price      string `avro:"price"`
 	Quantity   string `avro:"quantity"`
 }
@@ -31,6 +32,7 @@ type wireLevel struct {
 type wireEvent struct {
 	PairID    int         `avro:"pair_id"`
 	Side      string      `avro:"side"`
+	SinkID    string      `avro:"sink_id"`
 	EventTime time.Time   `avro:"event_time"`
 	Levels    []wireLevel `avro:"levels"`
 }
@@ -77,6 +79,7 @@ func (d *Decoder) Decode(value []byte) (domain.RawBook, error) {
 		levels[i] = domain.RawLevel{
 			ExchangeID: l.ExchangeID,
 			Simulation: l.Simulation,
+			SourceID:   l.SourceID,
 			Price:      l.Price,
 			Quantity:   l.Quantity,
 		}
@@ -84,6 +87,7 @@ func (d *Decoder) Decode(value []byte) (domain.RawBook, error) {
 	return domain.RawBook{
 		PairID:    we.PairID,
 		Side:      we.Side,
+		SinkID:    we.SinkID,
 		Levels:    levels,
 		EventTime: we.EventTime.UnixMilli(),
 	}, nil

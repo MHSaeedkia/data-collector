@@ -8,7 +8,18 @@ type OrderbookSnapshot struct {
 	// Simulation is NiFi's flag carried up the pipeline: 0 = live data, 1 =
 	// simulation data, other values not yet defined. The book builder stamps
 	// the emitted book with the flag of the event that produced it.
-	Simulation      int64            `json:"simulation"`
+	Simulation int64 `json:"simulation"`
+	// SinkID and SourceIDs are record lineage. They are NOT part of what a
+	// scenario declares as wanted: the ids are fresh uuids on every run, so
+	// there is nothing stable to write down. The harness checks their shape and
+	// their cross-topic relationships instead, then clears them before the
+	// literal comparison — see scenario/lineage.go.
+	//
+	// swaggerignore keeps them out of the HTTP contract for that reason: a
+	// posted scenario that named one would have it silently ignored, so the
+	// spec must not offer it as something to fill in.
+	SinkID          string           `json:"sink_id" swaggerignore:"true"`
+	SourceIDs       []string         `json:"source_ids" swaggerignore:"true"`
 	EventTime       string           `json:"event_time"`
 	Asks            []PriceLevel     `json:"asks"`
 	Bids            []PriceLevel     `json:"bids"`
@@ -24,8 +35,11 @@ type PriceLevel struct {
 // — the terminal aggregator's output and the frozen contract the web app reads.
 // Each side is its own topic and its own record, so a book is two of these.
 type AggregatedSide struct {
-	PairID int64             `json:"pair_id"`
-	Side   string            `json:"side"` // "asks" or "bids"
+	PairID int64  `json:"pair_id"`
+	Side   string `json:"side"` // "asks" or "bids"
+	// SinkID is this record's own lineage id. There is no SourceIDs counterpart:
+	// the union mixes exchanges, so a level's parent belongs on the level.
+	SinkID string            `json:"sink_id"`
 	Levels []AggregatedLevel `json:"levels"`
 }
 
@@ -36,9 +50,14 @@ type AggregatedSide struct {
 // Simulation is tagged per level for the same reason ExchangeID is: one
 // aggregated record mixes exchanges, so the flag only means something attached
 // to the level it came with, never to the record as a whole.
+// SourceID is per level for the same reason: it is the sink_id of the job-5
+// snapshot the level came from, and one record's levels come from several
+// snapshots. Like the snapshot's lineage it is checked structurally and then
+// cleared before comparison, never declared by a scenario.
 type AggregatedLevel struct {
 	ExchangeID int64  `json:"exchange_id"`
 	Simulation int64  `json:"simulation"`
+	SourceID   string `json:"source_id" swaggerignore:"true"`
 	Price      string `json:"price"`
 	Quantity   string `json:"quantity"`
 }

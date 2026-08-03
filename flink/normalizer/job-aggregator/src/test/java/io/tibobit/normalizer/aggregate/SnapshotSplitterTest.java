@@ -113,6 +113,26 @@ class SnapshotSplitterTest {
         assertThat(out.get(1).getLevels()).isEmpty();
     }
 
+    /**
+     * The splitter is where a level's parent is decided: every level of both sides is stamped with
+     * the snapshot's sink id, so the aggregator downstream can stay a pure union and never has to
+     * work out where a level came from.
+     */
+    @Test
+    @DisplayName("stamps the snapshot's sink id onto every level of both sides")
+    void stampsSnapshotSinkIdOnEveryLevel() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
+                6, 1, 1_700_000_000_000L, 5L, levels("101", "1", "102", "2"), levels("100", "3"));
+        snapshot.setSinkId("66666666-6666-4666-8666-666666666666");
+
+        List<ExchangeBook> out = split(snapshot);
+
+        assertThat(out.get(0).getLevels()).extracting(AggregatedLevel::getSourceId)
+                .containsOnly("66666666-6666-4666-8666-666666666666");
+        assertThat(out.get(1).getLevels()).extracting(AggregatedLevel::getSourceId)
+                .containsOnly("66666666-6666-4666-8666-666666666666");
+    }
+
     /** Minimal Collector that appends to a list — the splitter uses only collect(). */
     private static final class ListCollector implements Collector<ExchangeBook> {
         private final List<ExchangeBook> out;
