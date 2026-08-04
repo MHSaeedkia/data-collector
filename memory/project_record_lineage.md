@@ -56,6 +56,11 @@ a deploy, check that counter first.
 
 `Json.sourceIds(carrier)` mirrors `Json.simulation(carrier)`: same carrier node, one field.
 
+**`sample-raw-data.md` is the NiFi-facing contract for this** (2026-08-04): all 12 per-exchange
+samples now show `id` and `simulation` in the right carrier, under a "NiFi-injected fields" section
+that states the drop rule. It is what the NiFi team reads, so a change to either field's placement
+has to land there too or the producer side will not hear about it.
+
 ## Per-job behaviour
 
 | Job | What it does |

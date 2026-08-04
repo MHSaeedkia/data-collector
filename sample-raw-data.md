@@ -28,6 +28,35 @@
 
 ---
 
+## NiFi-injected fields: `simulation` and `id`
+
+**Every sample below shows them.** They are not part of any exchange's wire format — NiFi adds
+them to each record it publishes to a raw topic, and job 1 reads them off the payload root.
+
+| Field        | Added      | Meaning |
+| ------------ | ---------- | ------- |
+| `simulation` | 2026-08-03 | `0` or absent = live data, `1` = simulation data. Other values are undefined and carried through verbatim |
+| `id`         | 2026-08-03 | A **fresh UUID per record**, minted by NiFi when it writes that record. It is the first link of the lineage chain: job 1 copies it into the emitted event's `source_ids`. Named `sink_id` until 2026-08-04 |
+
+**⚠ `id` is mandatory — job 1 DROPS any payload without one** (`dropped-no-id` counter, WARN log).
+That makes NiFi a hard dependency: a processor that does not inject `id` loses 100% of its data,
+silently apart from the counter, so **NiFi's change must ship BEFORE the job jars, never after**. A
+missing `simulation` is by contrast benign and simply reads as `0`.
+
+Both ride in the same place, which depends only on the shape of the payload root:
+
+- **ex1, ex2, ex4, ex5, ex6, ex8 — object root** ⇒ injected as **root fields**, alongside whatever
+  the exchange already sends. For the Centrifugo payloads (ex1/ex2 WS, ex4) that means the OUTER
+  object, next to `push` — not inside `data`.
+- **ex3/wallex — array root** ⇒ there is no root field to inject into, so both go in a **trailing
+  metadata object as element index 2**: `["{market}@{side}", [levels…], {"simulation":1,"id":"…"}]`.
+  **Never a fourth element** — job 1 reads index 2 and drops any envelope longer than 3.
+
+The samples below all show `"simulation": 1`; a live feed sends `0` (or omits it). The `id` values
+are illustrative — every real record carries its own.
+
+---
+
 ## ex1-raw — nobitex
 
 **⚠ REVISED 2026-07-21 — the "only snapshots" assumption was WRONG.** nobitex serves the initial
@@ -48,7 +77,7 @@ memory/project_type_validator.md).
 **REST snapshot sample** (level arrays trimmed):
 
 ```json
-{"action":"snapshot","pair":"BTCUSDT","status":"ok","lastUpdate":1784614865284,"lastTradePrice":"65708.96","bids":[["65660","0.000615"],["65636","0.002543"]],"asks":[["65708.76","0.00672"],["65708.79","0.09133"]]}
+{"id":"9f2b1c74-3d5e-4a81-b0c6-71e2d4a95c38","simulation":1,"action":"snapshot","pair":"BTCUSDT","status":"ok","lastUpdate":1784614865284,"lastTradePrice":"65708.96","bids":[["65660","0.000615"],["65636","0.002543"]],"asks":[["65708.76","0.00672"],["65708.79","0.09133"]]}
 ```
 
 **WebSocket delta sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — a real
@@ -57,6 +86,8 @@ variable):
 
 ```json
 {
+  "id": "4c8e0a12-7b93-4f6d-9e21-0a5c3b8d71f4",
+  "simulation": 1,
   "push": {
     "channel": "public:orderbook-BTCUSDT",
     "pub": {
@@ -121,7 +152,7 @@ memory/project_type_validator.md) — the same exchange-agnostic path ex1 uses.
 **REST snapshot sample** (level arrays trimmed):
 
 ```json
-{"action":"snapshot","pair":"BTC_USDT","event_time":1784008564112,"asks":[["62714.50","0.01387100"],["62720.77","0.00970970"]],"bids":[["62672.30","0.01003106"],["62655.92","0.01368489"]]}
+{"id":"2d7f6b90-8c14-4e3a-9d57-6b2f0c81ae43","simulation":1,"action":"snapshot","pair":"BTC_USDT","event_time":1784008564112,"asks":[["62714.50","0.01387100"],["62720.77","0.00970970"]],"bids":[["62672.30","0.01003106"],["62655.92","0.01368489"]]}
 ```
 
 **⚠ The injected `pair` must be the DB market string `BTC_USDT`** (underscore), matching
@@ -134,6 +165,8 @@ message carried **50 levels per side**):
 
 ```json
 {
+  "id": "e1a45c38-0f27-4b6e-8c93-5d71a2b0e964",
+  "simulation": 1,
   "push": {
     "channel": "orderbook:BTC_USDT",
     "pub": {
@@ -200,7 +233,7 @@ Samples (pretty-printed; level arrays trimmed — each real message carried **50
   {"price": 62525.04, "quantity": 0.000451, "sum": 28.19879304},
   {"price": 62424.28, "quantity": 0.02624,  "sum": 1638.0131072},
   {"price": 62200,    "quantity": 0.068493, "sum": 4260.2646}
-], {"simulation":1}]
+], {"simulation":1,"id":"7b3e9d02-5a6c-4f18-b2e7-9c04d81a6f35"}]
 ```
 
 ```json
@@ -208,19 +241,22 @@ Samples (pretty-printed; level arrays trimmed — each real message carried **50
   {"price": 62579.56, "quantity": 0.004585, "sum": 286.9272826},
   {"price": 62619.76, "quantity": 0.002,    "sum": 125.23952},
   {"price": 62634.08, "quantity": 0.048566, "sum": 3041.88672928}
-], {"simulation":1}]
+], {"simulation":1,"id":"c5d81f47-2e60-4a93-8b15-3f7c9e2d40a8"}]
 ```
 
 Parsing notes (job 1):
 
 - **Envelope**: NOT Centrifugo — the top level is a JSON **array**:
-  `["{market}@{side}", [levels…], {"simulation": N}]`. Market key + side both live in that first
-  string (`BTCUSDT@buyDepth` / `BTCUSDT@sellDepth`); `buyDepth` = bids, `sellDepth` = asks.
-- **⚠ `simulation` rides in a THIRD element (user 2026-08-03)**, not as a root field. Every other
-  exchange has an OBJECT payload root, so NiFi injects `"simulation": N` there directly; ex3's root
-  is an array, so it is appended as a trailing metadata object instead. Job 1 accepts both the 2-
-  and 3-element forms — a 2-element frame carries no flag and reads as `0` (live data). A 4th
-  element is not a shape we publish and is dropped by the whitelist rule.
+  `["{market}@{side}", [levels…], {"simulation": N, "id": "<uuid>"}]`. Market key + side both live
+  in that first string (`BTCUSDT@buyDepth` / `BTCUSDT@sellDepth`); `buyDepth` = bids, `sellDepth`
+  = asks.
+- **⚠ `simulation` and `id` ride in a THIRD element (user 2026-08-03)**, not as root fields. Every
+  other exchange has an OBJECT payload root, so NiFi injects them there directly; ex3's root is an
+  array, so they are appended as a trailing metadata object instead — **both in the SAME object at
+  index 2**, never as a fourth element (job 1 reads index 2 and drops any envelope longer than 3).
+- **⚠ The 2-element form is effectively dead** (since 2026-08-03). Job 1 still parses it — it reads
+  as `simulation = 0` and no `id` — but a payload with no `id` is then DROPPED, so ex3 must publish
+  the 3-element form in practice.
 - **⚠ Levels are objects with JSON-NUMBER `price`/`quantity`** (re-confirms the discarded-capture
   lead) — parsing MUST use Jackson `USE_BIG_DECIMAL_FOR_FLOATS` so BigDecimal comes from the
   decimal literal, never via double. Prices may lack decimals (`62200`).
@@ -246,6 +282,8 @@ Sample (pretty-printed; level arrays trimmed — the real message carried **50 l
 
 ```json
 {
+  "id": "6a0c2e91-4d38-4b75-9f62-8e1b3d5c07af",
+  "simulation": 1,
   "push": {
     "channel": "orderbook:12",
     "pub": {
@@ -301,6 +339,8 @@ matching the `books50` channel name):
 
 ```json
 {
+  "id": "38f7b4d6-9c25-4e10-a83b-6d0f2c94e175",
+  "simulation": 1,
   "action": "snapshot",
   "arg": {
     "instType": "SPOT",
@@ -366,6 +406,8 @@ per side**, matching the depth in the topic name `orderbook.50.BTCUSDT`):
 
 ```json
 {
+  "id": "b92c4a07-6e83-4d15-9270-1f5a8c3b60de",
+  "simulation": 1,
   "topic": "orderbook.50.BTCUSDT",
   "ts": 1784027470176,
   "type": "snapshot",
@@ -392,6 +434,8 @@ Delta sample (verbatim, complete — deltas carry ONLY the changed levels):
 
 ```json
 {
+  "id": "0e6d3f81-7a49-4c26-b358-2d9e4f10c7a5",
+  "simulation": 1,
   "topic": "orderbook.50.BTCUSDT",
   "ts": 1784027470196,
   "type": "delta",
@@ -460,6 +504,8 @@ Snapshot sample (pretty-printed; level arrays trimmed — the real message carri
 
 ```json
 {
+  "id": "a47f0b25-3c9e-4681-9d40-7b2c5e83f16d",
+  "simulation": 1,
   "arg": {
     "channel": "books-grouped",
     "instId": "BTC-USDT",
@@ -489,6 +535,8 @@ qty-`"0"` delete at ask `62773` and the brand-new ask level `62931`):
 
 ```json
 {
+  "id": "5c1d8e30-6b74-42af-8e95-0a3f7d21b4c6",
+  "simulation": 1,
   "arg": {
     "channel": "books-grouped",
     "instId": "BTC-USDT",
