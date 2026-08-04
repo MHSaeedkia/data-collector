@@ -9,7 +9,7 @@ type OrderbookSnapshot struct {
 	// simulation data, other values not yet defined. The book builder stamps
 	// the emitted book with the flag of the event that produced it.
 	Simulation int64 `json:"simulation"`
-	// SinkID and SourceIDs are record lineage. They are NOT part of what a
+	// ID and SourceIDs are record lineage. They are NOT part of what a
 	// scenario declares as wanted: the ids are fresh uuids on every run, so
 	// there is nothing stable to write down. The harness checks their shape and
 	// their cross-topic relationships instead, then clears them before the
@@ -18,7 +18,7 @@ type OrderbookSnapshot struct {
 	// swaggerignore keeps them out of the HTTP contract for that reason: a
 	// posted scenario that named one would have it silently ignored, so the
 	// spec must not offer it as something to fill in.
-	SinkID          string           `json:"sink_id" swaggerignore:"true"`
+	ID              string           `json:"id" swaggerignore:"true"`
 	SourceIDs       []string         `json:"source_ids" swaggerignore:"true"`
 	EventTime       string           `json:"event_time"`
 	Asks            []PriceLevel     `json:"asks"`
@@ -37,9 +37,9 @@ type PriceLevel struct {
 type AggregatedSide struct {
 	PairID int64  `json:"pair_id"`
 	Side   string `json:"side"` // "asks" or "bids"
-	// SinkID is this record's own lineage id. There is no SourceIDs counterpart:
+	// ID is this record's own lineage id. There is no SourceIDs counterpart:
 	// the union mixes exchanges, so a level's parent belongs on the level.
-	SinkID string            `json:"sink_id"`
+	ID     string            `json:"id"`
 	Levels []AggregatedLevel `json:"levels"`
 }
 
@@ -50,7 +50,7 @@ type AggregatedSide struct {
 // Simulation is tagged per level for the same reason ExchangeID is: one
 // aggregated record mixes exchanges, so the flag only means something attached
 // to the level it came with, never to the record as a whole.
-// SourceID is per level for the same reason: it is the sink_id of the job-5
+// SourceID is per level for the same reason: it is the id of the job-5
 // snapshot the level came from, and one record's levels come from several
 // snapshots. Like the snapshot's lineage it is checked structurally and then
 // cleared before comparison, never declared by a scenario.

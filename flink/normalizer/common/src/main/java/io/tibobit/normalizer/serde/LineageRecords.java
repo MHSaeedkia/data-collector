@@ -5,7 +5,7 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * Shared decoding of the {@code sink_id}/{@code source_ids} lineage fields, used by every
+ * Shared decoding of the {@code id}/{@code source_ids} lineage fields, used by every
  * deserializer in this package. Encoding needs no helper — a {@code String} and a
  * {@code List<String>} go straight into a {@code GenericRecordBuilder}.
  *
@@ -20,7 +20,7 @@ final class LineageRecords {
     }
 
     /** Null only for records written before the field existed; those read as the empty default. */
-    static String sinkId(Object value) {
+    static String id(Object value) {
         return value == null ? "" : value.toString();
     }
 

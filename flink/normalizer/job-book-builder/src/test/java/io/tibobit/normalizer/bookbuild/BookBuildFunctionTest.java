@@ -303,8 +303,8 @@ class BookBuildFunctionTest {
     // ---- lineage -----------------------------------------------------------------
 
     /** Job 4 stamped an id on every event that reaches here; these stand in for those. */
-    private static RawOrderBookEvent from(RawOrderBookEvent event, String sinkId) {
-        event.setSinkId(sinkId);
+    private static RawOrderBookEvent from(RawOrderBookEvent event, String id) {
+        event.setId(id);
         return event;
     }
 
@@ -322,7 +322,7 @@ class BookBuildFunctionTest {
 
         // Triggering event first, then the resting levels in emitted order (asks, then bids).
         assertThat(out.getSourceIds()).containsExactly("ev-c", "ev-a", "ev-b");
-        assertThat(out.getSinkId()).isNotBlank();
+        assertThat(out.getId()).isNotBlank();
     }
 
     /**
@@ -378,14 +378,14 @@ class BookBuildFunctionTest {
     }
 
     @Test
-    @DisplayName("every emitted book gets its own distinct sink id")
-    void mintsDistinctSinkIdPerBook() throws Exception {
+    @DisplayName("every emitted book gets its own distinct id")
+    void mintsDistinctIdPerBook() throws Exception {
         process(from(event("snapshot", levels("10", "1"), List.of()), "ev-a"));
         process(from(event("update", levels("11", "2"), List.of()), "ev-b"));
 
         List<OrderBookSnapshot> all = harness.extractOutputValues();
         assertThat(all).hasSize(2);
-        assertThat(all).extracting(OrderBookSnapshot::getSinkId)
+        assertThat(all).extracting(OrderBookSnapshot::getId)
                 .doesNotHaveDuplicates()
                 .allSatisfy(id -> assertThat(id).isNotBlank());
     }

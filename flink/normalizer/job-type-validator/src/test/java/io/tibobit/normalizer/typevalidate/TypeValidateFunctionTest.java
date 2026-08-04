@@ -354,9 +354,9 @@ class TypeValidateFunctionTest {
 
     // ---- lineage ----------------------------------------------------------------
 
-    /** Every incoming event arrives with the sink id job 1 gave it. */
-    private static RawOrderBookEvent from(RawOrderBookEvent event, String sinkId) {
-        event.setSinkId(sinkId);
+    /** Every incoming event arrives with the id job 1 gave it. */
+    private static RawOrderBookEvent from(RawOrderBookEvent event, String id) {
+        event.setId(id);
         return event;
     }
 
@@ -367,7 +367,7 @@ class TypeValidateFunctionTest {
 
         RawOrderBookEvent out = valid().get(0);
         assertThat(out.getSourceIds()).containsExactly("job1-id");
-        assertThat(out.getSinkId()).isNotBlank().isNotEqualTo("job1-id");
+        assertThat(out.getId()).isNotBlank().isNotEqualTo("job1-id");
     }
 
     /**
@@ -376,15 +376,15 @@ class TypeValidateFunctionTest {
      * not forwarded, and that id is the link back to the raw stream.
      */
     @Test
-    @DisplayName("a rejection gets its own sink id and keeps the rejected event's untouched")
+    @DisplayName("a rejection gets its own id and keeps the rejected event's untouched")
     void rejectionHasItsOwnLineage() throws Exception {
         send(from(snapshotFeed(1, 1, 100L), "job1-first"));
         send(from(snapshotFeed(1, 1, 99L), "job1-stale")); // out of order -> rejected
 
         RejectedOrderBookEvent rejection = rejects().get(0);
         assertThat(rejection.getSourceIds()).containsExactly("job1-stale");
-        assertThat(rejection.getSinkId()).isNotBlank().isNotEqualTo("job1-stale");
-        assertThat(rejection.getEvent().getSinkId()).isEqualTo("job1-stale");
+        assertThat(rejection.getId()).isNotBlank().isNotEqualTo("job1-stale");
+        assertThat(rejection.getEvent().getId()).isEqualTo("job1-stale");
     }
 
     /**
@@ -406,6 +406,6 @@ class TypeValidateFunctionTest {
 
         assertThat(reset.getSourceIds()).containsExactly("job1-gap");
         assertThat(rejection.getSourceIds()).containsExactly("job1-gap");
-        assertThat(reset.getSinkId()).isNotBlank().isNotEqualTo(rejection.getSinkId());
+        assertThat(reset.getId()).isNotBlank().isNotEqualTo(rejection.getId());
     }
 }

@@ -2,7 +2,7 @@ package io.tibobit.normalizer.bookbuild;
 
 /**
  * One level resting in the book, as held in {@link BookBuildFunction}'s MapState: the quantity plus
- * the {@code sink_id} of the event that last set it. The sink id is what makes the emitted
+ * the {@code id} of the event that last set it. The id is what makes the emitted
  * snapshot's {@code source_ids} answer "which events is this book actually made of" rather than just
  * "which event triggered this emit".
  *
@@ -19,15 +19,15 @@ public class RestingLevel {
 
     private String price;
     private String quantity;
-    private String sinkId;
+    private String id;
 
     public RestingLevel() {
     }
 
-    public RestingLevel(String price, String quantity, String sinkId) {
+    public RestingLevel(String price, String quantity, String id) {
         this.price = price;
         this.quantity = quantity;
-        this.sinkId = sinkId;
+        this.id = id;
     }
 
     public String getPrice() {
@@ -46,11 +46,11 @@ public class RestingLevel {
         this.quantity = quantity;
     }
 
-    public String getSinkId() {
-        return sinkId;
+    public String getId() {
+        return id;
     }
 
-    public void setSinkId(String sinkId) {
-        this.sinkId = sinkId;
+    public void setId(String id) {
+        this.id = id;
     }
 }

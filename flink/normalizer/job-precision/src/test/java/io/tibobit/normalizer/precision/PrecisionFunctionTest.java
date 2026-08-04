@@ -339,11 +339,11 @@ class PrecisionFunctionTest {
     void truncatedEventIsRestamped() throws Exception {
         openWith(Map.of(1, new MarketPrecision(2, 8)));
         RawOrderBookEvent in = event(1, levels("62770.5", "0.5"), null);
-        in.setSinkId("job3-id");
+        in.setId("job3-id");
 
         RawOrderBookEvent out = process(in);
 
         assertThat(out.getSourceIds()).containsExactly("job3-id");
-        assertThat(out.getSinkId()).isNotBlank().isNotEqualTo("job3-id");
+        assertThat(out.getId()).isNotBlank().isNotEqualTo("job3-id");
     }
 }

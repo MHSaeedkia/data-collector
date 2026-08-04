@@ -9,8 +9,8 @@ package io.tibobit.normalizer.aggregate;
  * <p>{@code simulation} and {@code sourceId} ride along for the same reason {@code exchangeId} does:
  * one aggregated book mixes exchanges, so both are only meaningful per level, never for the record
  * as a whole. {@code simulation} is the flag of the exchange book this level came from (0 = live,
- * 1 = simulation); {@code sourceId} is that book's {@code sink_id} — singular, because a level comes
- * from exactly one job-5 snapshot. This is why the aggregated record has a {@code sink_id} but no
+ * 1 = simulation); {@code sourceId} is that book's {@code id} — singular, because a level comes
+ * from exactly one job-5 snapshot. This is why the aggregated record has a {@code id} but no
  * {@code source_ids}: a single parent list on the record would have to flatten away which exchange
  * each parent belongs to.
  */

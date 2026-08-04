@@ -24,7 +24,7 @@ const aggregatedOrderBookEventSchema = `{
 	"fields": [
 		{"name": "pair_id", "type": "int"},
 		{"name": "side", "type": {"type": "enum", "name": "Side", "symbols": ["asks", "bids"]}},
-		{"name": "sink_id", "type": "string", "default": ""},
+		{"name": "id", "type": "string", "default": ""},
 		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
 		{"name": "levels", "type": {"type": "array", "items": {
 			"type": "record",
@@ -76,7 +76,7 @@ func TestDecoder_Decode_ValidMessageAndCachesSchema(t *testing.T) {
 	value := wireMessage(t, 2, wireEvent{
 		PairID:    1,
 		Side:      "asks",
-		SinkID:    "77777777-7777-4777-8777-777777777777",
+		ID:        "77777777-7777-4777-8777-777777777777",
 		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
 		Levels: []wireLevel{{
 			ExchangeID: 3,
@@ -91,7 +91,7 @@ func TestDecoder_Decode_ValidMessageAndCachesSchema(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, rb.PairID)
 	assert.Equal(t, "asks", rb.Side)
-	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.SinkID)
+	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.ID)
 	assert.Equal(t, int64(1_700_000_000_000), rb.EventTime)
 	require.Len(t, rb.Levels, 1)
 	assert.Equal(t, 3, rb.Levels[0].ExchangeID)
@@ -171,7 +171,7 @@ func TestDecoder_Decode_SourceIDIsPerLevel(t *testing.T) {
 	value := wireMessage(t, 2, wireEvent{
 		PairID:    1,
 		Side:      "asks",
-		SinkID:    "77777777-7777-4777-8777-777777777777",
+		ID:        "77777777-7777-4777-8777-777777777777",
 		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
 		Levels: []wireLevel{
 			{ExchangeID: 3, SourceID: "snapshot-ex3", Price: "100", Quantity: "1"},
@@ -184,7 +184,7 @@ func TestDecoder_Decode_SourceIDIsPerLevel(t *testing.T) {
 	require.Len(t, rb.Levels, 2)
 	assert.Equal(t, "snapshot-ex3", rb.Levels[0].SourceID)
 	assert.Equal(t, "snapshot-ex6", rb.Levels[1].SourceID)
-	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.SinkID)
+	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.ID)
 }
 
 func mustQuoteJSON(s string) string {

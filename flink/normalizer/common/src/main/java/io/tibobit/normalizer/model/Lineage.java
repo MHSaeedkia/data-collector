@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Record lineage: who wrote a record ({@code sink_id}) and which records it was made from
- * ({@code source_ids}). Every write to a Kafka topic mints a fresh sink id, so a record crossing the
+ * Record lineage: who wrote a record ({@code id}) and which records it was made from
+ * ({@code source_ids}). Every write to a Kafka topic mints a fresh id, so a record crossing the
  * whole pipeline carries seven different ones — NiFi's, then one per job. {@code source_ids} holds
  * IMMEDIATE parents only, never the accumulated chain: the path is reconstructed by walking hop to
  * hop, which keeps the list at one element everywhere except the genuine fan-in in job 5.
@@ -17,7 +17,7 @@ public final class Lineage {
     private Lineage() {
     }
 
-    public static String newSinkId() {
+    public static String newId() {
         return UUID.randomUUID().toString();
     }
 
@@ -31,7 +31,7 @@ public final class Lineage {
      * Call this instead of writing the pair by hand.
      */
     public static void restamp(RawOrderBookEvent event) {
-        event.setSourceIds(List.of(event.getSinkId()));
-        event.setSinkId(newSinkId());
+        event.setSourceIds(List.of(event.getId()));
+        event.setId(newId());
     }
 }

@@ -14,7 +14,7 @@ import java.util.List;
  * onto every level so the aggregated book stays attributable per exchange.
  *
  * <p>{@code sourceIds} is where the pipeline genuinely fans in. Everywhere else a record has ONE
- * parent; here the book is state accumulated over many events, so it lists the sink id of every
+ * parent; here the book is state accumulated over many events, so it lists the id of every
  * event that still holds a resting level, plus the event that triggered this emit. It therefore
  * grows with book depth, not with pipeline length. See memory/project_record_lineage.md.
  */
@@ -23,7 +23,7 @@ public class OrderBookSnapshot {
     private int exchangeId;
     private int pairId;
     private int simulation;
-    private String sinkId = "";
+    private String id = "";
     private List<String> sourceIds = List.of();
     private long eventTime;
     private Long lastSequenceId;
@@ -68,12 +68,12 @@ public class OrderBookSnapshot {
         this.simulation = simulation;
     }
 
-    public String getSinkId() {
-        return sinkId;
+    public String getId() {
+        return id;
     }
 
-    public void setSinkId(String sinkId) {
-        this.sinkId = sinkId;
+    public void setId(String id) {
+        this.id = id;
     }
 
     public List<String> getSourceIds() {

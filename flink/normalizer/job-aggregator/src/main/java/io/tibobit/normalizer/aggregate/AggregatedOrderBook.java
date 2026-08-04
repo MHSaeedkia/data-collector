@@ -8,7 +8,7 @@ import java.util.List;
  * {@code aggregated-order-book-event}) and consumed by the web UI. This wire shape is fixed — the
  * web UI depends on it — do NOT alter it.
  *
- * <p>{@code sinkId} is this record's own id. There is deliberately no {@code sourceIds} counterpart:
+ * <p>{@code id} is this record's own id. There is deliberately no {@code sourceIds} counterpart:
  * the parents of an aggregated record are per level, on {@link AggregatedLevel#getSourceId()}, since
  * the union mixes exchanges. One consequence to know about: an aggregated record with no levels (all
  * exchanges reset) carries no parent information at all.
@@ -17,7 +17,7 @@ public class AggregatedOrderBook {
 
     private int pairId;
     private String side;
-    private String sinkId = "";
+    private String id = "";
     private List<AggregatedLevel> levels;
 
     // Max event_time across the contributing exchange books.
@@ -49,12 +49,12 @@ public class AggregatedOrderBook {
         this.side = side;
     }
 
-    public String getSinkId() {
-        return sinkId;
+    public String getId() {
+        return id;
     }
 
-    public void setSinkId(String sinkId) {
-        this.sinkId = sinkId;
+    public void setId(String id) {
+        this.id = id;
     }
 
     public List<AggregatedLevel> getLevels() {

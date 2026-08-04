@@ -1,23 +1,30 @@
 ---
 name: record-lineage
-description: sink_id / source_ids record lineage across the whole normalizer pipeline — the model, the four user decisions behind it, and the traps
+description: id / source_ids record lineage across the whole normalizer pipeline — the model, the four user decisions behind it, and the traps
 metadata:
     type: project
 ---
 
-# Record lineage (`sink_id` / `source_ids`)
+# Record lineage (`id` / `source_ids`)
 
-**Added 2026-08-03 (user request).** Two fields that answer "where did this record come from".
+**Added 2026-08-03 (user request). Field renamed `sink_id` → `id` on 2026-08-04**, also by user
+request — a pure rename, no logic touched. Two fields that answer "where did this record come from".
 
-- **`sink_id`** — a fresh UUID minted by whichever step WROTE the record to its topic. Unique per
+- **`id`** — a fresh UUID minted by whichever step WROTE the record to its topic. Unique per
   record, never reused. NiFi mints the first one; each job mints its own on emit. A record crossing
   the whole pipeline therefore carries **seven different ids** in turn — NiFi's, then one per job.
-- **`source_ids`** — the sink ids of the records read **on that hop**.
+- **`source_ids`** — the ids of the records read **on that hop**.
 
-The critical thing to hold onto: `sink_id` is not a correlation id and does **not** survive a hop.
+The critical thing to hold onto: `id` is not a correlation id and does **not** survive a hop.
 It is re-stamped every time. To follow a record you walk the chain hop by hop; nothing carries an
 end-to-end identity. This is the opposite of how `simulation` behaves ([[simulation-flag]]), and
 mixing the two mental models is the easiest mistake to make here.
+
+⚠ **The name now works against that.** A field called `id` reads like the record's stable identity,
+and it is exactly the opposite: it identifies the WRITE, not the record's journey. `source_ids` (the
+plural, and the word "source") is what keeps the model legible — do not "tidy" it to `parent_id` or
+fold it into the `id`. The old name `sink_id` said this out loud; the current one does not, so this
+paragraph is the only thing left that does.
 
 ## The four decisions the user made (2026-08-03)
 
@@ -25,25 +32,25 @@ These were explicitly chosen from alternatives — do not "simplify" them back.
 
 1. **Job 5's `source_ids` = every event still holding a resting level**, not just the triggering
    event. This is why the book builder's MapState value had to change shape.
-2. **The aggregated record gets a per-record `sink_id` and a per-LEVEL `source_id`** — not a
+2. **The aggregated record gets a per-record `id` and a per-LEVEL `source_id`** — not a
    record-level `source_ids` array.
 3. **Immediate parents only**, never the accumulated chain.
-4. **A payload with no `sink_id` is DROPPED** by job 1, not passed through and not given a
+4. **A payload with no `id` is DROPPED** by job 1, not passed through and not given a
    substitute.
 
 ## Decision 4 is an operational landmine — read this before deploying
 
-Job 1 drops any payload whose `sink_id` is missing or blank (`dropped-no-sink-id` counter, WARN
-log). **A NiFi processor that does not inject `sink_id` loses 100% of its data**, silently apart
+Job 1 drops any payload whose `id` is missing or blank (`dropped-no-id` counter, WARN
+log). **A NiFi processor that does not inject `id` loses 100% of its data**, silently apart
 from the counter. **Deploy NiFi's change BEFORE these jars, never after.** If a feed goes dead after
 a deploy, check that counter first.
 
 ## Where it rides on the wire — the same two carriers as `simulation`
 
-- **ex1, ex2, ex4, ex5, ex6, ex8** — object payload root, so NiFi injects `"sink_id": "<uuid>"` as a
+- **ex1, ex2, ex4, ex5, ex6, ex8** — object payload root, so NiFi injects `"id": "<uuid>"` as a
   **root field**.
 - **ex3/wallex** — array root, so it goes in the **same trailing object as `simulation`**:
-  `["{market}@{side}", [levels…], {"simulation":1,"sink_id":"<uuid>"}]`. **Not a fourth element** —
+  `["{market}@{side}", [levels…], {"simulation":1,"id":"<uuid>"}]`. **Not a fourth element** —
   `WallexParser` drops any envelope longer than 3. The parser reads it from `root.path(2)`, so
   "index 2" is the rule, not "the last element" (this matters — see the e2e note below).
 
@@ -53,15 +60,15 @@ a deploy, check that counter first.
 
 | Job | What it does |
 | --- | --- |
-| 1 pair-extract | Reads NiFi's id into `source_ids`, mints its own. **Fan-out**: one payload → N events all sharing the one source, each with its OWN sink id. Drops the payload if there is no source |
+| 1 pair-extract | Reads NiFi's id into `source_ids`, mints its own. **Fan-out**: one payload → N events all sharing the one source, each with its OWN id. Drops the payload if there is no source |
 | 2 type-validate | Re-stamps on the main stream. The gap case is a lineage FAN-OUT: the `reset` marker and the dead-letter record are two children of the one gap event, each with its own id |
 | 3 rebase / 4 precision | **No longer no-ops** (unlike `simulation`): they write to a topic, so they re-stamp. Job 3's `no_rebase_row` dead-letter gets its own id too |
 | 5 book-build | The genuine FAN-IN. See below |
-| 6 aggregate | Mints a record `sink_id`; `SnapshotSplitter` stamps each level's `source_id` from the snapshot it came from |
+| 6 aggregate | Mints a record `id`; `SnapshotSplitter` stamps each level's `source_id` from the snapshot it came from |
 
 ### Dead-letter records have TWO lineages, and they are not the same thing
 
-The envelope's `sink_id` is the dead-letter record's own; its `source_ids` is the rejected event.
+The envelope's `id` is the dead-letter record's own; its `source_ids` is the rejected event.
 The **nested** event keeps the id it arrived with and is deliberately NOT re-stamped — it is being
 *recorded*, not *forwarded*, and that id is what links the dead-letter back to the raw stream.
 
@@ -71,7 +78,7 @@ The **nested** event keeps the id it arrived with and is deliberately NOT re-sta
 (asks order, then bids, deduplicated). So it grows with **book depth**, not pipeline length.
 
 This is why `MapState` went from `price → quantity` to `price → RestingLevel{price, quantity,
-sinkId}`. A level updated by a later event transfers to that event, so an older event drops out of
+id}`. A level updated by a later event transfers to that event, so an older event drops out of
 the lineage once nothing it set is still resting — otherwise the list would only ever grow.
 
 **The triggering event is included unconditionally, and that is load-bearing.** An event that only
@@ -99,8 +106,8 @@ parent information at all. Accepted, by construction of decision 2.
   and `RawOrderBookEventDeserializerTest.convertsUtf8LineageToString` is the guard — an in-memory
   `GenericRecordBuilder` round trip does NOT reach this, because it stores back whatever object it
   was given.
-- **Order matters when re-stamping.** `sourceIds = [sinkId]` must happen BEFORE minting the new
-  sink id, or the record becomes its own parent — and that failure is invisible, since both fields
+- **Order matters when re-stamping.** `sourceIds = [id]` must happen BEFORE minting the new
+  id, or the record becomes its own parent — and that failure is invisible, since both fields
   still hold well-formed uuids. `model/Lineage.restamp()` exists solely to make this unmissable.
 - **RE-REGISTER ALL FOUR SUBJECTS.** Same trap as `pipeline_timings` and `simulation`: a stale
   registered subject makes the Avro sink throw on the unknown field. Every field defaults
@@ -108,20 +115,22 @@ parent information at all. Accepted, by construction of decision 2.
 
 ## Coverage
 
-- `SinkIdTest` (job 1) — the cross-parser rule, mirroring `SimulationFlagTest`. 21 cases.
+- `RecordIdTest` (job 1) — the cross-parser rule, mirroring `SimulationFlagTest`. 21 cases.
 - Per job: fan-out + drop (1), re-stamp/reject/gap-fan-out (2), re-stamp + reject (3), re-stamp (4),
   fan-in incl. delete-only, reset, overwrite-transfers-owner and dedup (5), per-level through the
   union + reset-drops-out (6). Plus Avro round trips and the Utf8 guard in common.
-- **199 Java tests green.** `AggregatedOrderBookSerializer` has no unit test (the aggregator pom
-  does not copy the avsc onto its test classpath) — its two new fields are covered by e2e only.
+- **202 Java tests green** (surefire total across the 7 modules). `AggregatedOrderBookSerializer`
+  has no unit test (the aggregator pom does not copy the avsc onto its test classpath) — its two
+  new fields are covered by e2e only.
 - e2e: `scenario/lineage.go` + `lineage_test.go`; **verified live** on 5 scenarios (ex1 object root,
-  ex3 array root incl. noise frames, ex5 fan-out, ex6 delta feed, ex1 gap→reset).
+  ex3 array root incl. noise frames, ex5 fan-out, ex6 delta feed, ex1 gap→reset) — **those live runs
+  predate the rename**; nothing has been run against a stack since, only the test suites.
 
 ## What e2e can and cannot assert
 
 The ids are random per run, so **no scenario can declare them**. The harness therefore:
 
-1. **Injects** a `sink_id` into every source at produce time, exactly as NiFi does — the 177
+1. **Injects** a `id` into every source at produce time, exactly as NiFi does — the 177
    fixtures are not edited. Job 1 drops unstamped payloads, so a stamping bug does not fail loudly:
    it empties every snapshot stream in the suite and reads as a broken pipeline. `lineage_test.go`
    stamps all 177 sources offline to catch that cheaply.
@@ -131,7 +140,7 @@ The ids are random per run, so **no scenario can declare them**. The harness the
    still work untouched.
 
 **The one EXACT cross-job assertion**: every level of the final aggregated record must carry the
-`sink_id` of a snapshot job 5 really emitted, and specifically the LAST one (a scenario feeds one
+`id` of a snapshot job 5 really emitted, and specifically the LAST one (a scenario feeds one
 exchange). This is what makes decision 2 testable end to end — a record-level `source_ids` could
 only ever have been checked for shape.
 
@@ -150,7 +159,7 @@ Two harness details worth keeping:
 
 ## Web
 
-`wireLevel.source_id`/`wireEvent.sink_id` → `domain.RawLevel`/`RawBook` → `domain.Level`/`Book` →
+`wireLevel.source_id`/`wireEvent.id` → `domain.RawLevel`/`RawBook` → `domain.Level`/`Book` →
 the WebSocket JSON. **The browser UI does not render them** — plumbed only, exactly like
 `simulation`.
 

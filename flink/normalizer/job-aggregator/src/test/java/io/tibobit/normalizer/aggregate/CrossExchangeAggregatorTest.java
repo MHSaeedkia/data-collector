@@ -64,7 +64,7 @@ class CrossExchangeAggregatorTest {
         return new AggregatedLevel(exchangeId, simulation, sourceOf(exchangeId), price, qty);
     }
 
-    /** Stands in for the job-5 snapshot sink id that SnapshotSplitter stamps onto each level. */
+    /** Stands in for the job-5 snapshot id that SnapshotSplitter stamps onto each level. */
     private static String sourceOf(int exchangeId) {
         return "snapshot-of-ex" + exchangeId;
     }
@@ -223,15 +223,15 @@ class CrossExchangeAggregatorTest {
     }
 
     @Test
-    @DisplayName("every emitted record gets its own distinct sink id")
-    void mintsDistinctSinkIdPerRecord() throws Exception {
+    @DisplayName("every emitted record gets its own distinct id")
+    void mintsDistinctIdPerRecord() throws Exception {
         send(book(1, "asks", 100, lvl(1, "100", "1")));
         send(book(2, "asks", 200, lvl(2, "101", "1")));
 
         List<AggregatedOrderBook> all = harness.extractOutputValues();
         assertThat(all).hasSize(2);
-        assertThat(all).allSatisfy(b -> assertThat(b.getSinkId()).isNotBlank());
-        assertThat(all).extracting(AggregatedOrderBook::getSinkId).doesNotHaveDuplicates();
+        assertThat(all).allSatisfy(b -> assertThat(b.getId()).isNotBlank());
+        assertThat(all).extracting(AggregatedOrderBook::getId).doesNotHaveDuplicates();
     }
 
     /**

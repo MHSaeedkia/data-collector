@@ -16,7 +16,7 @@
 			}
 		},
 		{
-			"name": "sink_id",
+			"name": "id",
 			"type": "string",
 			"default": "",
 			"doc": "UUID minted by job 6 for this aggregated record. There is deliberately no record-level source_ids here: the union mixes exchanges, so the parent of a level is only meaningful per level — see source_id on AggregatedLevel."
@@ -50,7 +50,7 @@
 							"name": "source_id",
 							"type": "string",
 							"default": "",
-							"doc": "sink_id of the job-5 snapshot this level came from — per level for the same reason exchange_id is: the union mixes exchanges, so one parent per record would be a lie. Singular, not an array: a level comes from exactly one snapshot."
+							"doc": "id of the job-5 snapshot this level came from — per level for the same reason exchange_id is: the union mixes exchanges, so one parent per record would be a lie. Singular, not an array: a level comes from exactly one snapshot."
 						},
 						{
 							"name": "price",

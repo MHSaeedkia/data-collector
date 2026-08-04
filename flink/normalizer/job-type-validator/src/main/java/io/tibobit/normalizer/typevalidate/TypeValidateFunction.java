@@ -158,8 +158,8 @@ public class TypeValidateFunction
      * exchange's stream, so an emptied simulation book must not come back out flagged as live.
      *
      * <p>Lineage is NOT inherited — it is derived. The marker is a new record caused by the gap
-     * event, so the gap event is its source and the marker gets a sink id of its own. The gap event
-     * is simultaneously dead-lettered, so its one sink id legitimately appears as the parent of two
+     * event, so the gap event is its source and the marker gets an id of its own. The gap event
+     * is simultaneously dead-lettered, so its one id legitimately appears as the parent of two
      * different records.
      */
     private void emitReset(RawOrderBookEvent gap, Collector<RawOrderBookEvent> out) {
@@ -167,8 +167,8 @@ public class TypeValidateFunction
                 gap.getExchangeId(), gap.getPairId(), RESET, null, 0L, gap.getEventTime(),
                 null, null);
         reset.setSimulation(gap.getSimulation());
-        reset.setSourceIds(List.of(gap.getSinkId()));
-        reset.setSinkId(Lineage.newSinkId());
+        reset.setSourceIds(List.of(gap.getId()));
+        reset.setId(Lineage.newId());
         reset.getPipelineTimings().setTypeValidateIn(gap.getPipelineTimings().getTypeValidateIn());
         reset.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
         out.collect(reset);
@@ -187,13 +187,13 @@ public class TypeValidateFunction
         // typeValidateIn is already stamped; leave typeValidateOut null — the event never leaves
         // the validator onto the main stream. rejectedAt records when it was dead-lettered.
         //
-        // The envelope gets its own sink id: the dead-letter topic is a topic. The event inside
+        // The envelope gets its own id: the dead-letter topic is a topic. The event inside
         // keeps the id job 1 gave it — deliberately NOT restamped, since it is being recorded, not
         // forwarded, and that id is what links this record back to the raw stream.
         RejectedOrderBookEvent rejection =
                 new RejectedOrderBookEvent(event, reason, System.currentTimeMillis());
-        rejection.setSourceIds(List.of(event.getSinkId()));
-        rejection.setSinkId(Lineage.newSinkId());
+        rejection.setSourceIds(List.of(event.getId()));
+        rejection.setId(Lineage.newId());
         ctx.output(REJECTED, rejection);
     }
 }

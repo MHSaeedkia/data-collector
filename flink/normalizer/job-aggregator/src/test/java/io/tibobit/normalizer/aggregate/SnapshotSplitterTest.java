@@ -115,15 +115,15 @@ class SnapshotSplitterTest {
 
     /**
      * The splitter is where a level's parent is decided: every level of both sides is stamped with
-     * the snapshot's sink id, so the aggregator downstream can stay a pure union and never has to
+     * the snapshot's id, so the aggregator downstream can stay a pure union and never has to
      * work out where a level came from.
      */
     @Test
-    @DisplayName("stamps the snapshot's sink id onto every level of both sides")
-    void stampsSnapshotSinkIdOnEveryLevel() {
+    @DisplayName("stamps the snapshot's id onto every level of both sides")
+    void stampsSnapshotIdOnEveryLevel() {
         OrderBookSnapshot snapshot = new OrderBookSnapshot(
                 6, 1, 1_700_000_000_000L, 5L, levels("101", "1", "102", "2"), levels("100", "3"));
-        snapshot.setSinkId("66666666-6666-4666-8666-666666666666");
+        snapshot.setId("66666666-6666-4666-8666-666666666666");
 
         List<ExchangeBook> out = split(snapshot);
 

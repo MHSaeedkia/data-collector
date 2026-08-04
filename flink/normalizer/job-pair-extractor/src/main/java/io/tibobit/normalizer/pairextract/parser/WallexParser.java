@@ -13,12 +13,12 @@ import java.util.List;
  * time — nothing on the wire to use. See sample-raw-data.md § ex3.
  *
  * <p><b>NiFi's metadata rides in a THIRD element</b> (user 2026-08-03):
- * {@code ["{market}@{side}", [levels...], {"simulation": 1, "sink_id": "<uuid>"}]}. Every other
+ * {@code ["{market}@{side}", [levels...], {"simulation": 1, "id": "<uuid>"}]}. Every other
  * exchange has an object payload root, so NiFi injects these as root FIELDS there; ex3's root is an
- * array, so they are appended as a trailing object instead — {@code sink_id} goes in the SAME object
+ * array, so they are appended as a trailing object instead — {@code id} goes in the SAME object
  * as {@code simulation}, not as a fourth element. Both the 2- and 3-element forms are still accepted
  * here, but they no longer behave the same: a 2-element frame has no flag (reads as 0, live) AND no
- * sink_id, and {@code PairExtractFunction} drops anything with no sink_id. So in practice ex3 now
+ * id, and {@code PairExtractFunction} drops anything with no id. So in practice ex3 now
  * requires the 3-element form.
  */
 public class WallexParser implements RawExchangeParser {

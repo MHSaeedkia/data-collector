@@ -32,7 +32,7 @@ type wireLevel struct {
 type wireEvent struct {
 	PairID    int         `avro:"pair_id"`
 	Side      string      `avro:"side"`
-	SinkID    string      `avro:"sink_id"`
+	ID        string      `avro:"id"`
 	EventTime time.Time   `avro:"event_time"`
 	Levels    []wireLevel `avro:"levels"`
 }
@@ -87,7 +87,7 @@ func (d *Decoder) Decode(value []byte) (domain.RawBook, error) {
 	return domain.RawBook{
 		PairID:    we.PairID,
 		Side:      we.Side,
-		SinkID:    we.SinkID,
+		ID:        we.ID,
 		Levels:    levels,
 		EventTime: we.EventTime.UnixMilli(),
 	}, nil

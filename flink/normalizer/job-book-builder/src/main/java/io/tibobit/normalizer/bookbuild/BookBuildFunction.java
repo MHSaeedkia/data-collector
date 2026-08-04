@@ -42,7 +42,7 @@ import java.util.Set;
  *
  * <p><b>Lineage is the one thing here that fans in.</b> Every other step has exactly one parent, but
  * a book is state accumulated over many events, so the emitted snapshot's {@code source_ids} lists
- * the sink id of every event still holding a resting level — which is why each level's originating
+ * the id of every event still holding a resting level — which is why each level's originating
  * event is tracked in the state itself ({@link RestingLevel}). The triggering event is always
  * included too, even when it left nothing resting: an event that only deletes levels, or a reset
  * that empties the book, still caused this record and must not vanish from the chain.
@@ -77,8 +77,8 @@ public class BookBuildFunction
             bids.clear();
         } else {
             boolean replace = "snapshot".equals(event.getType());
-            applySide(asks, event.getAsks(), replace, event.getSinkId());
-            applySide(bids, event.getBids(), replace, event.getSinkId());
+            applySide(asks, event.getAsks(), replace, event.getId());
+            applySide(bids, event.getBids(), replace, event.getId());
         }
 
         List<RestingLevel> restingAsks = sorted(asks, ASCENDING);
@@ -91,8 +91,8 @@ public class BookBuildFunction
         // a level — so the emitted book carries the flag of the event that produced it. Kept out of
         // MapState deliberately: it is not per-price, and a feed does not switch mid-stream.
         book.setSimulation(event.getSimulation());
-        book.setSourceIds(restingSources(event.getSinkId(), restingAsks, restingBids));
-        book.setSinkId(Lineage.newSinkId());
+        book.setSourceIds(restingSources(event.getId(), restingAsks, restingBids));
+        book.setId(Lineage.newId());
         book.setPipelineTimings(event.getPipelineTimings());
 
         book.getPipelineTimings().setBookBuildOut(System.currentTimeMillis());
@@ -105,7 +105,7 @@ public class BookBuildFunction
      * snapshot. {@code replace} clears the side first, turning a merge into a wholesale replace.
      */
     private static void applySide(MapState<String, RestingLevel> side, List<PriceLevel> levels,
-                                  boolean replace, String sinkId) throws Exception {
+                                  boolean replace, String id) throws Exception {
         if (levels == null) {
             return;
         }
@@ -126,7 +126,7 @@ public class BookBuildFunction
                 // The level's origin is the event that last SET it, so this overwrites the previous
                 // owner — a level updated by a later event belongs to that event, not the first one.
                 side.put(price, new RestingLevel(
-                        price, Decimals.canonicalize(quantity), sinkId));
+                        price, Decimals.canonicalize(quantity), id));
             }
         }
     }
@@ -169,15 +169,15 @@ public class BookBuildFunction
      * source_ids do not mention the event that caused it, silently breaking the chain at exactly the
      * moments worth tracing. Deduplicated because one event routinely sets many levels.
      */
-    private static List<String> restingSources(String triggeringSinkId,
+    private static List<String> restingSources(String triggeringId,
                                                List<RestingLevel> asks, List<RestingLevel> bids) {
         Set<String> sources = new LinkedHashSet<>();
-        sources.add(triggeringSinkId);
+        sources.add(triggeringId);
         for (RestingLevel level : asks) {
-            sources.add(level.getSinkId());
+            sources.add(level.getId());
         }
         for (RestingLevel level : bids) {
-            sources.add(level.getSinkId());
+            sources.add(level.getId());
         }
         return new ArrayList<>(sources);
     }

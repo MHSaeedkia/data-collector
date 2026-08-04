@@ -212,27 +212,27 @@ class RebaseFunctionTest {
     void rebasedEventIsRestamped() throws Exception {
         openWith(Map.of("1|1", new RebaseFactors(2, -3)));
         RawOrderBookEvent in = event(1, 1, levels("5", "1"), null);
-        in.setSinkId("job2-id");
+        in.setId("job2-id");
 
         harness.processElement(new StreamRecord<>(in));
 
         RawOrderBookEvent out = output().get(0);
         assertThat(out.getSourceIds()).containsExactly("job2-id");
-        assertThat(out.getSinkId()).isNotBlank().isNotEqualTo("job2-id");
+        assertThat(out.getId()).isNotBlank().isNotEqualTo("job2-id");
     }
 
     @Test
-    @DisplayName("a no_rebase_row rejection gets its own sink id and names the event as its source")
+    @DisplayName("a no_rebase_row rejection gets its own id and names the event as its source")
     void rejectionHasItsOwnLineage() throws Exception {
         openWith(Map.of("1|1", new RebaseFactors(0, 0)));
         RawOrderBookEvent in = event(9, 9, levels("5", "1"), null); // no row for 9|9
-        in.setSinkId("job2-id");
+        in.setId("job2-id");
 
         harness.processElement(new StreamRecord<>(in));
 
         RejectedOrderBookEvent rejection = rejects().get(0);
         assertThat(rejection.getSourceIds()).containsExactly("job2-id");
-        assertThat(rejection.getSinkId()).isNotBlank().isNotEqualTo("job2-id");
-        assertThat(rejection.getEvent().getSinkId()).isEqualTo("job2-id");
+        assertThat(rejection.getId()).isNotBlank().isNotEqualTo("job2-id");
+        assertThat(rejection.getEvent().getId()).isEqualTo("job2-id");
     }
 }

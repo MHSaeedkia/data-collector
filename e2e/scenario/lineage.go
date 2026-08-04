@@ -38,13 +38,13 @@ func newUUID() string {
 // has an id, that no two records share one, and above all that the parent a
 // record names is a record that actually exists upstream.
 //
-// So the harness does three things: it injects a sink_id into every source the
+// So the harness does three things: it injects an id into every source the
 // way NiFi does, it checks the emitted lineage structurally, and it then clears
 // the lineage fields so the existing per-scenario expectations still compare
 // literally. The clearing is deliberate and is why events.OrderbookSnapshot
 // documents these fields as never-declared.
 
-// stampSinkID injects a fresh sink_id into a source payload exactly where NiFi
+// stampID injects a fresh id into a source payload exactly where NiFi
 // puts it, and returns the payload with the id it used.
 //
 // Two carriers, the same split as the simulation flag: a root field for the
@@ -59,7 +59,7 @@ func newUUID() string {
 // memory/project_bigdecimal_rules.md). Object roots get a field spliced in after
 // the opening brace; array roots are split into raw elements so the levels array
 // is copied through byte-for-byte and only the small metadata object is rebuilt.
-func stampSinkID(source string) (string, string, error) {
+func stampID(source string) (string, string, error) {
 	id := newUUID()
 	trimmed := strings.TrimSpace(source)
 
@@ -74,17 +74,17 @@ func stampSinkID(source string) (string, string, error) {
 	}
 }
 
-// stampObjectRoot splices "sink_id" in as the first field, leaving every other
+// stampObjectRoot splices "id" in as the first field, leaving every other
 // byte of the payload untouched.
 func stampObjectRoot(payload, id string) (string, error) {
 	rest := strings.TrimSpace(payload[1:])
 	if strings.HasPrefix(rest, "}") {
-		return fmt.Sprintf(`{"sink_id":%q}`, id), nil
+		return fmt.Sprintf(`{"id":%q}`, id), nil
 	}
-	return fmt.Sprintf(`{"sink_id":%q,%s`, id, payload[1:]), nil
+	return fmt.Sprintf(`{"id":%q,%s`, id, payload[1:]), nil
 }
 
-// stampArrayRoot puts sink_id in the SAME object that carries simulation — the
+// stampArrayRoot puts id in the SAME object that carries simulation — the
 // element at INDEX 2, which is where WallexParser reads it from (root.path(2)),
 // not simply the last element. A 2-element frame (the pre-flag form) gains the
 // object.
@@ -109,7 +109,7 @@ func stampArrayRoot(payload, id string) (string, string, error) {
 			return "", "", fmt.Errorf("element 2 is not the metadata object: %w", err)
 		}
 	}
-	meta["sink_id"] = json.RawMessage(fmt.Sprintf("%q", id))
+	meta["id"] = json.RawMessage(fmt.Sprintf("%q", id))
 
 	encoded, err := json.Marshal(meta)
 	if err != nil {
@@ -134,18 +134,18 @@ func stampArrayRoot(payload, id string) (string, string, error) {
 // The counts cannot be predicted — how many events still hold a resting level
 // depends on the scenario — so what is checked is that the lineage is present,
 // well-formed and unique. A record with no source at all would mean job 5 lost
-// the chain, and duplicate sink ids would mean two records claim one identity.
+// the chain, and duplicate ids would mean two records claim one identity.
 func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) error {
 	seen := map[string]int{}
 	for i, s := range snapshots {
-		if err := validID(s.SinkID); err != nil {
-			return fmt.Errorf("%s record %d: sink_id: %w", topic, i, err)
+		if err := validID(s.ID); err != nil {
+			return fmt.Errorf("%s record %d: id: %w", topic, i, err)
 		}
-		if first, dup := seen[s.SinkID]; dup {
-			return fmt.Errorf("%s record %d: sink_id %s already used by record %d",
-				topic, i, s.SinkID, first)
+		if first, dup := seen[s.ID]; dup {
+			return fmt.Errorf("%s record %d: id %s already used by record %d",
+				topic, i, s.ID, first)
 		}
-		seen[s.SinkID] = i
+		seen[s.ID] = i
 
 		if len(s.SourceIDs) == 0 {
 			return fmt.Errorf("%s record %d: no source_ids — job 5 lost the chain", topic, i)
@@ -164,7 +164,7 @@ func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) er
 }
 
 // checkAggregatedLineage is the one exact, cross-job assertion available: every
-// level of the final aggregated record must name the sink_id of a snapshot that
+// level of the final aggregated record must name the id of a snapshot that
 // job 5 really emitted. A scenario feeds a single exchange, so the levels of the
 // final book all come from its last snapshot.
 //
@@ -174,8 +174,8 @@ func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) er
 func checkAggregatedLineage(topic string, final events.AggregatedSide,
 	snapshots []events.OrderbookSnapshot) error {
 
-	if err := validID(final.SinkID); err != nil {
-		return fmt.Errorf("%s: sink_id: %w", topic, err)
+	if err := validID(final.ID); err != nil {
+		return fmt.Errorf("%s: id: %w", topic, err)
 	}
 	if len(final.Levels) == 0 {
 		return nil
@@ -183,11 +183,11 @@ func checkAggregatedLineage(topic string, final events.AggregatedSide,
 
 	emitted := map[string]bool{}
 	for _, s := range snapshots {
-		emitted[s.SinkID] = true
+		emitted[s.ID] = true
 	}
-	var lastSinkID string
+	var lastID string
 	if len(snapshots) > 0 {
-		lastSinkID = snapshots[len(snapshots)-1].SinkID
+		lastID = snapshots[len(snapshots)-1].ID
 	}
 
 	for i, level := range final.Levels {
@@ -198,10 +198,10 @@ func checkAggregatedLineage(topic string, final events.AggregatedSide,
 			return fmt.Errorf("%s level %d: source_id %s names no snapshot job 5 emitted",
 				topic, i, level.SourceID)
 		}
-		if level.SourceID != lastSinkID {
+		if level.SourceID != lastID {
 			return fmt.Errorf("%s level %d: source_id %s is not the final snapshot %s — "+
 				"a single-exchange run's final book comes from its last snapshot",
-				topic, i, level.SourceID, lastSinkID)
+				topic, i, level.SourceID, lastID)
 		}
 	}
 	return nil
@@ -211,7 +211,7 @@ func checkAggregatedLineage(topic string, final events.AggregatedSide,
 // literally against the scenario's wanted snapshots, which cannot name a uuid.
 func stripSnapshotLineage(snapshots []events.OrderbookSnapshot) {
 	for i := range snapshots {
-		snapshots[i].SinkID = ""
+		snapshots[i].ID = ""
 		snapshots[i].SourceIDs = nil
 	}
 }

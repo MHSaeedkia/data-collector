@@ -10,7 +10,7 @@ type RawLevel struct {
 	// 0 = live data, 1 = simulation data.
 	Simulation int `json:"simulation"`
 	// SourceID is per level for the same reason Simulation is: it is the
-	// sink_id of the job-5 snapshot this level came from, and one book's
+	// id of the job-5 snapshot this level came from, and one book's
 	// levels come from several snapshots.
 	SourceID string `json:"source_id"`
 	Price    string `json:"price"`
@@ -20,9 +20,9 @@ type RawLevel struct {
 type RawBook struct {
 	PairID int    `json:"pair_id"`
 	Side   string `json:"side"`
-	// SinkID is the aggregator's id for this record. There is no SourceIDs
+	// ID is the aggregator's id for this record. There is no SourceIDs
 	// counterpart — the parents are per level, on RawLevel.SourceID.
-	SinkID    string     `json:"sink_id"`
+	ID        string     `json:"id"`
 	Levels    []RawLevel `json:"levels"`
 	EventTime int64      `json:"event_time"`
 }
@@ -43,7 +43,7 @@ type Book struct {
 	Base      string  `json:"base"`
 	Quote     string  `json:"quote"`
 	Side      string  `json:"side"`
-	SinkID    string  `json:"sink_id"`
+	ID        string  `json:"id"`
 	Levels    []Level `json:"levels"`
 	EventTime int64   `json:"event_time"`
 }

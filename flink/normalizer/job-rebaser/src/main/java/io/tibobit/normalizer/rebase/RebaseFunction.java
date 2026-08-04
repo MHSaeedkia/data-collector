@@ -60,12 +60,12 @@ public class RebaseFunction extends ProcessFunction<RawOrderBookEvent, RawOrderB
                 factors.get(RebaseFactorsLoader.key(event.getExchangeId(), event.getPairId()));
         if (factor == null) {
             // rebaseOut stays null — the event never leaves the rebaser onto the main stream.
-            // The dead-letter envelope gets its own sink id (writing to that topic is still a
+            // The dead-letter envelope gets its own id (writing to that topic is still a
             // write); the event inside keeps the id it arrived with, which is what links it back.
             RejectedOrderBookEvent rejection =
                     new RejectedOrderBookEvent(event, NO_REBASE_ROW, System.currentTimeMillis());
-            rejection.setSourceIds(List.of(event.getSinkId()));
-            rejection.setSinkId(Lineage.newSinkId());
+            rejection.setSourceIds(List.of(event.getId()));
+            rejection.setId(Lineage.newId());
             ctx.output(REJECTED, rejection);
             return;
         }

@@ -26,7 +26,7 @@
 			"doc": "Injected by NiFi on the raw payload: a root field for the object-root exchanges, a trailing {\"simulation\": N} element for ex3/wallex's array envelope. 0 = live data, 1 = simulation data; other values undefined. Carried unchanged through every job; absent = 0."
 		},
 		{
-			"name": "sink_id",
+			"name": "id",
 			"type": "string",
 			"default": "",
 			"doc": "UUID minted by whichever step WROTE this record to its topic — unique per emitted record, never reused. NiFi mints the first one onto the raw payload (same carrier as simulation: a root field, or the trailing object for ex3/wallex); jobs 1-5 each mint a fresh one on emit. The empty default only ever appears on records written before this field existed — a live producer always sets it."
@@ -35,7 +35,7 @@
 			"name": "source_ids",
 			"type": { "type": "array", "items": "string" },
 			"default": [],
-			"doc": "sink_ids of the records read on THIS hop to produce this one: immediate parents only, never the accumulated chain. One element for the pass-through steps; job 1 drops any payload whose sink_id is missing, so this is never empty on the raw stream."
+			"doc": "ids of the records read on THIS hop to produce this one: immediate parents only, never the accumulated chain. One element for the pass-through steps; job 1 drops any payload whose id is missing, so this is never empty on the raw stream."
 		},
 		{
 			"name": "sequence_id",

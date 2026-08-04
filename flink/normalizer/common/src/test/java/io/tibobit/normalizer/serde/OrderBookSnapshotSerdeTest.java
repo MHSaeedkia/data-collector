@@ -92,12 +92,12 @@ class OrderBookSnapshotSerdeTest {
     @DisplayName("round-trips a multi-source book with its order intact")
     void roundTripsMultipleSources() {
         OrderBookSnapshot in = new OrderBookSnapshot(6, 1, 123L, 1L, List.of(), List.of());
-        in.setSinkId("66666666-6666-4666-8666-666666666666");
+        in.setId("66666666-6666-4666-8666-666666666666");
         in.setSourceIds(List.of("trigger", "resting-a", "resting-b"));
 
         OrderBookSnapshot out = roundTrip(in);
 
-        assertThat(out.getSinkId()).isEqualTo("66666666-6666-4666-8666-666666666666");
+        assertThat(out.getId()).isEqualTo("66666666-6666-4666-8666-666666666666");
         assertThat(out.getSourceIds()).containsExactly("trigger", "resting-a", "resting-b");
     }
 

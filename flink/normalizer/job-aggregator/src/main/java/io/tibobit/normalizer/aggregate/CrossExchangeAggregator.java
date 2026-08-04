@@ -87,7 +87,7 @@ public class CrossExchangeAggregator
                 new AggregatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime);
         // Each level already carries its own source_id, stamped back at the split — nothing to
         // gather here, only this record's own id to mint.
-        aggregated.setSinkId(Lineage.newSinkId());
+        aggregated.setId(Lineage.newId());
         out.collect(aggregated);
     }
 }

@@ -115,26 +115,26 @@ class RawOrderBookEventDeserializerTest {
     }
 
     /**
-     * Given an event carrying lineage, When round-tripped, Then its sink id and its single source
+     * Given an event carrying lineage, When round-tripped, Then its id and its single source
      * survive on their wire names.
      */
     @Test
-    @DisplayName("round-trips sink_id and source_ids")
+    @DisplayName("round-trips id and source_ids")
     void roundTripsLineage() {
         RawOrderBookEvent event = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
                 List.of(), List.of());
-        event.setSinkId("22222222-2222-4222-8222-222222222222");
+        event.setId("22222222-2222-4222-8222-222222222222");
         event.setSourceIds(List.of("11111111-1111-4111-8111-111111111111"));
 
         RawOrderBookEvent out = roundTrip(event);
 
-        assertThat(out.getSinkId()).isEqualTo("22222222-2222-4222-8222-222222222222");
+        assertThat(out.getId()).isEqualTo("22222222-2222-4222-8222-222222222222");
         assertThat(out.getSourceIds()).containsExactly("11111111-1111-4111-8111-111111111111");
     }
 
     /**
      * A record written before these fields existed reads as the schema defaults rather than null —
-     * an empty sink id and no sources, which downstream can recognise as "no lineage" instead of
+     * an empty id and no sources, which downstream can recognise as "no lineage" instead of
      * NPE-ing on it.
      */
     @Test
@@ -143,7 +143,7 @@ class RawOrderBookEventDeserializerTest {
         RawOrderBookEvent out = roundTrip(new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
                 List.of(), List.of()));
 
-        assertThat(out.getSinkId()).isEmpty();
+        assertThat(out.getId()).isEmpty();
         assertThat(out.getSourceIds()).isEmpty();
     }
 
@@ -159,12 +159,12 @@ class RawOrderBookEventDeserializerTest {
     void convertsUtf8LineageToString() {
         GenericRecord record = RawOrderBookEventSerializer.toGenericRecord(
                 new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L, List.of(), List.of()), SCHEMA);
-        record.put("sink_id", new Utf8("22222222-2222-4222-8222-222222222222"));
+        record.put("id", new Utf8("22222222-2222-4222-8222-222222222222"));
         record.put("source_ids", List.of(new Utf8("11111111-1111-4111-8111-111111111111")));
 
         RawOrderBookEvent out = RawOrderBookEventDeserializer.fromGenericRecord(record);
 
-        assertThat(out.getSinkId())
+        assertThat(out.getId())
                 .isInstanceOf(String.class)
                 .isEqualTo("22222222-2222-4222-8222-222222222222");
         assertThat(out.getSourceIds())

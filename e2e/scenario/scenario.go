@@ -94,14 +94,14 @@ func Run(ctx context.Context, cfg config.Config, s Scenario) error {
 // topic has one partition and the jobs run at parallelism 1, so each output
 // stream comes out in the order its sources went in.
 //
-// Each source gets a fresh sink_id injected first, exactly as NiFi does. This is
-// not optional decoration: job 1 DROPS a payload that carries no sink_id, so a
+// Each source gets a fresh id injected first, exactly as NiFi does. This is
+// not optional decoration: job 1 DROPS a payload that carries no id, so a
 // source sent unstamped produces nothing at all and the scenario fails with an
 // empty snapshot stream rather than anything that points at the cause.
 func (s Scenario) produce(ctx context.Context, cfg config.Config) error {
 	topic := fmt.Sprintf("ex%d-raw", s.ExchangeID)
 	for i, source := range s.Sources {
-		stamped, _, err := stampSinkID(source)
+		stamped, _, err := stampID(source)
 		if err != nil {
 			return fmt.Errorf("source %d: %w", i, err)
 		}
