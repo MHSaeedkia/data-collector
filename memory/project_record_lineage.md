@@ -1,11 +1,11 @@
 ---
 name: record-lineage
-description: id / source_ids record lineage across the whole normalizer pipeline — the model, the four user decisions behind it, and the traps
+description: id / source_ids / trigger_id record lineage across the whole normalizer pipeline — the model, the user decisions behind it, and the traps
 metadata:
     type: project
 ---
 
-# Record lineage (`id` / `source_ids`)
+# Record lineage (`id` / `source_ids` / `trigger_id`)
 
 **Added 2026-08-03 (user request). Field renamed `sink_id` → `id` on 2026-08-04**, also by user
 request — a pure rename, no logic touched. Two fields that answer "where did this record come from".
@@ -13,7 +13,12 @@ request — a pure rename, no logic touched. Two fields that answer "where did t
 - **`id`** — a fresh UUID minted by whichever step WROTE the record to its topic. Unique per
   record, never reused. NiFi mints the first one; each job mints its own on emit. A record crossing
   the whole pipeline therefore carries **seven different ids** in turn — NiFi's, then one per job.
-- **`source_ids`** — the ids of the records read **on that hop**.
+- **`source_ids`** — the ids of the records read **on that hop**. On jobs 1–4 and the dead letters.
+- **`trigger_id`** — job 5's snapshot only, and its ONLY record-level parent: the event that caused
+  the emit. Not an array, and **not necessarily one of the level ids** (see below).
+- **`source_id` on a LEVEL** — job 5's snapshot levels and job 6's aggregated levels each name one
+  parent per price rather than per record. Different questions: job 6's names the snapshot,
+  job 5's names the event that set that price. See "Tracing ONE price" below.
 
 The critical thing to hold onto: `id` is not a correlation id and does **not** survive a hop.
 It is re-stamped every time. To follow a record you walk the chain hop by hop; nothing carries an
@@ -32,6 +37,11 @@ These were explicitly chosen from alternatives — do not "simplify" them back.
 
 1. **Job 5's `source_ids` = every event still holding a resting level**, not just the triggering
    event. This is why the book builder's MapState value had to change shape.
+   **SUPERSEDED 2026-08-08** (same user, after the per-level `source_id` landed): the snapshot's
+   record-level array is gone, replaced by a single **`trigger_id`**. The array had become the union
+   of the level ids plus the trigger, so all it still added was the trigger — and only
+   *positionally*, as its first element. The MapState change this decision forced is unaffected and
+   is now load-bearing for the per-level ids instead.
 2. **The aggregated record gets a per-record `id` and a per-LEVEL `source_id`** — not a
    record-level `source_ids` array.
 3. **Immediate parents only**, never the accumulated chain.
@@ -68,7 +78,7 @@ has to land there too or the producer side will not hear about it.
 | 1 pair-extract | Reads NiFi's id into `source_ids`, mints its own. **Fan-out**: one payload → N events all sharing the one source, each with its OWN id. Drops the payload if there is no source |
 | 2 type-validate | Re-stamps on the main stream. The gap case is a lineage FAN-OUT: the `reset` marker and the dead-letter record are two children of the one gap event, each with its own id |
 | 3 rebase / 4 precision | **No longer no-ops** (unlike `simulation`): they write to a topic, so they re-stamp. Job 3's `no_rebase_row` dead-letter gets its own id too |
-| 5 book-build | The genuine FAN-IN. See below |
+| 5 book-build | The genuine FAN-IN, at two granularities: a per-level `source_id` **and** the record's `trigger_id`. No `source_ids` on this record. See below |
 | 6 aggregate | Mints a record `id`; `SnapshotSplitter` stamps each level's `source_id` from the snapshot it came from |
 
 ### Dead-letter records have TWO lineages, and they are not the same thing
@@ -77,10 +87,36 @@ The envelope's `id` is the dead-letter record's own; its `source_ids` is the rej
 The **nested** event keeps the id it arrived with and is deliberately NOT re-stamped — it is being
 *recorded*, not *forwarded*, and that id is what links the dead-letter back to the raw stream.
 
-### Job 5 — the only real fan-in
+### Job 5 — the only real fan-in, and the only record with lineage at TWO granularities
 
-`source_ids` = the triggering event, **then** the distinct events still holding a resting level
-(asks order, then bids, deduplicated). So it grows with **book depth**, not pipeline length.
+**Each emitted level carries its own `source_id`** — the single job-4 event that last SET that price
+(2026-08-08, user request). The data was already in `RestingLevel.getId()`; `priceLevels()` was
+dropping it on the way out, so the fix was one schema field and one constructor argument. Added
+because a record-level set cannot answer the question the whole feature exists for: it has no
+mapping back to prices, so tracing one price stopped at "it came from one of these N events". The
+trace **widened** at job 5 while every other hop narrows to one parent.
+
+**The record itself carries only `trigger_id`** — the event that caused this emit. Once the levels
+name their own owners, an array of every contributing event is exactly `{trigger} ∪ {level owners}`,
+so it adds nothing but the trigger. A single field says the same thing and says WHICH one it is,
+instead of relying on "first element by contract".
+
+⚠ **`trigger_id` is not always among the level ids, and that is the entire reason it is a separate
+field.** An event that only DELETES levels owns none of them; a **reset** empties the book, so there
+are no levels at all. Fold the trigger in with the level owners and those records name no parent
+that has anything to do with why they exist — the chain breaks at exactly the moments worth tracing.
+`deleteOnlyEventIsStillTheTrigger` and `resetKeepsItsOwnTrigger` are the guards.
+
+**A level's id is the event that last SET it, not the event that triggered the emit.** An update
+touching one price leaves every other level naming whichever event put it there, however long ago —
+the lineage follows the price, not the message. That is exactly the property that makes it useful,
+and it is what `untouchedLevelKeepsItsOriginalEvent` pins down.
+
+⚠ The two halves still cross-check, just differently now that the record no longer restates the
+level ids. Job 5 emits one book per accepted event, so **trigger ids are distinct across the
+stream**, and a level can only have been set by an event that already arrived, so **every level's
+`source_id` must be the trigger of that record or of an earlier one**. e2e asserts both; the second
+is strictly stronger than the membership check it replaced.
 
 This is why `MapState` went from `price → quantity` to `price → RestingLevel{price, quantity,
 id}`. A level updated by a later event transfers to that event, so an older event drops out of
@@ -104,6 +140,28 @@ parent belongs to — the same argument that already put `exchange_id` and `simu
 **Known consequence:** an aggregated record with **no levels** (every exchange reset) carries no
 parent information at all. Accepted, by construction of decision 2.
 
+**The snapshot's per-level `source_id` is deliberately NOT copied through** (2026-08-08, user
+decision, made explicitly after the alternatives were laid out). An aggregated level names the
+job-5 snapshot and nothing else. Copying job 5's per-level id would shorten a trace by one hop, but
+it names a job-4 event this record never read: the aggregated record would point straight past job 5,
+and since it has no record-level parent either, the job-5 hop would vanish from the lineage
+entirely. Each hop, one step — the rule holds at level granularity too.
+
+## Tracing ONE price back to its raw event
+
+This is the question the whole feature exists to answer, and the walk is worth writing down:
+
+1. Aggregated level `(exchange 1, price 10.00)` → its `source_id` is a **job-5 snapshot** id.
+2. Open that snapshot → **the level with the same price** → its `source_id` is a **job-4 event** id.
+   (Price is a safe join key: job 4 has already merged levels that share a price, so it is unique
+   within a book.)
+3. Job 4 → 3 → 2 → 1, each record's `source_ids` naming the record before it.
+4. Job 1's `source_ids` is NiFi's id → the message on `ex{n}-raw` carrying that `"id"`.
+
+Six lookups, and that is inherent: decision 3 stores immediate parents only, so reaching raw always
+means walking every hop. Step 2 is the one that only became possible on 2026-08-08 — before the
+per-level `source_id`, it dead-ended at "one of these N events".
+
 ## Traps
 
 - **Avro hands back `Utf8`, not `String`.** An unconverted id compares unequal to every String it
@@ -116,15 +174,23 @@ parent information at all. Accepted, by construction of decision 2.
   still hold well-formed uuids. `model/Lineage.restamp()` exists solely to make this unmissable.
 - **RE-REGISTER ALL FOUR SUBJECTS.** Same trap as `pipeline_timings` and `simulation`: a stale
   registered subject makes the Avro sink throw on the unknown field. Every field defaults
-  (`""` / `[]`), so old records still read.
+  (`""` / `[]`), so old records still read. **`order-book-snapshot` changed again on 2026-08-08**
+  (per-level `source_id`) — if it was already re-registered for the first lineage change, it is
+  stale AGAIN.
 
 ## Coverage
 
 - `RecordIdTest` (job 1) — the cross-parser rule, mirroring `SimulationFlagTest`. 21 cases.
 - Per job: fan-out + drop (1), re-stamp/reject/gap-fan-out (2), re-stamp + reject (3), re-stamp (4),
-  fan-in incl. delete-only, reset, overwrite-transfers-owner and dedup (5), per-level through the
-  union + reset-drops-out (6). Plus Avro round trips and the Utf8 guard in common.
-- **202 Java tests green** (surefire total across the 7 modules). `AggregatedOrderBookSerializer`
+  fan-in (5), per-level through the union + reset-drops-out (6). Plus Avro round trips and the Utf8
+  guard in common.
+- Job 5's per-level ids: `stampsEachLevelWithItsOwningEvent`, `untouchedLevelKeepsItsOriginalEvent`
+  (the 4-event case — a level naming an event three messages back), `snapshotOwnsEveryLevelItReports`.
+  Its `trigger_id`: `namesTheTriggerAndAttributesEachLevel`, plus the two that justify the field
+  existing at all — `deleteOnlyEventIsStillTheTrigger` and `resetKeepsItsOwnTrigger`.
+  Serde: per-level round trip, unstamped-level-becomes-`""`, `roundTripsRecordLineage`, and — in the
+  RAW serializer test — `ignoresSourceIdNotInThisSchema`, the guard on the schema-driven write.
+- **207 Java tests green** (surefire total across the 7 modules). `AggregatedOrderBookSerializer`
   has no unit test (the aggregator pom does not copy the avsc onto its test classpath) — its two
   new fields are covered by e2e only.
 - e2e: `scenario/lineage.go` + `lineage_test.go`; **verified live** on 5 scenarios (ex1 object root,
@@ -148,9 +214,16 @@ declare one**. So:
 2. **Checks structurally** — present, well-formed uuid, unique per topic, sources non-empty and
    deduplicated. `TestStampIDOnEverySource` also asserts all 177 fixture ids are unique across the
    whole suite and that each fixture really declares its own (so a lost one cannot be papered over
-   by the fallback injection).
+   by the fallback injection). For job 5's per-level ids the check is stronger than shape: every
+   trigger id **must be distinct across the stream** (job 5 emits one book per event) and every
+   level's `source_id` **must be the trigger of that record or of an earlier one** (a level cannot
+   predate the event that set it). Both are exact, and the second replaced — and strengthens — the
+   membership check that the old record-level array allowed.
 3. **Strips the fields** before the literal comparison, so the existing per-scenario expectations
-   still work untouched.
+   still work untouched — including the per-level `source_id`. ⚠ `verify` keeps a **shallow** copy
+   of the snapshots for the aggregated check, so the level slices are shared and stripping clears
+   them in both. Harmless while an aggregated level names the snapshot RECORD; it would not be if
+   that ever changed.
 
 **The one EXACT cross-job assertion**: every level of the final aggregated record must carry the
 `id` of a snapshot job 5 really emitted, and specifically the LAST one (a scenario feeds one

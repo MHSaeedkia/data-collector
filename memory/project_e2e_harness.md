@@ -480,3 +480,30 @@ the injection now only serves scenarios POSTed over HTTP. No `swag init` needed:
 example is the live `Ex1PrecisionDust` var read at serve time, so it picked the ids up for free.
 See [[record-lineage]] for the asymmetry (source ids are inputs and can be literals; every id
 further down is job-minted and can only be checked for shape) and for the blank-id trap.
+
+**2026-08-08 — `events` realigned to the schemas, field for field** (user instruction, alongside the
+per-level `source_id` — see [[record-lineage]]). The package doc always claimed to mirror the
+records on the topics; it had drifted. Three fixes:
+
+- `OrderbookSnapshot` was missing `last_sequence_id`, `AggregatedSide` was missing `event_time`.
+  Both added. `event_time` is now decoded too (harmless: an aggregated record is never DeepEqual'd,
+  only its levels are). `last_sequence_id` is deliberately NOT decoded — the snapshot stream IS
+  compared with DeepEqual, so reading it would force all 125 wanted snapshots to spell it out.
+  Worth revisiting: it is deterministic from the sources, so it is genuinely assertable, unlike
+  event_time or the lineage.
+- **The timings model was wire-shaped and wrong in three ways**, and nothing caught it because
+  nothing ever decodes into it. Verified against goavro by probe, not by reading: a union branch is
+  keyed by its **full name**, so the wrapper is `io.tibobit.orderbook.PipelineTimings`, not
+  `PipelineTimings`; a `["null","long"]` with a logical type is keyed **`long.timestamp-millis`**,
+  not `long` (a plain `["null","long"]` like `last_sequence_id` IS keyed `long`); and the value is a
+  NUMBER, not a string. Replaced by a flat mirror of the schema (`*int64` per step); `StepTimings`
+  and `AvroTime` are gone. Union unwrapping belongs in `consumer`'s wire structs, which is where
+  `event_time`'s epoch-millis conversion already lives.
+- **swaggerignore is now applied by one rule**: a field the harness never asserts and a scenario
+  cannot influence stays out of the HTTP contract, because the spec must not offer it as something
+  to fill in. That now covers `pipeline_timings` and `last_sequence_id` as well as the lineage, so
+  `WantSnapshots` in the spec offers exactly `exchange_id, pair_id, simulation, event_time, asks,
+  bids`. `swag init` rerun (143 lines of definitions dropped).
+
+Still not modelled at all, on purpose: `RawOrderBookEvent` and `RejectedOrderBookEvent`. The harness
+never reads the raw topic, and it reads the dead-letter topic for `reject_reason` alone.

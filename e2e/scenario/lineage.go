@@ -168,12 +168,16 @@ func stampArrayRoot(payload, id string) (string, string, error) {
 
 // checkSnapshotLineage asserts what job 5's output must satisfy on every run.
 //
-// The counts cannot be predicted — how many events still hold a resting level
-// depends on the scenario — so what is checked is that the lineage is present,
-// well-formed and unique. A record with no source at all would mean job 5 lost
-// the chain, and duplicate ids would mean two records claim one identity.
+// The ids themselves cannot be predicted, but two exact relationships can be. Job
+// 5 emits one record per accepted event, so the trigger ids must be DISTINCT
+// across the stream — a repeat would mean one event produced two books, or that
+// the trigger is not really the event. And an event can only have set a level
+// after it arrived, so every level's source_id must be the trigger of this record
+// or of one before it. That second rule is what ties the two halves of the
+// lineage together now that the record no longer restates the level ids.
 func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) error {
 	seen := map[string]int{}
+	triggered := map[string]int{}
 	for i, s := range snapshots {
 		if err := validID(s.ID); err != nil {
 			return fmt.Errorf("%s record %d: id: %w", topic, i, err)
@@ -184,17 +188,30 @@ func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) er
 		}
 		seen[s.ID] = i
 
-		if len(s.SourceIDs) == 0 {
-			return fmt.Errorf("%s record %d: no source_ids — job 5 lost the chain", topic, i)
+		if err := validID(s.TriggerID); err != nil {
+			return fmt.Errorf("%s record %d: trigger_id: %w — job 5 lost the chain", topic, i, err)
 		}
-		for j, source := range s.SourceIDs {
-			if err := validID(source); err != nil {
-				return fmt.Errorf("%s record %d: source_ids[%d]: %w", topic, i, j, err)
+		if first, dup := triggered[s.TriggerID]; dup {
+			return fmt.Errorf("%s record %d: trigger_id %s already triggered record %d — "+
+				"job 5 emits one book per event", topic, i, s.TriggerID, first)
+		}
+		triggered[s.TriggerID] = i
+
+		for _, side := range []struct {
+			name   string
+			levels []events.PriceLevel
+		}{{"asks", s.Asks}, {"bids", s.Bids}} {
+			for j, level := range side.levels {
+				if err := validID(level.SourceID); err != nil {
+					return fmt.Errorf("%s record %d: %s[%d] (price %s): source_id: %w",
+						topic, i, side.name, j, level.Price, err)
+				}
+				if _, ok := triggered[level.SourceID]; !ok {
+					return fmt.Errorf("%s record %d: %s[%d] (price %s): source_id %s triggered no "+
+						"record at or before this one — a level cannot predate the event that set it",
+						topic, i, side.name, j, level.Price, level.SourceID)
+				}
 			}
-		}
-		if dupes := duplicates(s.SourceIDs); len(dupes) > 0 {
-			return fmt.Errorf("%s record %d: source_ids repeat %v — they must be deduplicated",
-				topic, i, dupes)
 		}
 	}
 	return nil
@@ -246,10 +263,23 @@ func checkAggregatedLineage(topic string, final events.AggregatedSide,
 
 // stripSnapshotLineage clears the lineage so what remains can be compared
 // literally against the scenario's wanted snapshots, which cannot name a uuid.
+//
+// The per-level ids go too. Note that the caller holds a SHALLOW copy of these
+// records for the aggregated check, so the level slices are shared and this
+// clears them there as well — harmless today, because an aggregated level names
+// the snapshot RECORD, never one of its levels.
 func stripSnapshotLineage(snapshots []events.OrderbookSnapshot) {
 	for i := range snapshots {
 		snapshots[i].ID = ""
-		snapshots[i].SourceIDs = nil
+		snapshots[i].TriggerID = ""
+		stripLevelLineage(snapshots[i].Asks)
+		stripLevelLineage(snapshots[i].Bids)
+	}
+}
+
+func stripLevelLineage(levels []events.PriceLevel) {
+	for i := range levels {
+		levels[i].SourceID = ""
 	}
 }
 
@@ -267,16 +297,4 @@ func validID(id string) error {
 		return fmt.Errorf("%q is not a uuid", id)
 	}
 	return nil
-}
-
-func duplicates(ids []string) []string {
-	seen := map[string]bool{}
-	var dupes []string
-	for _, id := range ids {
-		if seen[id] {
-			dupes = append(dupes, id)
-		}
-		seen[id] = true
-	}
-	return dupes
 }

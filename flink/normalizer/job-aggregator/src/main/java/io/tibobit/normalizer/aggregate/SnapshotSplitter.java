@@ -18,6 +18,12 @@ import java.util.List;
  * at the split, is what lets the aggregator stay a pure union: by the time levels are merged, each
  * already knows where it came from.
  *
+ * <p><b>The snapshot's own per-level {@code source_id} is deliberately NOT copied through</b>, even
+ * though it would shorten a trace by one hop. It names a job-4 event, which this record never read;
+ * stamping it here would make the aggregated record point straight past job 5 at a record it has no
+ * relationship with, and the job-5 hop would then appear nowhere in the lineage at all. A level
+ * names the snapshot; the snapshot's level of the same price names the event. Each hop, one step.
+ *
  * <p>An emitted book always carries both sides; on job 5's reset both sides are empty, which
  * produces two empty ExchangeBooks and drops that exchange from the union. A null side (defensive —
  * job 5 emits both) is treated as empty.

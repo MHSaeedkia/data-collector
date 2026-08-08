@@ -2,9 +2,9 @@ package io.tibobit.normalizer.bookbuild;
 
 /**
  * One level resting in the book, as held in {@link BookBuildFunction}'s MapState: the quantity plus
- * the {@code id} of the event that last set it. The id is what makes the emitted
- * snapshot's {@code source_ids} answer "which events is this book actually made of" rather than just
- * "which event triggered this emit".
+ * the {@code id} of the event that last set it. That id rides out on the emitted level as its
+ * {@code source_id}, and is what makes a single price traceable back to the one raw event that
+ * produced it — the emitted record itself names only the event that triggered the emit.
  *
  * <p>{@code price} duplicates the MapState key. That redundancy is deliberate: it lets this one type
  * serve both as the stored value and as the thing that gets sorted on the way out, instead of a

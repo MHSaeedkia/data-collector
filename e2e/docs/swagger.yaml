@@ -11,11 +11,6 @@ definitions:
       simulation:
         type: integer
     type: object
-  events.AvroTime:
-    properties:
-      long:
-        type: string
-    type: object
   events.OrderbookSnapshot:
     properties:
       asks:
@@ -32,8 +27,6 @@ definitions:
         type: integer
       pair_id:
         type: integer
-      pipeline_timings:
-        $ref: '#/definitions/events.PipelineTimings'
       simulation:
         description: |-
           Simulation is NiFi's flag carried up the pipeline: 0 = live data, 1 =
@@ -41,40 +34,12 @@ definitions:
           the emitted book with the flag of the event that produced it.
         type: integer
     type: object
-  events.PipelineTimings:
-    properties:
-      PipelineTimings:
-        $ref: '#/definitions/events.StepTimings'
-    type: object
   events.PriceLevel:
     properties:
       price:
         type: string
       quantity:
         type: string
-    type: object
-  events.StepTimings:
-    properties:
-      book_build_in:
-        $ref: '#/definitions/events.AvroTime'
-      book_build_out:
-        $ref: '#/definitions/events.AvroTime'
-      pair_extract_in:
-        $ref: '#/definitions/events.AvroTime'
-      pair_extract_out:
-        $ref: '#/definitions/events.AvroTime'
-      precision_in:
-        $ref: '#/definitions/events.AvroTime'
-      precision_out:
-        $ref: '#/definitions/events.AvroTime'
-      rebase_in:
-        $ref: '#/definitions/events.AvroTime'
-      rebase_out:
-        $ref: '#/definitions/events.AvroTime'
-      type_validate_in:
-        $ref: '#/definitions/events.AvroTime'
-      type_validate_out:
-        $ref: '#/definitions/events.AvroTime'
     type: object
   scenario.AggregatedBook:
     properties:

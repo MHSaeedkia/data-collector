@@ -332,7 +332,8 @@ class PrecisionFunctionTest {
     /**
      * Precision, like the rebaser, mutates in place and forwards — but it writes to a topic, so it
      * is a hop and re-stamps. This is the last id a raw event carries before job 5 turns it into a
-     * book, so it is the id that shows up in a snapshot's source_ids.
+     * book, so it is the id that shows up on a snapshot LEVEL as its source_id, and on the snapshot
+     * itself as trigger_id when this event is the one that caused the emit.
      */
     @Test
     @DisplayName("a truncated event takes the incoming id as its source and mints a new one")

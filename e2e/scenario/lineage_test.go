@@ -219,6 +219,8 @@ func TestStampIDAddsMetadataToTwoElementFrame(t *testing.T) {
 func TestCheckSnapshotLineageRejectsBrokenChains(t *testing.T) {
 	const good = "11111111-1111-4111-8111-111111111111"
 	const other = "22222222-2222-4222-8222-222222222222"
+	const third = "33333333-3333-4333-8333-333333333333"
+	const fourth = "44444444-4444-4444-8444-444444444444"
 
 	cases := []struct {
 		name      string
@@ -227,35 +229,83 @@ func TestCheckSnapshotLineageRejectsBrokenChains(t *testing.T) {
 	}{
 		{
 			name:      "valid",
-			snapshots: []events.OrderbookSnapshot{{ID: good, SourceIDs: []string{other}}},
+			snapshots: []events.OrderbookSnapshot{{ID: good, TriggerID: other}},
 		},
 		{
 			name:      "missing id",
-			snapshots: []events.OrderbookSnapshot{{SourceIDs: []string{other}}},
+			snapshots: []events.OrderbookSnapshot{{TriggerID: other}},
 			wantErr:   "id",
 		},
 		{
 			name:      "id is not a uuid",
-			snapshots: []events.OrderbookSnapshot{{ID: "nope", SourceIDs: []string{other}}},
+			snapshots: []events.OrderbookSnapshot{{ID: "nope", TriggerID: other}},
 			wantErr:   "not a uuid",
 		},
 		{
-			name:      "no sources",
+			name:      "no trigger",
 			snapshots: []events.OrderbookSnapshot{{ID: good}},
 			wantErr:   "lost the chain",
 		},
 		{
 			name: "two records share an id",
 			snapshots: []events.OrderbookSnapshot{
-				{ID: good, SourceIDs: []string{other}},
-				{ID: good, SourceIDs: []string{other}},
+				{ID: good, TriggerID: other},
+				{ID: good, TriggerID: third},
 			},
 			wantErr: "already used by record 0",
 		},
 		{
-			name:      "repeated source",
-			snapshots: []events.OrderbookSnapshot{{ID: good, SourceIDs: []string{other, other}}},
-			wantErr:   "must be deduplicated",
+			// Job 5 emits one book per accepted event, so an event cannot appear
+			// as the trigger twice.
+			name: "two records share a trigger",
+			snapshots: []events.OrderbookSnapshot{
+				{ID: good, TriggerID: other},
+				{ID: third, TriggerID: other},
+			},
+			wantErr: "already triggered record 0",
+		},
+		{
+			name: "levels carry their own source",
+			snapshots: []events.OrderbookSnapshot{
+				{ID: good, TriggerID: other, Asks: []events.PriceLevel{{Price: "10", SourceID: other}}},
+				{
+					ID:        third,
+					TriggerID: fourth,
+					// The ask was set by the earlier record's trigger and still rests.
+					Asks: []events.PriceLevel{{Price: "10", SourceID: other}},
+					Bids: []events.PriceLevel{{Price: "9", SourceID: fourth}},
+				},
+			},
+		},
+		{
+			name: "a level carries no source",
+			snapshots: []events.OrderbookSnapshot{{
+				ID:        good,
+				TriggerID: other,
+				Asks:      []events.PriceLevel{{Price: "10"}},
+			}},
+			wantErr: "asks[0] (price 10): source_id: empty",
+		},
+		{
+			name: "a level's source is not a uuid",
+			snapshots: []events.OrderbookSnapshot{{
+				ID:        good,
+				TriggerID: other,
+				Bids:      []events.PriceLevel{{Price: "9", SourceID: "nope"}},
+			}},
+			wantErr: "bids[0] (price 9): source_id: \"nope\" is not a uuid",
+		},
+		{
+			// A level can only have been set by an event that already arrived, so
+			// its owner must have triggered this record or one before it. This is
+			// what ties the two halves of the lineage together.
+			name: "a level names an event that triggered nothing yet",
+			snapshots: []events.OrderbookSnapshot{{
+				ID:        good,
+				TriggerID: other,
+				Asks:      []events.PriceLevel{{Price: "10", SourceID: third}},
+			}},
+			wantErr: "triggered no record at or before this one",
 		},
 	}
 

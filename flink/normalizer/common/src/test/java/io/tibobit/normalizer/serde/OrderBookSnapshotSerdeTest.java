@@ -84,21 +84,50 @@ class OrderBookSnapshotSerdeTest {
     }
 
     /**
-     * The snapshot is the one record whose source_ids legitimately holds MANY ids — a book is made
-     * of every event still holding a level. Order must survive too: the triggering event is first by
-     * contract, and downstream reads it positionally.
+     * The record's own lineage: its id, and the single event that triggered the emit. Everything
+     * else about where this book came from lives on the levels.
      */
     @Test
-    @DisplayName("round-trips a multi-source book with its order intact")
-    void roundTripsMultipleSources() {
+    @DisplayName("round-trips the record id and trigger_id")
+    void roundTripsRecordLineage() {
         OrderBookSnapshot in = new OrderBookSnapshot(6, 1, 123L, 1L, List.of(), List.of());
         in.setId("66666666-6666-4666-8666-666666666666");
-        in.setSourceIds(List.of("trigger", "resting-a", "resting-b"));
+        in.setTriggerId("55555555-5555-4555-8555-555555555555");
 
         OrderBookSnapshot out = roundTrip(in);
 
         assertThat(out.getId()).isEqualTo("66666666-6666-4666-8666-666666666666");
-        assertThat(out.getSourceIds()).containsExactly("trigger", "resting-a", "resting-b");
+        assertThat(out.getTriggerId()).isEqualTo("55555555-5555-4555-8555-555555555555");
+    }
+
+    /**
+     * The per-level lineage: levels of one book routinely come from DIFFERENT events, so each
+     * source_id has to survive attached to its own level rather than as a set on the record.
+     */
+    @Test
+    @DisplayName("round-trips a per-level source_id on both sides")
+    void roundTripsPerLevelSources() {
+        OrderBookSnapshot out = roundTrip(new OrderBookSnapshot(6, 1, 123L, 1L,
+                List.of(new PriceLevel("62775.5", "1", "ev-a"),
+                        new PriceLevel("62776.0", "2", "ev-b")),
+                List.of(new PriceLevel("62774.9", "3", "ev-a"))));
+
+        assertThat(out.getAsks()).extracting(PriceLevel::getSourceId)
+                .containsExactly("ev-a", "ev-b");
+        assertThat(out.getBids()).extracting(PriceLevel::getSourceId).containsExactly("ev-a");
+    }
+
+    /**
+     * source_id is non-null in the schema, so an unstamped level has to come back as "" rather
+     * than blowing up the sink — a missing stamp is a bug, but one worth seeing on the topic.
+     */
+    @Test
+    @DisplayName("an unstamped level serializes as a blank source_id")
+    void unstampedLevelBecomesBlank() {
+        OrderBookSnapshot out = roundTrip(new OrderBookSnapshot(6, 1, 123L, 1L,
+                List.of(new PriceLevel("62775.5", "1")), List.of()));
+
+        assertThat(out.getAsks().get(0).getSourceId()).isEmpty();
     }
 
     /**

@@ -15,10 +15,8 @@ import org.apache.flink.util.Collector;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Job 5 — book builder, keyed by {@code (exchange_id, pair_id)}. Holds the live book of each
@@ -40,12 +38,18 @@ import java.util.Set;
  * MapState is hash-based: without it "10.50" and "10.5" would be two different levels for the same
  * price (a lesson from the aggregation stage).
  *
- * <p><b>Lineage is the one thing here that fans in.</b> Every other step has exactly one parent, but
- * a book is state accumulated over many events, so the emitted snapshot's {@code source_ids} lists
- * the id of every event still holding a resting level — which is why each level's originating
- * event is tracked in the state itself ({@link RestingLevel}). The triggering event is always
- * included too, even when it left nothing resting: an event that only deletes levels, or a reset
- * that empties the book, still caused this record and must not vanish from the chain.
+ * <p><b>Lineage is the one thing here that fans in</b>, so it is written at TWO granularities.
+ * Every other step has exactly one parent; a book is state accumulated over many events. So each
+ * emitted level carries the event that SET it as its {@code source_id} — which is why each level's
+ * originating event is tracked in the state itself ({@link RestingLevel}) — and the record carries
+ * {@code trigger_id}, the event that caused this emit.
+ *
+ * <p>The trigger is a separate field rather than being folded in with the level ids because it is
+ * not always among them: an event that only deletes levels, or a reset that empties the book, leaves
+ * nothing resting yet still caused this record and must not vanish from the chain. Going the other
+ * way, only the per-level id can answer "which raw event made this price" — a record-level set has
+ * no mapping back to prices, so it would widen the trace to the whole book exactly where every other
+ * hop narrows it to one parent.
  *
  * <p>No checkpointing is configured anywhere on this platform yet, so after a restart a book is
  * empty until the next snapshot re-seeds it. Known, shared, not solved here.
@@ -91,7 +95,7 @@ public class BookBuildFunction
         // a level — so the emitted book carries the flag of the event that produced it. Kept out of
         // MapState deliberately: it is not per-price, and a feed does not switch mid-stream.
         book.setSimulation(event.getSimulation());
-        book.setSourceIds(restingSources(event.getId(), restingAsks, restingBids));
+        book.setTriggerId(event.getId());
         book.setId(Lineage.newId());
         book.setPipelineTimings(event.getPipelineTimings());
 
@@ -138,8 +142,8 @@ public class BookBuildFunction
     /**
      * MapState iteration order is undefined, so the book is sorted on the way out — asks ascending,
      * bids descending, the platform's convention — to keep the emitted snapshot deterministic. That
-     * determinism is what also makes {@code source_ids} stable across runs, since it is collected in
-     * this order.
+     * determinism covers the per-level lineage too, since each level's {@code source_id} rides out
+     * in this order.
      */
     private static List<RestingLevel> sorted(MapState<String, RestingLevel> side,
                                              Comparator<RestingLevel> order) throws Exception {
@@ -151,34 +155,26 @@ public class BookBuildFunction
         return levels;
     }
 
-    /** Drops the lineage back off, leaving the wire shape of the book unchanged. */
+    /**
+     * Carries each level's owning event out onto the wire as the level's {@code source_id}.
+     *
+     * <p>This is what makes ONE price traceable, and it is the whole of this record's fan-in: the
+     * record itself names only {@code trigger_id}. A record-level set of every contributing event
+     * would have no mapping back to prices, so it could only answer "this level came from one of
+     * these N events"; the per-level id answers "this level came from THAT event", which is where a
+     * trace back to the raw topic has to start.
+     *
+     * <p>Note that a level's id is the event that last SET it, not the event that triggered this
+     * emit: an update touching one price leaves every other level naming whichever event put it
+     * there, however many events ago. That is the point — the lineage follows the price, not the
+     * message.
+     */
     private static List<PriceLevel> priceLevels(List<RestingLevel> resting) {
         List<PriceLevel> levels = new ArrayList<>(resting.size());
         for (RestingLevel level : resting) {
-            levels.add(new PriceLevel(level.getPrice(), level.getQuantity()));
+            levels.add(new PriceLevel(level.getPrice(), level.getQuantity(), level.getId()));
         }
         return levels;
     }
 
-    /**
-     * Every event this book is made of: the one that triggered the emit, then the distinct events
-     * still holding a resting level, asks before bids.
-     *
-     * <p>The triggering event goes first and unconditionally. Without that, an event that only
-     * deleted levels — or a reset, which empties the book entirely — would produce a record whose
-     * source_ids do not mention the event that caused it, silently breaking the chain at exactly the
-     * moments worth tracing. Deduplicated because one event routinely sets many levels.
-     */
-    private static List<String> restingSources(String triggeringId,
-                                               List<RestingLevel> asks, List<RestingLevel> bids) {
-        Set<String> sources = new LinkedHashSet<>();
-        sources.add(triggeringId);
-        for (RestingLevel level : asks) {
-            sources.add(level.getId());
-        }
-        for (RestingLevel level : bids) {
-            sources.add(level.getId());
-        }
-        return new ArrayList<>(sources);
-    }
 }

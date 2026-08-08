@@ -130,13 +130,15 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 	// goavro's JSON is not the shape events.OrderbookSnapshot describes: it
 	// writes event_time as epoch millis, and it names union branches by their
 	// full Avro name. Only the asserted fields are read; pipeline_timings is
-	// wall-clock, so it is left nil.
+	// wall-clock, so it is left nil, and last_sequence_id is left nil because
+	// the snapshot stream is compared with DeepEqual — reading it would put it
+	// in every wanted snapshot in the suite.
 	var wire struct {
 		ExchangeID int64               `json:"exchange_id"`
 		PairID     int64               `json:"pair_id"`
 		Simulation int64               `json:"simulation"`
 		ID         string              `json:"id"`
-		SourceIDs  []string            `json:"source_ids"`
+		TriggerID  string              `json:"trigger_id"`
 		EventTime  int64               `json:"event_time"`
 		Asks       []events.PriceLevel `json:"asks"`
 		Bids       []events.PriceLevel `json:"bids"`
@@ -150,16 +152,18 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 		PairID:     wire.PairID,
 		Simulation: wire.Simulation,
 		ID:         wire.ID,
-		SourceIDs:  wire.SourceIDs,
+		TriggerID:  wire.TriggerID,
 		EventTime:  time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
 		Asks:       wire.Asks,
 		Bids:       wire.Bids,
 	}, nil
 }
 
-// decodeAggregated reads an aggregated record. event_time is left out: it is the
-// max event time of the exchanges in the union, which for ex3 is job 1's
-// processing time, so it is not assertable across all exchanges. The levels are.
+// decodeAggregated reads an aggregated record. Nothing asserts event_time — it is
+// the max event time of the exchanges in the union, which for ex3 is job 1's
+// processing time, so it is not comparable across exchanges — but it is read, so
+// that what the harness hands back is the whole record rather than a subset of
+// it. The levels are what a scenario checks.
 func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, error) {
 	text, err := textual(registryURL, value)
 	if err != nil {
@@ -167,20 +171,22 @@ func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, 
 	}
 
 	var wire struct {
-		PairID int64                    `json:"pair_id"`
-		Side   string                   `json:"side"`
-		ID     string                   `json:"id"`
-		Levels []events.AggregatedLevel `json:"levels"`
+		PairID    int64                    `json:"pair_id"`
+		Side      string                   `json:"side"`
+		ID        string                   `json:"id"`
+		EventTime int64                    `json:"event_time"`
+		Levels    []events.AggregatedLevel `json:"levels"`
 	}
 	if err := json.Unmarshal(text, &wire); err != nil {
 		return events.AggregatedSide{}, fmt.Errorf("decode aggregated: %w", err)
 	}
 
 	return events.AggregatedSide{
-		PairID: wire.PairID,
-		Side:   wire.Side,
-		ID:     wire.ID,
-		Levels: wire.Levels,
+		PairID:    wire.PairID,
+		Side:      wire.Side,
+		ID:        wire.ID,
+		EventTime: time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
+		Levels:    wire.Levels,
 	}, nil
 }
 
