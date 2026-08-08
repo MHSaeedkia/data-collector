@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,12 +14,19 @@ import (
 // a stamping bug does not fail loudly — it empties every snapshot stream in the
 // suite and looks like a broken pipeline. Cheap to catch here instead.
 
-// TestStampIDOnEverySource is the important one: it stamps all 177 real
-// source payloads and checks each result is still valid JSON carrying the id
-// where its parser will look for it. A payload shape the stamper cannot handle
-// shows up here rather than as 41 mysteriously empty runs.
+// TestStampIDOnEverySource is the important one: it walks all 177 real source
+// payloads and checks each is valid JSON carrying a well-formed id where its
+// parser will look for it — a root field, or element 2 for ex3's envelope. The
+// fixtures spell their own ids out, so this is what proves they put them in the
+// right carrier; a payload that carries one where its parser does not read it
+// shows up here rather than as a mysteriously empty run.
+//
+// Uniqueness is asserted across the whole suite, not per scenario: the ids are
+// fixed values now, and two fixtures sharing one would make the raw stream
+// ambiguous exactly where lineage is supposed to disambiguate it.
 func TestStampIDOnEverySource(t *testing.T) {
 	stamped := 0
+	seen := map[string]string{}
 	for _, sc := range Scenarios {
 		for i, source := range sc.S.Sources {
 			out, id, err := stampID(source)
@@ -26,11 +34,23 @@ func TestStampIDOnEverySource(t *testing.T) {
 				t.Fatalf("%s source %d: %v", sc.Name, i, err)
 			}
 			if err := validID(id); err != nil {
-				t.Fatalf("%s source %d: generated id: %v", sc.Name, i, err)
+				t.Fatalf("%s source %d: id: %v", sc.Name, i, err)
 			}
 			if got := carriedID(t, out); got != id {
 				t.Fatalf("%s source %d: payload carries id %q, want %q\npayload: %s",
 					sc.Name, i, got, id, out)
+			}
+			if where, dup := seen[id]; dup {
+				t.Fatalf("%s source %d: id %s is already used by %s", sc.Name, i, id, where)
+			}
+			seen[id] = fmt.Sprintf("%s source %d", sc.Name, i)
+
+			// The fixture must carry the id itself. If one ever loses it the
+			// fallback injection would quietly cover for it, and the payload on
+			// the raw topic would stop matching the payload in the file.
+			if declared := carriedID(t, source); declared != id {
+				t.Fatalf("%s source %d: fixture declares id %q but the stamper produced %q — "+
+					"the fixture is missing its id\npayload: %s", sc.Name, i, declared, id, source)
 			}
 			// Stamping must not change an array envelope's LENGTH — the length
 			// is the whole point of several noise frames, and a 3-element frame
@@ -138,6 +158,49 @@ func TestStampIDPreservesNumericLiterals(t *testing.T) {
 	// simulation must survive alongside the id in the SAME object.
 	if !strings.Contains(stampedArray, `"simulation":1`) {
 		t.Errorf("array root: simulation flag lost:\n%s", stampedArray)
+	}
+}
+
+// An id already on a payload is returned as-is, never replaced. This is what
+// makes the ids in the fixtures real: what the file shows is what reaches the
+// raw topic. Both carriers, plus the blank-id case, which must fail loudly
+// rather than send a payload job 1 would silently drop.
+func TestStampIDKeepsAnExistingID(t *testing.T) {
+	const declared = "11111111-1111-4111-8111-111111111111"
+
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{"object root", `{"id": "` + declared + `", "simulation": 1, "action": "snapshot"}`},
+		{"array root", `["BTCUSDT@buyDepth", [], {"simulation": 1, "id": "` + declared + `"}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, id, err := stampID(tc.payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if id != declared {
+				t.Fatalf("got id %q, want the declared %q", id, declared)
+			}
+			if out != tc.payload {
+				t.Fatalf("payload was rewritten:\n got %s\nwant %s", out, tc.payload)
+			}
+		})
+	}
+
+	// A blank id is not an id — job 1 drops on blank exactly as it does on
+	// missing — and it cannot be filled in either, because an object root would
+	// then carry the key twice with the blank winning.
+	for _, payload := range []string{
+		`{"id": "", "simulation": 1}`,
+		`["BTCUSDT@buyDepth", [], {"simulation": 1, "id": ""}]`,
+	} {
+		if _, _, err := stampID(payload); err == nil ||
+			!strings.Contains(err.Error(), `empty "id"`) {
+			t.Fatalf("want an empty-id error for %s, got %v", payload, err)
+		}
 	}
 }
 

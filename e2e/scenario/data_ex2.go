@@ -12,6 +12,7 @@ var Ex2RestThenWsResync = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "cee81c36-e0fb-4beb-86d2-f44cdb415849",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -33,6 +34,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "1f01d147-eee3-41d0-9b45-e7dd49ec8beb",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -57,6 +59,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 03 ws update
 		`{
+	"id": "1cdf2108-3407-4396-93de-10ebf1aafbc5",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -80,6 +83,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 04 rest snapshot
 		`{
+	"id": "e46996eb-2acc-46b4-a891-10fd9c479737",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -99,6 +103,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"id": "929ea9f7-b7dc-402b-a0df-019d979f6845",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -122,6 +127,7 @@ var Ex2RestThenWsResync = Scenario{
 }`,
 		// 06 ws update
 		`{
+	"id": "10bb8616-7e4f-4700-9faf-d8a06a106381",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -288,6 +294,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 	Sources: []string{
 		// 01 ws update no baseline
 		`{
+	"id": "ecbb0fd6-a501-482e-bd70-4bf2c964a009",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -310,6 +317,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 }`,
 		// 02 rest snapshot
 		`{
+	"id": "b2e29062-cbf1-4dce-ad90-515eeb14b566",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -331,6 +339,7 @@ var Ex2UpdateBeforeSnapshot = Scenario{
 }`,
 		// 03 ws update
 		`{
+	"id": "baecb42c-9c5d-401d-8055-b0dc09a576a9",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -424,6 +433,7 @@ var Ex2SequenceGap = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "bc839433-16c2-4fc2-a3ec-14b1106ece77",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -445,6 +455,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "0a6f5a8e-69c7-4086-9821-f4c0ccbf7bb9",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -467,6 +478,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 03 ws update ok
 		`{
+	"id": "f4ae76ba-056d-4554-a349-dc6107d50963",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -488,6 +500,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 04 ws update gap
 		`{
+	"id": "467c2533-27b0-42b6-a4a7-812d497b489a",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -509,6 +522,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 05 ws update awaiting
 		`{
+	"id": "0475c8d0-8887-40b4-96d9-6e948f82adda",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -530,6 +544,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 06 rest snapshot resync
 		`{
+	"id": "583cccf0-e4d3-4915-843c-90c9f9cb19e5",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -549,6 +564,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 07 ws update
 		`{
+	"id": "2a8fdcab-76cf-40df-a3a5-54de1c982c84",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -572,6 +588,7 @@ var Ex2SequenceGap = Scenario{
 }`,
 		// 08 ws update ok
 		`{
+	"id": "b8d2e5ea-81fd-4bb3-bafa-4ca2ce64a431",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -749,6 +766,7 @@ var Ex2NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 connect ack
 		`{
+	"id": "917d4004-683f-4e51-94cb-33a7e5e49200",
 	"simulation": 1,
 	"connect": {
 		"client": "b7e1c2f4-3a5d-4e6f-9a0b-1c2d3e4f5a6b",
@@ -757,6 +775,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 02 foreign channel
 		`{
+	"id": "d0c0949d-42fc-4206-959f-05e85c8fc198",
 	"simulation": 1,
 	"push": {
 		"channel": "trades:BTC_USDT",
@@ -774,6 +793,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 03 rest snapshot
 		`{
+	"id": "f0c6b2a7-5f6f-4712-9fcd-53c935995edc",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -793,6 +813,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 04 malformed book
 		`{
+	"id": "3c458b26-6572-4066-8f20-b3e651d026a8",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -808,6 +829,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 05 rest snapshot string event time
 		`{
+	"id": "eb815188-b067-4741-91c0-b4c2cc8a8b98",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -821,6 +843,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 06 ws update
 		`{
+	"id": "3b39cd5a-4aaf-4e7e-880e-c5500246746e",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -844,6 +867,7 @@ var Ex2NoiseFrames = Scenario{
 }`,
 		// 07 ws update
 		`{
+	"id": "5af3bc38-30b0-404a-9078-7b6d1f8cdb2c",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -948,6 +972,7 @@ var Ex2StaleRestReplay = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "5f519c67-3362-4280-a687-6a8707f9dfaa",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -965,6 +990,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "80525779-99cf-4807-b530-b7bfa8cc88ec",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -987,6 +1013,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 03 ws update loud
 		`{
+	"id": "3d0671d7-68a3-4bbe-9d58-8f5e1b8c7d69",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -1008,6 +1035,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 04 rest snapshot stale replay
 		`{
+	"id": "246dd491-be6e-40c0-b821-425ce9277054",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -1025,6 +1053,7 @@ var Ex2StaleRestReplay = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"id": "71103480-23d2-480a-9959-6ab8d922feab",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",
@@ -1146,6 +1175,7 @@ var Ex2PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "8e7b3265-3d02-4891-bdf3-353ed58cb13a",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTC_USDT",
@@ -1162,6 +1192,7 @@ var Ex2PrecisionDust = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "7bd7e8aa-c914-4db9-9341-fa7b9a62f3fe",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:BTC_USDT",

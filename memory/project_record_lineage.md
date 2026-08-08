@@ -133,14 +133,22 @@ parent information at all. Accepted, by construction of decision 2.
 
 ## What e2e can and cannot assert
 
-The ids are random per run, so **no scenario can declare them**. The harness therefore:
+**The asymmetry that decides everything here:** a SOURCE id is an INPUT, so it can be a literal;
+every id further down is minted by a job at run time and is random per run, so **no scenario can
+declare one**. So:
 
-1. **Injects** a `id` into every source at produce time, exactly as NiFi does — the 177
-   fixtures are not edited. Job 1 drops unstamped payloads, so a stamping bug does not fail loudly:
-   it empties every snapshot stream in the suite and reads as a broken pipeline. `lineage_test.go`
-   stamps all 177 sources offline to catch that cheaply.
+1. **The 177 source payloads each spell their own `id` out** (2026-08-04, user request), the same
+   way they spell `simulation` out — a distinct uuid per payload, in the carrier its parser reads.
+   `stampID` **no longer overwrites an id that is already there**; it only fills one in, which is
+   what keeps a scenario POSTed to the HTTP endpoint working when its author did not think about
+   lineage. So what the fixture shows is what reaches the raw topic and can be matched by eye.
+   ⚠ A **present-but-blank** `id` is a hard error, not something to fill in: splicing into an object
+   root would leave the key twice and both Go and Jackson take the LAST one, so the blank would win
+   and job 1 would drop the record — the exact silent failure this path exists to prevent.
 2. **Checks structurally** — present, well-formed uuid, unique per topic, sources non-empty and
-   deduplicated.
+   deduplicated. `TestStampIDOnEverySource` also asserts all 177 fixture ids are unique across the
+   whole suite and that each fixture really declares its own (so a lost one cannot be papered over
+   by the fallback injection).
 3. **Strips the fields** before the literal comparison, so the existing per-scenario expectations
    still work untouched.
 
@@ -153,7 +161,8 @@ only ever have been checked for shape.
 topics, never the raw topic, so the id it injects never appears in anything it reads back. That link
 is covered by unit tests only.
 
-Two harness details worth keeping:
+Two harness details worth keeping (they still govern the fallback injection, and the ex3 one also
+governs where a fixture must put its literal id):
 
 - The stamper edits payloads **textually** (object roots) or via `json.RawMessage` (array roots).
   It must never unmarshal/re-marshal a payload wholesale: ex3 and ex5 carry prices as JSON NUMBERS

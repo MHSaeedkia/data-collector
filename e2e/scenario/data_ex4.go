@@ -35,6 +35,7 @@ var Ex4RamzinexSnapshots = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "f7564cd1-109b-490b-b17f-06a02302d2b6",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -57,6 +58,7 @@ var Ex4RamzinexSnapshots = Scenario{
 }`,
 		// 02 snapshot — every 01 level is gone, and a zero-quantity level rests nowhere
 		`{
+	"id": "39ed78d8-644d-4958-9a72-3ed4e12e44de",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -78,6 +80,7 @@ var Ex4RamzinexSnapshots = Scenario{
 }`,
 		// 03 snapshot — 2-element levels alongside full 7-element ones
 		`{
+	"id": "4bc5ce24-5940-4b8d-a190-d6929edf5032",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -159,6 +162,7 @@ var Ex4StaleOffset = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "ab221072-343d-41f4-a121-af715641c716",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -173,6 +177,7 @@ var Ex4StaleOffset = Scenario{
 }`,
 		// 02 the same offset again — a duplicate publication
 		`{
+	"id": "e9deed0d-79fe-4d62-921c-b11acf708900",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -187,6 +192,7 @@ var Ex4StaleOffset = Scenario{
 }`,
 		// 03 an older offset — a replay that must not overwrite the newer book
 		`{
+	"id": "675bd23d-8b82-48f5-8096-8838c14f1ff2",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -201,6 +207,7 @@ var Ex4StaleOffset = Scenario{
 }`,
 		// 04 a far-forward offset — accepted, because a snapshot feed has no gap rule
 		`{
+	"id": "56d01f82-c05b-4e68-9a03-bd29cf16c965",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -246,6 +253,7 @@ var Ex4NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "eb7da6cf-eb8f-4123-b167-a844d3fcc81a",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -260,9 +268,10 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 02 not a publication at all
 		`{
-	"simulation": 1, "ping": 1 }`,
+	"id": "26e61fa7-58be-41cc-aeb4-95b3d83194d5", "simulation": 1, "ping": 1 }`,
 		// 03 a publication, but not the orderbook channel
 		`{
+	"id": "908c49dd-9c9d-422c-be08-309ee0d41cdd",
 	"simulation": 1,
 	"push": {
 		"channel": "trades:12",
@@ -277,6 +286,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 04 no sells key — a half book is not a shape ex4 ever sends
 		`{
+	"id": "dc52179b-8de3-4d47-bd55-ce1516082873",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -290,6 +300,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 05 a market id ex4 has no exchange_markets row for
 		`{
+	"id": "629289e1-0a5e-4256-ae4b-17866dedec99",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:99999",
@@ -304,6 +315,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 06 string levels — ex4's wire is JSON numbers, so the whole frame is unparseable
 		`{
+	"id": "1e4c6c97-fa6f-409c-97e4-d66415185ef9",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -318,6 +330,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 07 a 1-element level — below the [price, qty] minimum, so the frame is dropped whole
 		`{
+	"id": "c703f400-dad2-407b-8228-5b24e983a3d0",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -332,6 +345,7 @@ var Ex4NoiseFrames = Scenario{
 }`,
 		// 08 snapshot
 		`{
+	"id": "250a5561-69be-4894-93c5-4a72d9b686d4",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:12",
@@ -397,6 +411,7 @@ var Ex4RebaseToman = Scenario{
 	Sources: []string{
 		// 01 snapshot, prices in rials
 		`{
+	"id": "31f71387-a263-4169-98c7-a8af1dd9babf",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:2",
@@ -418,6 +433,7 @@ var Ex4RebaseToman = Scenario{
 }`,
 		// 02 snapshot — the first two buys are distinct rials but the same toman
 		`{
+	"id": "75d81243-d741-45fb-a05c-0749267f3b7a",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:2",
@@ -488,6 +504,7 @@ var Ex4RebaseScaledUnit = Scenario{
 	Sources: []string{
 		// 01 snapshot, priced per 100 PEPE
 		`{
+	"id": "f6534273-7ba5-4322-900a-1e8f5d30a071",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:552",
@@ -509,6 +526,7 @@ var Ex4RebaseScaledUnit = Scenario{
 		// 02 snapshot — a price with more places than the market keeps, and two dust quantities
 		// either side of the line the +2 shift moves
 		`{
+	"id": "579c1c82-c89e-4cb8-aafd-ac5c57524b5b",
 	"simulation": 1,
 	"push": {
 		"channel": "orderbook:552",

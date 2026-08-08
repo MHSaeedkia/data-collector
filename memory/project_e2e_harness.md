@@ -472,3 +472,11 @@ arrays that anyone would have to fill in from `data_ex*.go` first.
   (that needs a browser), nor that the scenario passes against a live stack — no scenario ever has.
 
 **2026-08-03 — every example now sets `simulation: 1`** (user instruction): 177 source payloads, 125 `WantSnapshots`, 215 `WantAggregated` levels, plus `Simulation` on `events.OrderbookSnapshot`/`events.AggregatedLevel` and `stampExchange`. So a job that drops the flag fails e2e immediately. One ex3 case was re-pointed: its "a third element the envelope does not have" negative test is now a FOURTH element, since three is the real shape. `swag init` rerun. See [[simulation-flag]].
+
+**2026-08-04 — every source payload also carries a literal `id`** (user instruction), next to
+`simulation` and in the same carrier: all 177, one distinct uuid each. `stampID` was changed from
+always-inject to fill-in-if-missing, so the fixture's id is what actually reaches the raw topic —
+the injection now only serves scenarios POSTed over HTTP. No `swag init` needed: the Try-it-out
+example is the live `Ex1PrecisionDust` var read at serve time, so it picked the ids up for free.
+See [[record-lineage]] for the asymmetry (source ids are inputs and can be literals; every id
+further down is job-minted and can only be checked for shape) and for the blank-id trap.

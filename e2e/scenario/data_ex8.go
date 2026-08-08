@@ -13,6 +13,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	Sources: []string{
 		// 01 update no baseline
 		`{
+	"id": "ca0f8d01-294f-42fa-853a-7e7289f636c6",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -33,6 +34,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 }`,
 		// 02 snapshot
 		`{
+	"id": "60a0a661-a7db-482c-96f7-d670cdfa5bd3",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -62,6 +64,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 }`,
 		// 03 update
 		`{
+	"id": "b87c615c-dc81-428d-8227-a00fa614e7c6",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -155,6 +158,7 @@ var Ex8HappyPath = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "73c46589-6b55-4335-a044-eca17b9991ef",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -184,6 +188,7 @@ var Ex8HappyPath = Scenario{
 }`,
 		// 02 update modify add delete
 		`{
+	"id": "23d6e762-3672-463e-a115-22c3b6c14bcd",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -205,6 +210,7 @@ var Ex8HappyPath = Scenario{
 }`,
 		// 03 update delete bid
 		`{
+	"id": "37a564f5-221a-495d-baf1-bd74671b193c",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -225,6 +231,7 @@ var Ex8HappyPath = Scenario{
 }`,
 		// 04 update asks only
 		`{
+	"id": "936124ea-e1a8-4b0f-a8d6-c4fc7a0ddc37",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -351,6 +358,7 @@ var Ex8SequenceGap = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "756f528b-e41c-4d6a-8380-6165b65e4a1e",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -380,6 +388,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 02 update ok
 		`{
+	"id": "9aefe424-fc12-4b8d-a311-1fe768ff7cbe",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -397,6 +406,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 03 update gap
 		`{
+	"id": "9c1d91ad-24da-4a88-8687-27c50aa53ba9",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -414,6 +424,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 04 update awaiting snapshot
 		`{
+	"id": "1dd810e4-7581-4173-aa1e-c19c3ee3d610",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -431,6 +442,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 05 snapshot resync
 		`{
+	"id": "9e962142-8cb6-4326-bfc8-cc2986996abb",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -456,6 +468,7 @@ var Ex8SequenceGap = Scenario{
 }`,
 		// 06 update ok
 		`{
+	"id": "92591a51-c76e-4e49-90cf-a742291a126a",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -576,6 +589,7 @@ var Ex8StaleDuplicate = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "ae06523b-8215-4b8d-a106-5df7ff57c5d7",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -601,6 +615,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 02 update ok
 		`{
+	"id": "c9ad6f89-d645-407a-9bc3-579ca11e1a17",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -618,6 +633,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 03 update replay duplicate
 		`{
+	"id": "4be9bf5b-b95a-4c9f-a9ae-32ba1da73240",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -635,6 +651,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 04 snapshot out of order
 		`{
+	"id": "b0bb7997-4b6f-4660-adcc-681a01cc0fab",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -652,6 +669,7 @@ var Ex8StaleDuplicate = Scenario{
 }`,
 		// 05 snapshot ok
 		`{
+	"id": "929746b5-0fe9-4096-987b-fb9f89b207fd",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -748,6 +766,7 @@ var Ex8PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "af83e9e8-c221-428b-aff5-0987e895280e",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -779,6 +798,7 @@ var Ex8PrecisionDust = Scenario{
 }`,
 		// 02 update dust delete
 		`{
+	"id": "df2d7c59-c8ce-4eb8-bbf2-8272fcfa680c",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -858,6 +878,7 @@ var Ex8NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 subscribe ack
 		`{
+	"id": "a501c5d0-189c-4c37-9421-b0fd9e52d3cd",
 	"simulation": 1,
 	"event": "subscribe",
 	"arg": {
@@ -869,6 +890,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 02 error frame
 		`{
+	"id": "644f3769-c731-47d4-a32f-67540946eeb8",
 	"simulation": 1,
 	"event": "error",
 	"code": "60012",
@@ -877,6 +899,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 03 snapshot
 		`{
+	"id": "62446b18-a0eb-4024-861b-75a97faa89a8",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -902,6 +925,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 04 unknown action
 		`{
+	"id": "76c8fa22-92ef-4b5e-a34e-ad8f56f54535",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",
@@ -919,6 +943,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 05 other channel
 		`{
+	"id": "82458716-d39f-4bee-9d41-c399d6ae2d5f",
 	"simulation": 1,
 	"arg": { "channel": "trades", "instId": "BTC-USDT" },
 	"data": [
@@ -934,6 +959,7 @@ var Ex8NoiseFrames = Scenario{
 }`,
 		// 06 update
 		`{
+	"id": "72857752-b690-4f18-b050-9f12d2174bd3",
 	"simulation": 1,
 	"arg": {
 		"channel": "books-grouped",

@@ -38,20 +38,31 @@ func newUUID() string {
 // has an id, that no two records share one, and above all that the parent a
 // record names is a record that actually exists upstream.
 //
-// So the harness does three things: it injects an id into every source the
-// way NiFi does, it checks the emitted lineage structurally, and it then clears
-// the lineage fields so the existing per-scenario expectations still compare
-// literally. The clearing is deliberate and is why events.OrderbookSnapshot
-// documents these fields as never-declared.
+// So the harness does three things: it makes sure every source carries an id
+// the way a NiFi-published record does, it checks the emitted lineage
+// structurally, and it then clears the lineage fields so the existing
+// per-scenario expectations still compare literally. The clearing is deliberate
+// and is why events.OrderbookSnapshot documents these fields as never-declared.
+//
+// Note the asymmetry: a SOURCE id is written into the fixture, because it is the
+// input and nothing downstream depends on its value. Every id further down is
+// minted by a job at run time and can only be checked for shape.
 
-// stampID injects a fresh id into a source payload exactly where NiFi
-// puts it, and returns the payload with the id it used.
+// stampID returns a source payload carrying an id, and the id it carries.
+//
+// Every one of the 177 fixtures spells its own id out, the way it spells the
+// simulation flag out, so for them this is a no-op that just reads the id back.
+// Injecting one is the fallback, and it is what keeps a scenario POSTed to the
+// HTTP endpoint working when whoever wrote it did not think about lineage: job 1
+// DROPS a payload with no id, so an unstamped source produces nothing at all.
+//
+// An id already on the payload is never replaced. That is the whole point of
+// writing them into the fixtures — the id a fixture shows is the id the pipeline
+// really sees, so it can be read out of a raw topic and matched by eye.
 //
 // Two carriers, the same split as the simulation flag: a root field for the
 // six object-root exchanges, and the trailing metadata object for ex3/wallex's
-// array envelope. This is why the harness injects rather than having the 177
-// fixtures spell an id out — a per-record unique value cannot be a fixture, and
-// injecting it here is what NiFi actually does.
+// array envelope.
 //
 // The payload is edited textually rather than being unmarshalled and
 // re-marshalled: ex3 and ex5 carry prices as JSON NUMBERS, and a round trip
@@ -60,34 +71,50 @@ func newUUID() string {
 // the opening brace; array roots are split into raw elements so the levels array
 // is copied through byte-for-byte and only the small metadata object is rebuilt.
 func stampID(source string) (string, string, error) {
-	id := newUUID()
 	trimmed := strings.TrimSpace(source)
 
 	switch {
 	case strings.HasPrefix(trimmed, "{"):
-		stamped, err := stampObjectRoot(trimmed, id)
-		return stamped, id, err
+		return stampObjectRoot(trimmed, newUUID())
 	case strings.HasPrefix(trimmed, "["):
-		return stampArrayRoot(trimmed, id)
+		return stampArrayRoot(trimmed, newUUID())
 	default:
 		return "", "", fmt.Errorf("payload is neither a JSON object nor an array: %.40s", trimmed)
 	}
 }
 
-// stampObjectRoot splices "id" in as the first field, leaving every other
-// byte of the payload untouched.
-func stampObjectRoot(payload, id string) (string, error) {
+// stampObjectRoot keeps a root "id" that is already there, and otherwise splices
+// one in as the first field, leaving every other byte of the payload untouched.
+//
+// A present-but-blank id is an error rather than something to fill in. Splicing
+// would leave the payload with the key twice, and both Go and Jackson take the
+// LAST one — so the blank would win and job 1 would drop the record, which is
+// precisely the silent failure this whole path exists to prevent.
+func stampObjectRoot(payload, id string) (string, string, error) {
+	var root struct {
+		ID *string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(payload), &root); err != nil {
+		return "", "", fmt.Errorf("parse object payload: %w", err)
+	}
+	if root.ID != nil {
+		if *root.ID == "" {
+			return "", "", fmt.Errorf(`payload declares an empty "id" — job 1 drops that; remove the field or give it a uuid`)
+		}
+		return payload, *root.ID, nil
+	}
+
 	rest := strings.TrimSpace(payload[1:])
 	if strings.HasPrefix(rest, "}") {
-		return fmt.Sprintf(`{"id":%q}`, id), nil
+		return fmt.Sprintf(`{"id":%q}`, id), id, nil
 	}
-	return fmt.Sprintf(`{"id":%q,%s`, id, payload[1:]), nil
+	return fmt.Sprintf(`{"id":%q,%s`, id, payload[1:]), id, nil
 }
 
-// stampArrayRoot puts id in the SAME object that carries simulation — the
-// element at INDEX 2, which is where WallexParser reads it from (root.path(2)),
-// not simply the last element. A 2-element frame (the pre-flag form) gains the
-// object.
+// stampArrayRoot reads the id out of, or puts it into, the SAME object that
+// carries simulation — the element at INDEX 2, which is where WallexParser reads
+// it from (root.path(2)), not simply the last element. A 2-element frame (the
+// pre-flag form) gains the object.
 //
 // Index 2 rather than "the last element" is what keeps the deliberately
 // malformed noise frames intact: one of them is a four-element envelope ending
@@ -108,6 +135,16 @@ func stampArrayRoot(payload, id string) (string, string, error) {
 		if err := json.Unmarshal(elems[2], &meta); err != nil {
 			return "", "", fmt.Errorf("element 2 is not the metadata object: %w", err)
 		}
+	}
+	if raw, ok := meta["id"]; ok {
+		var existing string
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			return "", "", fmt.Errorf("element 2 has a non-string id: %w", err)
+		}
+		if existing == "" {
+			return "", "", fmt.Errorf(`element 2 declares an empty "id" — job 1 drops that; remove the field or give it a uuid`)
+		}
+		return payload, existing, nil
 	}
 	meta["id"] = json.RawMessage(fmt.Sprintf("%q", id))
 

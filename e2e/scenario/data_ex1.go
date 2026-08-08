@@ -12,6 +12,7 @@ var Ex1RestThenWsResync = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "f615c6f8-da26-454c-8f10-1fb059c33808",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -35,6 +36,7 @@ var Ex1RestThenWsResync = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "c37bfc4a-1c2b-402f-8cfe-503c45884d8b",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -58,6 +60,7 @@ var Ex1RestThenWsResync = Scenario{
 }`,
 		// 03 ws update
 		`{
+	"id": "2bd58608-6a1b-47a2-aa5d-70b9de6afcb1",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -80,6 +83,7 @@ var Ex1RestThenWsResync = Scenario{
 }`,
 		// 04 rest snapshot
 		`{
+	"id": "cbdbb237-a629-4622-b7cb-7025d7a2f47f",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -101,6 +105,7 @@ var Ex1RestThenWsResync = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"id": "97e7d6c4-bb06-4309-9986-7d5718a52c3d",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -123,6 +128,7 @@ var Ex1RestThenWsResync = Scenario{
 }`,
 		// 06 ws update
 		`{
+	"id": "1ca3217f-7f2a-45d3-ad98-e75f9021bfdb",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -288,6 +294,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 	Sources: []string{
 		// 01 ws update no baseline
 		`{
+	"id": "41d21fe3-dbd2-4516-b6fe-7b7fe0888c13",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -309,6 +316,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 }`,
 		// 02 rest snapshot
 		`{
+	"id": "e3c2319d-6312-4ac1-9ff6-a2798b2aab75",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -332,6 +340,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 }`,
 		// 03 ws update
 		`{
+	"id": "10fc304a-a135-4f0b-b783-2a92552e6e32",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -424,6 +433,7 @@ var Ex1SequenceGap = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "966de6b0-e10b-4df8-8929-d2ab6d8fa7a8",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -447,6 +457,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "8fc6cd1d-252d-49aa-ba8a-0d8cd3e611b3",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -468,6 +479,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 03 ws update ok
 		`{
+	"id": "8e59c061-4a89-47ef-898d-e1dcb1d3481a",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -488,6 +500,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 04 ws update gap
 		`{
+	"id": "4cd041a7-1125-4734-b7f7-fec7869897c0",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -508,6 +521,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 05 ws update awaiting
 		`{
+	"id": "12840d39-d731-48e7-83c3-acae33029ffe",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -528,6 +542,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 06 rest snapshot resync
 		`{
+	"id": "ebf1d333-48ff-4294-b3f6-0681f6b84347",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -549,6 +564,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 07 ws update
 		`{
+	"id": "48172937-bec2-42c6-8026-52b4770dbd79",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -571,6 +587,7 @@ var Ex1SequenceGap = Scenario{
 }`,
 		// 08 ws update ok
 		`{
+	"id": "9e0a8ea9-222b-4b28-87ac-f343c06fe7d6",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -747,6 +764,7 @@ var Ex1NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 connect ack
 		`{
+	"id": "991c3ddc-436e-4530-8417-4aa87c2abf87",
 	"simulation": 1,
 	"connect": {
 		"client": "a4d3ae55-9f2c-4c31-8f0e-1b2c3d4e5f60",
@@ -755,6 +773,7 @@ var Ex1NoiseFrames = Scenario{
 }`,
 		// 02 foreign channel
 		`{
+	"id": "0cf96ec4-33a2-44e7-914f-81dfa41761c3",
 	"simulation": 1,
 	"push": {
 		"channel": "public:trades-BTCUSDT",
@@ -770,6 +789,7 @@ var Ex1NoiseFrames = Scenario{
 }`,
 		// 03 rest snapshot
 		`{
+	"id": "f07db891-dd2c-4197-9870-6cdafc7ebbf4",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -791,6 +811,7 @@ var Ex1NoiseFrames = Scenario{
 }`,
 		// 04 malformed book
 		`{
+	"id": "e872d13c-3b6f-4f38-8078-e0228a62e2c1",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -805,6 +826,7 @@ var Ex1NoiseFrames = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"id": "10c02102-cc81-4d00-be4d-65a8862a48ad",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -827,6 +849,7 @@ var Ex1NoiseFrames = Scenario{
 }`,
 		// 06 ws update
 		`{
+	"id": "a357fea8-e985-4b91-b41b-cafa9f5db80e",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -930,6 +953,7 @@ var Ex1StaleRestReplay = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "a1964397-ee11-4aba-91ef-d73273b7fcec",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -949,6 +973,7 @@ var Ex1StaleRestReplay = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "510f6ac4-797c-495b-a883-86b1fa0b978a",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -970,6 +995,7 @@ var Ex1StaleRestReplay = Scenario{
 }`,
 		// 03 ws update loud
 		`{
+	"id": "6305c64d-4919-4539-b6de-3028dc727b1a",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -990,6 +1016,7 @@ var Ex1StaleRestReplay = Scenario{
 }`,
 		// 04 rest snapshot stale replay
 		`{
+	"id": "1f918180-0f53-457a-ab58-c7a65afb139b",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -1009,6 +1036,7 @@ var Ex1StaleRestReplay = Scenario{
 }`,
 		// 05 ws update
 		`{
+	"id": "b0e39084-ed3d-40ad-a2d0-d83e8162ecf9",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -1129,6 +1157,7 @@ var Ex1PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 rest snapshot
 		`{
+	"id": "e766f82d-2cfa-435d-9096-ce1679cbdbcc",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "BTCUSDT",
@@ -1147,6 +1176,7 @@ var Ex1PrecisionDust = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "41ed1b1e-dfff-4ad2-89fa-6d0d41b449e0",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-BTCUSDT",
@@ -1216,6 +1246,7 @@ var Ex1RebaseToman = Scenario{
 	Sources: []string{
 		// 01 rest snapshot, prices in rials
 		`{
+	"id": "130ded2b-d78b-41e3-b587-c6e2d2c3c079",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "1K_SHIBIRT",
@@ -1234,6 +1265,7 @@ var Ex1RebaseToman = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "327631c0-1f27-4ca6-a5f0-ac1d5fbdb952",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-1K_SHIBIRT",
@@ -1314,6 +1346,7 @@ var Ex1RebaseScaledUnit = Scenario{
 	Sources: []string{
 		// 01 rest snapshot, priced per 1M PEPE
 		`{
+	"id": "574de2d6-8339-4362-baa0-640b2b509bc6",
 	"simulation": 1,
 	"action": "snapshot",
 	"pair": "1M_PEPEUSDT",
@@ -1332,6 +1365,7 @@ var Ex1RebaseScaledUnit = Scenario{
 }`,
 		// 02 ws update
 		`{
+	"id": "b2e3a6b2-6b0a-4e0d-b8ad-7b8d9d6b162e",
 	"simulation": 1,
 	"push": {
 		"channel": "public:orderbook-1M_PEPEUSDT",
