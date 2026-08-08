@@ -7,7 +7,7 @@ package scenario
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"reflect"
 	"time"
 
@@ -157,7 +157,7 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
-	log.Printf("matched %d snapshots and %d rejections", len(snapshots), len(rejects))
+	slog.Debug("matched", "snapshots", len(snapshots), "rejections", len(rejects))
 
 	return s.verifyAggregated(ctx, cfg, withLineage)
 }
@@ -209,7 +209,7 @@ func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config,
 		if err := compare(topic, final.Levels, side.want); err != nil {
 			return err
 		}
-		log.Printf("matched the final aggregated book on %s (%d records seen)", topic, len(records))
+		slog.Debug("matched the final aggregated book", "topic", topic, "records_seen", len(records))
 	}
 	return nil
 }

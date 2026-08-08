@@ -507,3 +507,32 @@ records on the topics; it had drifted. Three fixes:
 
 Still not modelled at all, on purpose: `RawOrderBookEvent` and `RejectedOrderBookEvent`. The harness
 never reads the raw topic, and it reads the dead-letter topic for `reject_reason` alone.
+
+**2026-08-08 — logging moved to `log/slog` with levels** (user instruction: "less noisy output;
+most of them debug, info for scenario start and result"). Every `log.Printf` in the harness is gone.
+
+- **`log/slog`, not zap/zerolog.** Both of those are a new module dependency, and this module is
+  vendored — but `e2e/` is deliberately built with `-mod=mod` and must never be `go mod vendor`'d
+  (see the Swagger section above), so a third-party logger would have had to be resolved outside the
+  vendor tree that every other package here uses. slog is stdlib and levels are all that was asked
+  for. No logging package was created: `setupLogger` lives in `main.go` because main is its only
+  caller, and everything else calls `slog.Default()`.
+- **The level rule.** Info = scenario start, scenario PASS/FAIL, and once-per-process milestones
+  (stack provisioning, the `-serve` listen line). Debug = every per-scenario internal — topic
+  create/delete, schema registration, each produce, each Flink submit/cancel, consumer reads, the
+  intermediate "matched N snapshots" lines. Error = failures; Warn is used once, for a missing
+  swagger definition. `-log-level` (default `info`) parses via `slog.Level.UnmarshalText`, so it
+  takes debug/info/warn/error and rejects anything else before the run starts.
+- **The real noise was never the log lines — it was the subprocesses.** 33 log calls against a
+  full Maven reactor build *per scenario* (41 of them) plus `docker compose up --wait`. Both now
+  buffer stdout+stderr into a `bytes.Buffer` and replay it only when the command fails, appended to
+  the returned error; debug still streams them live to os.Stdout. This is the change that actually
+  quiets the output, and it costs nothing diagnostically — a failing build still prints everything.
+- chi's `middleware.Logger` is mounted only when debug is enabled. It writes through the stdlib
+  logger, not slog, so it cannot be levelled in place — and in `-serve` mode one request IS one
+  scenario, which already logs itself at Info.
+- Timestamps are `time.TimeOnly` via `ReplaceAttr`: a run takes minutes, so what matters between
+  two lines is elapsed time, and the date is the same all run.
+
+Verified: build/vet/gofmt clean, `scenario` tests pass, an invalid `-log-level` exits 1 with a
+readable message, and `-serve` logs one line at Info. **Not run live** — no full 41-scenario run.

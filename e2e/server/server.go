@@ -4,9 +4,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -52,7 +53,12 @@ func New(cfg config.Config) http.Handler {
 	rn := &runner{cfg: cfg}
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	// The per-request log is chi's own, not slog's, so it cannot be levelled —
+	// a run is one request and already reports itself, so it is only mounted
+	// when debug asked for everything.
+	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		r.Use(middleware.Logger)
+	}
 	r.Use(middleware.Recoverer)
 	r.Post("/scenarios/run", rn.run)
 
@@ -89,27 +95,27 @@ func exampleRequest() RunRequest {
 func specJSON() string {
 	doc, err := swag.ReadDoc()
 	if err != nil {
-		log.Printf("swagger: read spec: %v", err)
+		slog.Error("swagger: read spec", "err", err)
 		return "{}"
 	}
 
 	var spec map[string]any
 	if err := json.Unmarshal([]byte(doc), &spec); err != nil {
-		log.Printf("swagger: parse spec: %v", err)
+		slog.Error("swagger: parse spec", "err", err)
 		return doc
 	}
 
 	definitions, _ := spec["definitions"].(map[string]any)
 	runRequest, ok := definitions["server.RunRequest"].(map[string]any)
 	if !ok {
-		log.Printf("swagger: no server.RunRequest definition to put the example on")
+		slog.Warn("swagger: no server.RunRequest definition to put the example on")
 		return doc
 	}
 	runRequest["example"] = exampleRequest()
 
 	out, err := json.Marshal(spec)
 	if err != nil {
-		log.Printf("swagger: re-encode spec: %v", err)
+		slog.Error("swagger: re-encode spec", "err", err)
 		return doc
 	}
 	return string(out)
@@ -156,16 +162,17 @@ func (rn *runner) run(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rn.mu.Unlock()
 
-	log.Printf("=== run %s (ex%d/p%d, %d sources)", req.Name, req.ExchangeID, req.PairID, len(req.Sources))
+	slog.Info("scenario start", "name", req.Name,
+		"exchange_id", req.ExchangeID, "pair_id", req.PairID, "sources", len(req.Sources))
 	start := time.Now()
 	err := scenario.Run(r.Context(), rn.cfg, req.Scenario)
 	res := RunResponse{Name: req.Name, Status: "ok", DurationMS: time.Since(start).Milliseconds()}
 	if err != nil {
 		res.Status = "failed"
 		res.Error = err.Error()
-		log.Printf("FAIL %s: %v", req.Name, err)
+		slog.Error("scenario FAIL", "name", req.Name, "duration_ms", res.DurationMS, "err", err)
 	} else {
-		log.Printf("PASS %s", req.Name)
+		slog.Info("scenario PASS", "name", req.Name, "duration_ms", res.DurationMS)
 	}
 	writeJSON(w, http.StatusOK, res)
 }
@@ -213,6 +220,6 @@ func writeJSON(w http.ResponseWriter, code int, body RunResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("write response: %v", err)
+		slog.Error("write response", "err", err)
 	}
 }

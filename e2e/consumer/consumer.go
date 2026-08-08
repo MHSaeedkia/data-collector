@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -98,7 +98,7 @@ func readRecords(ctx context.Context, broker, topic string, wait time.Duration) 
 	}
 	defer cl.Close()
 
-	log.Printf("reading %s for up to %s...", topic, wait)
+	slog.Debug("reading topic", "topic", topic, "wait", wait)
 
 	var records []*kgo.Record
 	deadline := time.Now().Add(wait)
