@@ -1,6 +1,6 @@
 ---
 name: orderbook-web
-description: Standalone Go web app that consumes aggregated Kafka topics (Confluent Avro) and renders a live order book in the browser
+description: Standalone Go web app that consumes the aggregated and per-exchange Kafka topics (Confluent Avro) and renders a live order book in the browser
 metadata:
   type: project
 ---
@@ -8,7 +8,8 @@ metadata:
 ## Live order book web UI (`web/`)
 
 Standalone **Go** app that consumes the aggregator's output topics (`p{pair_id}-{side}`, e.g.
-`p2-asks`/`p2-bids`; see [[orderbook-aggregation]]) and shows a live order book in the browser.
+`p2-asks`/`p2-bids`; see [[orderbook-aggregation]]) — and, since 2026-08-10, job 5's
+per-exchange books as well — and shows a live order book in the browser.
 
 ## Stack & shape (decisions)
 
@@ -124,3 +125,75 @@ Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نام
 Docker: `docker compose up -d --build web`.
 
 **2026-08-03 — `simulation` plumbed through** `wireLevel` → `domain.RawLevel` → `domain.Level` → the WebSocket JSON the browser receives. **Not rendered in the UI** — the data reaches the client, displaying it was not in scope. See [[simulation-flag]].
+
+---
+
+## 2026-08-10 — per-exchange view (job 5 alongside job 6)
+
+The page now has an **exchange dropdown** next to the pair one: "All exchanges (aggregated)"
+renders job 6's union exactly as before, any specific exchange renders that exchange's own book
+for the same pair, straight from job 5's `ex{id}-p{id}-orderbook-snapshot-flink`
+([[book-builder]]). One HTML page, both views — user requirement.
+
+### The shape mismatch, and where it is absorbed
+
+Job 6 emits **one record per side** with `exchange_id`/`simulation` per LEVEL. Job 5 emits
+**one record holding BOTH sides** with `exchange_id`/`simulation` per RECORD. The whole
+difference is absorbed in `internal/schema`, which now returns `[]domain.RawBook` — one book
+for an aggregated record, two for a snapshot — and copies the snapshot's record-level
+exchange/simulation down onto every level. Everything downstream (`Enrich`, hub, the WS
+envelope, the render loop) therefore stayed on one shape. Getting this wrong the other way
+(a second parallel book type all the way to the browser) is the expensive mistake here.
+
+`Decode` dispatches on the writer schema's **Avro full name**
+(`io.tibobit.orderbook.OrderBookSnapshot` vs `…AggregatedOrderBookEvent`), not on the topic
+string — the name is what actually determines the payload shape, and it keeps topics opaque
+past the consumer (the rule this app already followed). An unrecognised name is an error, not a
+best-effort decode. The decoder's `wireSnapshot` deliberately omits `trigger_id`,
+`last_sequence_id` and `pipeline_timings`: hamba skips schema fields with no struct
+counterpart, and the tests marshal those fields with real (non-default) values specifically to
+prove the skip decoders handle a populated union and a nested record.
+
+**An empty side is still emitted.** A reset ([[type-validator]]) empties both sides of a job-5
+book; dropping empty sides would leave the browser rendering a book that no longer exists.
+
+`domain.Book.Exchange` is `*Exchange` — nil = aggregated. Exchange ids start at 1, so **0 means
+"all exchanges"** on the wire in both directions (`RawBook.ExchangeID`, the browser's
+`exchange_id`). The per-LEVEL exchange is still filled on a per-exchange book even though it is
+constant there, so the table renders identically; the UI just hides the Exchange column when a
+specific exchange is selected.
+
+### Three user decisions (2026-08-10)
+
+1. **Two Kafka consumers, different offsets.** Aggregated stays at **earliest** (the book paints
+   on load — the original decision); the per-exchange family reads from **latest**, because
+   those topics carry a full book on every event for every exchange × pair and replaying the 1h
+   retention window at startup costs far more than it is worth. franz-go's
+   `ConsumeResetOffset` is client-wide, which is the *only* reason there are two clients —
+   `NewAggregatedConsumer` / `NewSnapshotConsumer`. Accepted trade: an idle exchange shows
+   nothing until its next event.
+2. **Server-side filtering.** The hub pushes each client only the pair+exchange it selected,
+   instead of broadcasting everything: with a book per exchange on top of the aggregated one,
+   broadcast-all would send each browser far more than it can display. The browser sends
+   `{"type":"select","pair_id","exchange_id"}` on connect and on every dropdown change; the hub
+   answers with a `snapshot` of what it already holds (so switching paints instantly) and then
+   `update`s. This is why `ServeWS`'s read loop now carries meaning — it used to exist only to
+   detect the close. The hub still holds every book in memory; only the fan-out is filtered.
+3. **Dropdowns come from postgres, not from the data.** Server-side filtering *broke* the old
+   mechanism — the client used to infer the pair list from the books it received, which it no
+   longer gets. So a `catalog` message (every market and every exchange the registry knows,
+   sorted by id) is sent on connect and re-sent only when it actually changed — it is recomputed
+   on the existing 10s refresh tick and is almost always identical. The user chose **all**
+   markets/exchanges rather than only subscribed ones, so the pair dropdown will list markets
+   that have no topics at all.
+
+### Consequences worth knowing
+
+- The hub's `latest` map is keyed by `domain.Selection{pair, exchange, side}` derived from the
+  book itself, **not by topic** — a job-5 record carries two sides on one topic, so the topic is
+  no longer a unique key. `topic` survives only as context in the bad-message log line.
+- The browser holds exactly **one book per side** now, not a map of everything; a book arriving
+  for a selection that was just changed away from is dropped on receipt (in-flight guard).
+- `store()`/`render()` key off `pair_id` + exchange id, not the `base/quote` string as before.
+- Not yet run against live Kafka — Go tests (all packages green), `go vet`, `gofmt` clean, and a
+  local run confirming the page serves and `/ws` upgrades and delivers the catalog frame.
