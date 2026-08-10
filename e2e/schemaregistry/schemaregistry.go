@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -35,7 +35,7 @@ func RegisterDir(registryURL, dir string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("registered %s (id: %d)", subject, id)
+		slog.Debug("registered schema", "subject", subject, "id", id)
 	}
 	return nil
 }

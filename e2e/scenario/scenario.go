@@ -7,7 +7,7 @@ package scenario
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"reflect"
 	"time"
 
@@ -93,10 +93,21 @@ func Run(ctx context.Context, cfg config.Config, s Scenario) error {
 // produce puts every source on the exchange's raw topic, in order. The raw
 // topic has one partition and the jobs run at parallelism 1, so each output
 // stream comes out in the order its sources went in.
+//
+// Every source is checked for an id on the way out, and given one if it has
+// none. The scenarios in this package all carry their own, the way NiFi's
+// records do; the injection is there for scenarios POSTed to the HTTP endpoint.
+// This is not optional decoration: job 1 DROPS a payload that carries no id, so
+// a source sent without one produces nothing at all and the scenario fails with
+// an empty snapshot stream rather than anything that points at the cause.
 func (s Scenario) produce(ctx context.Context, cfg config.Config) error {
 	topic := fmt.Sprintf("ex%d-raw", s.ExchangeID)
 	for i, source := range s.Sources {
-		if err := producer.SendJSON(ctx, cfg.KafkaBroker, topic, source); err != nil {
+		stamped, _, err := stampID(source)
+		if err != nil {
+			return fmt.Errorf("source %d: %w", i, err)
+		}
+		if err := producer.SendJSON(ctx, cfg.KafkaBroker, topic, stamped); err != nil {
 			return fmt.Errorf("source %d: %w", i, err)
 		}
 	}
@@ -124,6 +135,15 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 			snapshots[i].EventTime = ""
 		}
 	}
+	// Lineage is checked on its own terms before the literal comparison, then
+	// cleared — the ids are fresh every run, so no scenario can declare them.
+	// The snapshots are kept (with their ids) for the aggregated check below,
+	// which is why this reads them before stripping.
+	if err := checkSnapshotLineage(snapshotTopic, snapshots); err != nil {
+		return err
+	}
+	withLineage := append([]events.OrderbookSnapshot(nil), snapshots...)
+	stripSnapshotLineage(snapshots)
 	if err := compare(snapshotTopic, snapshots, s.WantSnapshots); err != nil {
 		return err
 	}
@@ -137,9 +157,9 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
-	log.Printf("matched %d snapshots and %d rejections", len(snapshots), len(rejects))
+	slog.Debug("matched", "snapshots", len(snapshots), "rejections", len(rejects))
 
-	return s.verifyAggregated(ctx, cfg)
+	return s.verifyAggregated(ctx, cfg, withLineage)
 }
 
 // verifyAggregated checks the last record on each of the pair's two aggregated
@@ -150,7 +170,12 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 // A scenario that wants no snapshot at all leaves job 6 nothing to emit, and
 // the empty snapshot stream has already been asserted, so there is nothing left
 // to read.
-func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config) error {
+//
+// snapshots are job 5's records WITH their lineage intact, so the levels of the
+// aggregated book can be matched against the snapshot they claim to come from —
+// the only exact cross-job lineage assertion the harness can make.
+func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config,
+	snapshots []events.OrderbookSnapshot) error {
 	if s.WantAggregated == nil && len(s.WantSnapshots) == 0 {
 		return nil
 	}
@@ -177,10 +202,14 @@ func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config) error
 			return fmt.Errorf("%s: record is pair %d %s, want pair %d %s",
 				topic, final.PairID, final.Side, s.PairID, side.name)
 		}
+		if err := checkAggregatedLineage(topic, final, snapshots); err != nil {
+			return err
+		}
+		stripAggregatedLineage(final.Levels)
 		if err := compare(topic, final.Levels, side.want); err != nil {
 			return err
 		}
-		log.Printf("matched the final aggregated book on %s (%d records seen)", topic, len(records))
+		slog.Debug("matched the final aggregated book", "topic", topic, "records_seen", len(records))
 	}
 	return nil
 }

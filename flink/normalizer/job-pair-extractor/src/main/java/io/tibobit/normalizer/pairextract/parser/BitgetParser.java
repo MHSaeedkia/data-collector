@@ -35,6 +35,7 @@ public class BitgetParser implements RawExchangeParser {
                     Levels.fromStringPairs(book.get("asks")),
                     Levels.fromStringPairs(book.get("bids")));
             event.setSimulation(Json.simulation(root));
+            event.setSourceIds(Json.sourceIds(root));
             events.add(new ParsedBookEvent(market, event));
         }
         return events;

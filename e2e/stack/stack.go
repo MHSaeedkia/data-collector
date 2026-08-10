@@ -2,9 +2,10 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 )
@@ -16,7 +17,7 @@ import (
 // half-started broker. Images are not rebuilt: a missing one is built by `up`,
 // and the job jars come from the harness's own `mvn` build, not the image.
 func Provision(ctx context.Context, composeFile string) error {
-	log.Print("recreating the docker compose stack...")
+	slog.Info("recreating the docker compose stack")
 
 	if err := compose(ctx, composeFile, "down", "-v"); err != nil {
 		return err
@@ -24,12 +25,21 @@ func Provision(ctx context.Context, composeFile string) error {
 	return compose(ctx, composeFile, "up", "-d", "--wait")
 }
 
+// compose runs one docker compose command. Its output is only worth reading
+// when it fails, so it is held back and replayed with the error — unless debug
+// is on, where watching a slow `up --wait` progress live is the point.
 func compose(ctx context.Context, composeFile string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "docker", append([]string{"compose", "-f", composeFile}, args...)...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	var out bytes.Buffer
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	} else {
+		cmd.Stdout, cmd.Stderr = &out, &out
+	}
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker compose %s: %w", args[0], err)
+		return fmt.Errorf("docker compose %s: %w\n%s", args[0], err, out.String())
 	}
 	return nil
 }

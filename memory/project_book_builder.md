@@ -79,4 +79,16 @@ upstream, the timings say which stage) or wrong *accumulated state* (look at ord
 whether a null side was mistaken for an empty one — those are the only two ways this job loses
 information).
 
+**2026-08-08 — the emitted book's lineage was restructured.** Each emitted `PriceLevel` now carries
+the id of the job-4 event that last SET that price, straight out of `RestingLevel` (`priceLevels()`
+had been dropping it). This is the only `PriceLevel` in the platform with the field, and it is what
+makes a single price traceable to one raw event — a record-level set has no mapping back to prices,
+so on its own it widened the trace to the whole book. Deliberately NOT propagated by job 6.
+
+In the same change the record-level `source_ids` array was **replaced by a single `trigger_id`**,
+and `restingSources()` deleted: once the levels name their owners, the array was
+`{trigger} ∪ {level owners}` and added only the trigger. The trigger stays its own field because it
+is NOT always among the level ids — a delete-only event owns nothing, and a reset empties the book.
+See [[record-lineage]] for the full walk and the reasoning.
+
 **2026-08-03 — `simulation` stamping.** The emitted book carries the flag of the event that produced it (last-event-wins). Deliberately NOT in `MapState`: it is a property of the feed, not of a price level. A `reset` still reports its own flag while emptying the book. See [[simulation-flag]].

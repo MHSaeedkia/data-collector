@@ -5,6 +5,7 @@ import io.tibobit.normalizer.model.PriceLevel;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.util.Utf8;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -111,6 +112,64 @@ class RawOrderBookEventDeserializerTest {
                 List.of(), List.of());
         undefined.setSimulation(7);
         assertThat(roundTrip(undefined).getSimulation()).isEqualTo(7);
+    }
+
+    /**
+     * Given an event carrying lineage, When round-tripped, Then its id and its single source
+     * survive on their wire names.
+     */
+    @Test
+    @DisplayName("round-trips id and source_ids")
+    void roundTripsLineage() {
+        RawOrderBookEvent event = new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), List.of());
+        event.setId("22222222-2222-4222-8222-222222222222");
+        event.setSourceIds(List.of("11111111-1111-4111-8111-111111111111"));
+
+        RawOrderBookEvent out = roundTrip(event);
+
+        assertThat(out.getId()).isEqualTo("22222222-2222-4222-8222-222222222222");
+        assertThat(out.getSourceIds()).containsExactly("11111111-1111-4111-8111-111111111111");
+    }
+
+    /**
+     * A record written before these fields existed reads as the schema defaults rather than null —
+     * an empty id and no sources, which downstream can recognise as "no lineage" instead of
+     * NPE-ing on it.
+     */
+    @Test
+    @DisplayName("a record with no lineage reads as the empty defaults, not null")
+    void missingLineageReadsAsDefaults() {
+        RawOrderBookEvent out = roundTrip(new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L,
+                List.of(), List.of()));
+
+        assertThat(out.getId()).isEmpty();
+        assertThat(out.getSourceIds()).isEmpty();
+    }
+
+    /**
+     * A REAL Avro decode hands back {@link Utf8}, not String. This is the one case the in-memory
+     * round trip above cannot reach — a GenericRecordBuilder stores whatever object it was given, so
+     * the String goes in and comes back out as a String and the bug hides. A Utf8 left unconverted
+     * would compare unequal to every String it should match while still printing identically in a
+     * log, so it is asserted explicitly here.
+     */
+    @Test
+    @DisplayName("converts Utf8 lineage values to String, as a real decode produces")
+    void convertsUtf8LineageToString() {
+        GenericRecord record = RawOrderBookEventSerializer.toGenericRecord(
+                new RawOrderBookEvent(6, 1, "update", 1L, 1L, 123L, List.of(), List.of()), SCHEMA);
+        record.put("id", new Utf8("22222222-2222-4222-8222-222222222222"));
+        record.put("source_ids", List.of(new Utf8("11111111-1111-4111-8111-111111111111")));
+
+        RawOrderBookEvent out = RawOrderBookEventDeserializer.fromGenericRecord(record);
+
+        assertThat(out.getId())
+                .isInstanceOf(String.class)
+                .isEqualTo("22222222-2222-4222-8222-222222222222");
+        assertThat(out.getSourceIds())
+                .containsExactly("11111111-1111-4111-8111-111111111111")
+                .allSatisfy(id -> assertThat(id).isInstanceOf(String.class));
     }
 
     /**

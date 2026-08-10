@@ -2,15 +2,17 @@
 	"exchange_id": 6,
 	"pair_id": 1,
 	"simulation": 0,
+	"id": "66666666-6666-4666-8666-666666666666",
+	"trigger_id": "55555555-5555-4555-8555-555555555555",
 	"event_time": "2026-07-14T06:23:25.123Z",
 	"last_sequence_id": 126776812,
 	"asks": [
-		{ "price": "62775.5", "quantity": "0.031418" },
-		{ "price": "62776", "quantity": "0.52" }
+		{ "price": "62775.5", "quantity": "0.031418", "source_id": "55555555-5555-4555-8555-555555555555" },
+		{ "price": "62776", "quantity": "0.52", "source_id": "5555aaaa-5555-4555-8555-555555555555" }
 	],
 	"bids": [
-		{ "price": "62760.1", "quantity": "1.204" },
-		{ "price": "62759", "quantity": "0.08" }
+		{ "price": "62760.1", "quantity": "1.204", "source_id": "5555bbbb-5555-4555-8555-555555555555" },
+		{ "price": "62759", "quantity": "0.08", "source_id": "5555aaaa-5555-4555-8555-555555555555" }
 	],
 	"pipeline_timings": {
 		"pair_extract_in": "2026-07-14T06:23:25.140Z",

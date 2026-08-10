@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -31,6 +31,6 @@ func SendJSON(ctx context.Context, broker, topic, doc string) error {
 		return fmt.Errorf("produce to %s: %w", topic, err)
 	}
 
-	log.Printf("produced %d bytes to %s", value.Len(), topic)
+	slog.Debug("produced", "bytes", value.Len(), "topic", topic)
 	return nil
 }

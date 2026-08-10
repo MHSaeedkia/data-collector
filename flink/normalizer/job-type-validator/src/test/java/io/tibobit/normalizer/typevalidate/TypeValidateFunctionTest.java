@@ -351,4 +351,61 @@ class TypeValidateFunctionTest {
         assertThat(bad.getPipelineTimings().getTypeValidateIn()).isNotNull();
         assertThat(bad.getPipelineTimings().getTypeValidateOut()).isNull();
     }
+
+    // ---- lineage ----------------------------------------------------------------
+
+    /** Every incoming event arrives with the id job 1 gave it. */
+    private static RawOrderBookEvent from(RawOrderBookEvent event, String id) {
+        event.setId(id);
+        return event;
+    }
+
+    @Test
+    @DisplayName("a forwarded event takes the id it arrived with as its source and mints a new one")
+    void forwardedEventIsRestamped() throws Exception {
+        send(from(snapshotFeed(1, 1, 100L), "job1-id"));
+
+        RawOrderBookEvent out = valid().get(0);
+        assertThat(out.getSourceIds()).containsExactly("job1-id");
+        assertThat(out.getId()).isNotBlank().isNotEqualTo("job1-id");
+    }
+
+    /**
+     * The dead-letter record is a record of its own, so it gets its own id and names the rejected
+     * event as its parent. The nested event keeps the id it came in with — it is being reported on,
+     * not forwarded, and that id is the link back to the raw stream.
+     */
+    @Test
+    @DisplayName("a rejection gets its own id and keeps the rejected event's untouched")
+    void rejectionHasItsOwnLineage() throws Exception {
+        send(from(snapshotFeed(1, 1, 100L), "job1-first"));
+        send(from(snapshotFeed(1, 1, 99L), "job1-stale")); // out of order -> rejected
+
+        RejectedOrderBookEvent rejection = rejects().get(0);
+        assertThat(rejection.getSourceIds()).containsExactly("job1-stale");
+        assertThat(rejection.getId()).isNotBlank().isNotEqualTo("job1-stale");
+        assertThat(rejection.getEvent().getId()).isEqualTo("job1-stale");
+    }
+
+    /**
+     * On a gap the one event produces TWO records — a reset marker on the main stream and a
+     * dead-letter record — and both name it as their parent while carrying distinct ids of their
+     * own. A fan-out of lineage, not a fan-in.
+     */
+    @Test
+    @DisplayName("a gap's reset marker and dead-letter both descend from the gap event")
+    void gapProducesTwoDistinctChildren() throws Exception {
+        send(from(delta(6, 1, "snapshot", 10L, 1L), "job1-base"));
+        send(from(delta(6, 1, "update", 20L, 1L), "job1-gap")); // gap -> reset + reject
+
+        RawOrderBookEvent reset = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .findFirst()
+                .orElseThrow();
+        RejectedOrderBookEvent rejection = rejects().get(0);
+
+        assertThat(reset.getSourceIds()).containsExactly("job1-gap");
+        assertThat(rejection.getSourceIds()).containsExactly("job1-gap");
+        assertThat(reset.getId()).isNotBlank().isNotEqualTo(rejection.getId());
+    }
 }

@@ -472,3 +472,67 @@ arrays that anyone would have to fill in from `data_ex*.go` first.
   (that needs a browser), nor that the scenario passes against a live stack — no scenario ever has.
 
 **2026-08-03 — every example now sets `simulation: 1`** (user instruction): 177 source payloads, 125 `WantSnapshots`, 215 `WantAggregated` levels, plus `Simulation` on `events.OrderbookSnapshot`/`events.AggregatedLevel` and `stampExchange`. So a job that drops the flag fails e2e immediately. One ex3 case was re-pointed: its "a third element the envelope does not have" negative test is now a FOURTH element, since three is the real shape. `swag init` rerun. See [[simulation-flag]].
+
+**2026-08-04 — every source payload also carries a literal `id`** (user instruction), next to
+`simulation` and in the same carrier: all 177, one distinct uuid each. `stampID` was changed from
+always-inject to fill-in-if-missing, so the fixture's id is what actually reaches the raw topic —
+the injection now only serves scenarios POSTed over HTTP. No `swag init` needed: the Try-it-out
+example is the live `Ex1PrecisionDust` var read at serve time, so it picked the ids up for free.
+See [[record-lineage]] for the asymmetry (source ids are inputs and can be literals; every id
+further down is job-minted and can only be checked for shape) and for the blank-id trap.
+
+**2026-08-08 — `events` realigned to the schemas, field for field** (user instruction, alongside the
+per-level `source_id` — see [[record-lineage]]). The package doc always claimed to mirror the
+records on the topics; it had drifted. Three fixes:
+
+- `OrderbookSnapshot` was missing `last_sequence_id`, `AggregatedSide` was missing `event_time`.
+  Both added. `event_time` is now decoded too (harmless: an aggregated record is never DeepEqual'd,
+  only its levels are). `last_sequence_id` is deliberately NOT decoded — the snapshot stream IS
+  compared with DeepEqual, so reading it would force all 125 wanted snapshots to spell it out.
+  Worth revisiting: it is deterministic from the sources, so it is genuinely assertable, unlike
+  event_time or the lineage.
+- **The timings model was wire-shaped and wrong in three ways**, and nothing caught it because
+  nothing ever decodes into it. Verified against goavro by probe, not by reading: a union branch is
+  keyed by its **full name**, so the wrapper is `io.tibobit.orderbook.PipelineTimings`, not
+  `PipelineTimings`; a `["null","long"]` with a logical type is keyed **`long.timestamp-millis`**,
+  not `long` (a plain `["null","long"]` like `last_sequence_id` IS keyed `long`); and the value is a
+  NUMBER, not a string. Replaced by a flat mirror of the schema (`*int64` per step); `StepTimings`
+  and `AvroTime` are gone. Union unwrapping belongs in `consumer`'s wire structs, which is where
+  `event_time`'s epoch-millis conversion already lives.
+- **swaggerignore is now applied by one rule**: a field the harness never asserts and a scenario
+  cannot influence stays out of the HTTP contract, because the spec must not offer it as something
+  to fill in. That now covers `pipeline_timings` and `last_sequence_id` as well as the lineage, so
+  `WantSnapshots` in the spec offers exactly `exchange_id, pair_id, simulation, event_time, asks,
+  bids`. `swag init` rerun (143 lines of definitions dropped).
+
+Still not modelled at all, on purpose: `RawOrderBookEvent` and `RejectedOrderBookEvent`. The harness
+never reads the raw topic, and it reads the dead-letter topic for `reject_reason` alone.
+
+**2026-08-08 — logging moved to `log/slog` with levels** (user instruction: "less noisy output;
+most of them debug, info for scenario start and result"). Every `log.Printf` in the harness is gone.
+
+- **`log/slog`, not zap/zerolog.** Both of those are a new module dependency, and this module is
+  vendored — but `e2e/` is deliberately built with `-mod=mod` and must never be `go mod vendor`'d
+  (see the Swagger section above), so a third-party logger would have had to be resolved outside the
+  vendor tree that every other package here uses. slog is stdlib and levels are all that was asked
+  for. No logging package was created: `setupLogger` lives in `main.go` because main is its only
+  caller, and everything else calls `slog.Default()`.
+- **The level rule.** Info = scenario start, scenario PASS/FAIL, and once-per-process milestones
+  (stack provisioning, the `-serve` listen line). Debug = every per-scenario internal — topic
+  create/delete, schema registration, each produce, each Flink submit/cancel, consumer reads, the
+  intermediate "matched N snapshots" lines. Error = failures; Warn is used once, for a missing
+  swagger definition. `-log-level` (default `info`) parses via `slog.Level.UnmarshalText`, so it
+  takes debug/info/warn/error and rejects anything else before the run starts.
+- **The real noise was never the log lines — it was the subprocesses.** 33 log calls against a
+  full Maven reactor build *per scenario* (41 of them) plus `docker compose up --wait`. Both now
+  buffer stdout+stderr into a `bytes.Buffer` and replay it only when the command fails, appended to
+  the returned error; debug still streams them live to os.Stdout. This is the change that actually
+  quiets the output, and it costs nothing diagnostically — a failing build still prints everything.
+- chi's `middleware.Logger` is mounted only when debug is enabled. It writes through the stdlib
+  logger, not slog, so it cannot be levelled in place — and in `-serve` mode one request IS one
+  scenario, which already logs itself at Info.
+- Timestamps are `time.TimeOnly` via `ReplaceAttr`: a run takes minutes, so what matters between
+  two lines is elapsed time, and the date is the same all run.
+
+Verified: build/vet/gofmt clean, `scenario` tests pass, an invalid `-log-level` exits 1 with a
+readable message, and `-serve` logs one line at Info. **Not run live** — no full 41-scenario run.

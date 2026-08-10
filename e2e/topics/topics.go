@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -78,7 +78,7 @@ func Delete(ctx context.Context, broker string, exchangeID, pairID int64) error 
 	for _, r := range res.Sorted() {
 		switch {
 		case r.Err == nil:
-			log.Printf("deleted %s", r.Topic)
+			slog.Debug("deleted topic", "topic", r.Topic)
 		case errors.Is(r.Err, kerr.UnknownTopicOrPartition):
 			// Nothing to delete, which is what we want anyway.
 		default:
@@ -145,13 +145,13 @@ func create(ctx context.Context, adm *kadm.Client, t topic) error {
 
 	_, err := adm.CreateTopic(ctx, 1, 1, configs, t.name)
 	if errors.Is(err, kerr.TopicAlreadyExists) {
-		log.Printf("topic %s already exists", t.name)
+		slog.Debug("topic already exists", "topic", t.name)
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("create topic %s: %w", t.name, err)
 	}
 
-	log.Printf("created %s (retention: %sms)", t.name, t.retentionMS)
+	slog.Debug("created topic", "topic", t.name, "retention_ms", t.retentionMS)
 	return nil
 }

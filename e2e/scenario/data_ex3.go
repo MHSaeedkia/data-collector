@@ -2,14 +2,16 @@
 //
 // What makes ex3 different from every other exchange in the suite:
 //
-//   - The envelope is an array `["{market}@{side}", [levels…], {"simulation": N}]`; buyDepth is
-//     bids, sellDepth is asks, and the side that is not in the message stays NULL — "no report for
-//     this side", which job 5 must leave alone even though the event is a snapshot.
+//   - The envelope is an array `["{market}@{side}", [levels…], {"simulation": N, "id": "…"}]`;
+//     buyDepth is bids, sellDepth is asks, and the side that is not in the message stays NULL —
+//     "no report for this side", which job 5 must leave alone even though the event is a snapshot.
 //   - Levels are objects with JSON-NUMBER price/quantity (every other exchange sends strings),
 //     so the values come off the wire as BigDecimal-from-literal.
-//   - It is the one exchange whose `simulation` flag is NOT a root field: an array has no root
-//     fields, so NiFi appends it as that trailing third element instead. A 2-element frame is
-//     still accepted and reads as 0 (live); a 4-element one is malformed and dropped.
+//   - It is the one exchange whose NiFi-injected fields are NOT root fields: an array has no root
+//     fields, so NiFi appends that trailing third element instead, and BOTH `simulation` and `id`
+//     ride in it. The parser reads element INDEX 2, so it is never a fourth element — a 4-element
+//     frame is malformed and dropped. A 2-element frame parses as simulation 0, but it carries no
+//     id either, so job 1 drops it anyway.
 //   - There is no sequence field and no timestamp anywhere on the wire. Job 1 stamps processing
 //     time, so `EventTime` is wall-clock and every scenario here sets IgnoreEventTime.
 //
@@ -39,7 +41,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62937.5, "quantity": 1.6, "sum": 100700.0 },
 		{ "price": 62932.5, "quantity": 2.9, "sum": 182504.25 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "b21c0549-daa7-49c5-a4eb-049fe2fee0d1" }
 ]`,
 		// 02 sell depth
 		`[
@@ -49,7 +51,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62957.5, "quantity": 1.4, "sum": 88140.5 },
 		{ "price": 62962.5, "quantity": 2.2, "sum": 138517.5 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "70875639-8705-4ee4-8076-3bbf0cc656bc" }
 ]`,
 		// 03 buy depth refresh
 		`[
@@ -58,7 +60,7 @@ var Ex3WallexHalfBook = Scenario{
 		{ "price": 62942.5, "quantity": 0.5, "sum": 31471.25 },
 		{ "price": 62927.5, "quantity": 3.5, "sum": 220246.25 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "1be97642-314f-4a2f-ae5b-ff4a1846cd5f" }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
@@ -131,7 +133,7 @@ var Ex3EmptySideWipe = Scenario{
 		{ "price": 62500.25, "quantity": 0.5, "sum": 31250.125 },
 		{ "price": 62499.5, "quantity": 1.25, "sum": 78124.375 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "501973ae-fb4e-45b6-ae49-661416b3eaed" }
 ]`,
 		// 02 sell depth
 		`[
@@ -140,13 +142,13 @@ var Ex3EmptySideWipe = Scenario{
 		{ "price": 62501.75, "quantity": 0.4, "sum": 25000.7 },
 		{ "price": 62502, "quantity": 2, "sum": 125004 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "b9f27498-db82-41c1-8284-d51d8fed045f" }
 ]`,
 		// 03 buy depth, empty — wallex reporting no bids at all
 		`[
 	"BTCUSDT@buyDepth",
 	[],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "fb8a5c6d-8c74-4f85-8caf-005a3206a37c" }
 ]`,
 		// 04 sell depth carrying a zero-quantity level
 		`[
@@ -155,7 +157,7 @@ var Ex3EmptySideWipe = Scenario{
 		{ "price": 62503.5, "quantity": 0, "sum": 0 },
 		{ "price": 62504, "quantity": 1.5, "sum": 93756 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "46a37566-1d97-432a-9aa0-39da159bc4da" }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
@@ -228,7 +230,7 @@ var Ex3PrecisionDust = Scenario{
 		{ "price": 62500.129, "quantity": 0.25, "sum": 15625.03225 },
 		{ "price": 62499.999, "quantity": 1.5, "sum": 93749.9985 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "12c14929-4c00-4a33-a442-0bb898be205d" }
 ]`,
 		// 02 sell depth — the first quantity is dust below the market's lot precision
 		`[
@@ -237,7 +239,7 @@ var Ex3PrecisionDust = Scenario{
 		{ "price": 62501.01, "quantity": 0.000000005, "sum": 0.00031250505 },
 		{ "price": 62502.5, "quantity": 1.000000009, "sum": 62502.5005625225 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "36a29e66-f772-4c79-87a3-b3efe7e53f3b" }
 ]`,
 		// 03 buy depth — an integer price literal, and truncation that must not round up
 		`[
@@ -246,7 +248,7 @@ var Ex3PrecisionDust = Scenario{
 		{ "price": 62200, "quantity": 0.068493, "sum": 4260.2646 },
 		{ "price": 62199.999, "quantity": 0.123456789, "sum": 7679.012152343211 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "3e1d3194-d78f-45b3-b60a-1b8f761be5ab" }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
@@ -308,17 +310,17 @@ var Ex3NoiseFrames = Scenario{
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 },
 		{ "price": 62449, "quantity": 1.1, "sum": 68693.9 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "a86e505a-5c9f-4037-97a6-982dc8c23458" }
 ]`,
 		// 02 not the array envelope at all
-		`{ "simulation": 1, "ping": 1 }`,
+		`{ "id": "2963bdcc-d075-4905-9a86-9a414093b928", "simulation": 1, "ping": 1 }`,
 		// 03 a known market, but not a depth channel
 		`[
 	"BTCUSDT@trades",
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "6a00d427-e768-42f8-88eb-951d04b33eef" }
 ]`,
 		// 04 no @ in the key, so there is no side to read
 		`[
@@ -326,7 +328,7 @@ var Ex3NoiseFrames = Scenario{
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "36f6a3c2-8981-4f15-9c73-8d86e7d592c9" }
 ]`,
 		// 05 a FOURTH element the envelope does not have — the third is now the
 		// simulation metadata object, so only a longer array is still malformed
@@ -335,7 +337,7 @@ var Ex3NoiseFrames = Scenario{
 	[
 		{ "price": 62450.5, "quantity": 0.3, "sum": 18735.15 }
 	],
-	{ "simulation": 1 },
+	{ "simulation": 1, "id": "60706f52-8c44-45ae-bc5e-b7bdb2b582df" },
 	"extra"
 ]`,
 		// 06 a market ex3 has no exchange_markets row for
@@ -344,7 +346,7 @@ var Ex3NoiseFrames = Scenario{
 	[
 		{ "price": 1.5, "quantity": 10, "sum": 15 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "ddac82cd-c118-4cba-b491-748498fe6ad3" }
 ]`,
 		// 07 string levels — ex3's wire is JSON numbers, so the whole frame is unparseable
 		`[
@@ -352,7 +354,7 @@ var Ex3NoiseFrames = Scenario{
 	[
 		{ "price": "62451", "quantity": "0.9" }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "513600e5-cab3-4dcb-bc05-a47f30faf9ef" }
 ]`,
 		// 08 sell depth
 		`[
@@ -361,7 +363,7 @@ var Ex3NoiseFrames = Scenario{
 		{ "price": 62451, "quantity": 0.9, "sum": 56205.9 },
 		{ "price": 62452.25, "quantity": 0.6, "sum": 37471.35 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "5915f45a-7e36-43c2-af31-5829039050b5" }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
@@ -417,7 +419,7 @@ var Ex3StaleReplay = Scenario{
 		{ "price": 62600.5, "quantity": 0.7, "sum": 43820.35 },
 		{ "price": 62599, "quantity": 1.4, "sum": 87638.6 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "1867a03a-c5bb-42a1-9388-9e7e91768a10" }
 ]`,
 		// 02 buy depth, newer
 		`[
@@ -425,7 +427,7 @@ var Ex3StaleReplay = Scenario{
 	[
 		{ "price": 62610.5, "quantity": 0.9, "sum": 56349.45 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "62a0b462-c23a-453f-97ef-24f375f6c661" }
 ]`,
 		// 03 the frame from 01 again, replayed after the newer one
 		`[
@@ -434,7 +436,7 @@ var Ex3StaleReplay = Scenario{
 		{ "price": 62600.5, "quantity": 0.7, "sum": 43820.35 },
 		{ "price": 62599, "quantity": 1.4, "sum": 87638.6 }
 	],
-	{ "simulation": 1 }
+	{ "simulation": 1, "id": "3d371f44-084f-4213-97ce-20207ce5615e" }
 ]`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{

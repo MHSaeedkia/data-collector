@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.util.List;
+
 /**
  * Shared Jackson mapper for all parsers. USE_BIG_DECIMAL_FOR_FLOATS is mandatory: wallex and
  * ramzinex send prices/quantities as JSON numbers, and BigDecimal must come from the decimal
@@ -26,6 +28,24 @@ final class Json {
      */
     static int simulation(JsonNode carrier) {
         return carrier.path("simulation").asInt(0);
+    }
+
+    /**
+     * NiFi's {@code id} — the UUID it minted when it wrote this payload to the raw topic, and
+     * the first link in the lineage chain. Returned as the event's {@code source_ids} because that
+     * is exactly what it is: the id of the record job 1 read.
+     *
+     * <p>{@code carrier} is the same node {@link #simulation} reads from — the payload root for the
+     * six object-root exchanges, the trailing metadata object for ex3/wallex.
+     *
+     * <p>An absent or blank id yields an EMPTY list, which {@code PairExtractFunction} treats as a
+     * drop (user decision 2026-08-03): a record with no parent cannot be traced, and a fabricated
+     * substitute would name a record that was never written. This makes NiFi a hard dependency —
+     * a producer that does not set id loses 100% of its data.
+     */
+    static List<String> sourceIds(JsonNode carrier) {
+        String id = carrier.path("id").asText("");
+        return id.isBlank() ? List.of() : List.of(id);
     }
 
     private Json() {

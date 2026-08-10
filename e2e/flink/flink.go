@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -64,14 +64,23 @@ func RunJobs(ctx context.Context, api, normalizerDir string) error {
 // checkout in that state), so the harness ships a jar built from pre-change
 // source, the job runs fine, and the only symptom is a new field arriving as its
 // Avro default on every scenario. That cost a full debugging session once.
+//
+// Maven runs once per scenario and is loud even with -q, so its output is held
+// back and replayed with the error when the build fails. Debug streams it live.
 func build(ctx context.Context, normalizerDir string) error {
-	log.Print("building normalizer jobs...")
+	slog.Debug("building normalizer jobs")
 
 	cmd := exec.CommandContext(ctx, "mvn", "-f", filepath.Join(normalizerDir, "pom.xml"), "clean", "package", "-q", "-DskipTests")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	var out bytes.Buffer
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	} else {
+		cmd.Stdout, cmd.Stderr = &out, &out
+	}
+
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mvn clean package: %w", err)
+		return fmt.Errorf("mvn clean package: %w\n%s", err, out.String())
 	}
 	return nil
 }
@@ -112,7 +121,7 @@ func submit(ctx context.Context, api, module, jar string) error {
 	if err := waitRunning(ctx, api, run.JobID); err != nil {
 		return err
 	}
-	log.Printf("%s running (job %s)", module, run.JobID)
+	slog.Debug("flink job running", "module", module, "job_id", run.JobID)
 	return nil
 }
 
@@ -170,12 +179,12 @@ func CancelJobs(ctx context.Context, api string) error {
 		}
 	}
 	if len(ids) == 0 {
-		log.Print("no running flink jobs to cancel")
+		slog.Debug("no running flink jobs to cancel")
 		return nil
 	}
 
 	for _, id := range ids {
-		log.Printf("cancelling job %s", id)
+		slog.Debug("cancelling flink job", "job_id", id)
 		if err := do(ctx, http.MethodPatch, api+"/jobs/"+id+"?mode=cancel", nil, "", nil); err != nil {
 			return err
 		}
@@ -196,7 +205,7 @@ func waitTerminal(ctx context.Context, api, id string) error {
 		}
 		switch state {
 		case "CANCELED", "FAILED", "FINISHED":
-			log.Printf("    %s: %s", id, state)
+			slog.Debug("flink job terminal", "job_id", id, "state", state)
 			return true, nil
 		}
 		return false, nil

@@ -34,6 +34,7 @@ var Ex5BitgetSnapshots = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "aed46d6a-f822-458b-820f-3cdb35b2684a",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -50,6 +51,7 @@ var Ex5BitgetSnapshots = Scenario{
 }`,
 		// 02 snapshot — a price that truncates onto a trailing zero, and a zero quantity
 		`{
+	"id": "df70b5e7-9e70-4f2a-88d2-eee3488e6bf3",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -118,6 +120,7 @@ var Ex5MultiBookFrame = Scenario{
 	Sources: []string{
 		// 01 one book
 		`{
+	"id": "8c59c2f2-2b06-4a0c-8b3e-1a025a859d1a",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -134,6 +137,7 @@ var Ex5MultiBookFrame = Scenario{
 }`,
 		// 02 two books in one record
 		`{
+	"id": "bb03003a-84a5-4aef-86f1-c8e78b6b2919",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -197,6 +201,7 @@ var Ex5StaleSeq = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "135f6334-909e-4bfe-a7a4-94a7c13a1fbc",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -207,6 +212,7 @@ var Ex5StaleSeq = Scenario{
 }`,
 		// 02 the same seq again
 		`{
+	"id": "3dd2f930-7e58-491e-9381-8acc008a8199",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -217,6 +223,7 @@ var Ex5StaleSeq = Scenario{
 }`,
 		// 03 an older seq
 		`{
+	"id": "a6b66bd5-9818-489a-8588-dd0791e8cb44",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -227,6 +234,7 @@ var Ex5StaleSeq = Scenario{
 }`,
 		// 04 a far-forward seq
 		`{
+	"id": "bedec549-33fa-4387-b39b-6b941619b164",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -270,6 +278,7 @@ var Ex5NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "34a00995-a54f-46c4-8363-ece4ce6dc058",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -280,6 +289,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 02 an action bitget does not send on this channel
 		`{
+	"id": "79df1b2e-f1a8-4a65-91e3-424e87fab74a",
 	"simulation": 1,
 	"action": "update",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -290,6 +300,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 03 seq as a string
 		`{
+	"id": "2e4f7086-2462-416a-b74e-45240c3170f0",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -300,6 +311,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 04 ts as a number — the outer ts is one, the inner one never is
 		`{
+	"id": "c402ced8-5299-4049-9e82-58d22c06c34b",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -310,6 +322,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 05 data as an object rather than the array it always is
 		`{
+	"id": "30411edc-d74f-473b-bd33-ce9a7fbfbd51",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -318,6 +331,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 06 no instId, so there is no market key
 		`{
+	"id": "853918ee-c9e4-4476-814c-f9072c491307",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50" },
@@ -328,6 +342,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 07 a market ex5 has no exchange_markets row for
 		`{
+	"id": "ce6ab79c-f3e8-4f9c-8b3a-f5351f73465a",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "FOOBARUSDT" },
@@ -338,6 +353,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 08 numeric levels — ex5's wire is string pairs, so the whole frame is unparseable
 		`{
+	"id": "64d64024-2400-4667-aa15-7d6629b5f52d",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -348,6 +364,7 @@ var Ex5NoiseFrames = Scenario{
 }`,
 		// 09 snapshot
 		`{
+	"id": "52bc814f-db21-4d8e-946e-63ae72068233",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -402,6 +419,7 @@ var Ex5PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 snapshot — two asks collide at 2 places, and both bids do too
 		`{
+	"id": "6af630ff-7a3d-4c79-a35d-928349ec1178",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
@@ -418,6 +436,7 @@ var Ex5PrecisionDust = Scenario{
 }`,
 		// 02 snapshot — every ask is dust, so the side comes out empty
 		`{
+	"id": "d59edd13-8182-4b1f-80cf-b12bb92a1776",
 	"simulation": 1,
 	"action": "snapshot",
 	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },

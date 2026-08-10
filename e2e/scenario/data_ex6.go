@@ -30,6 +30,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "d0e56d81-a635-4769-8ee3-77e516ac6d0d",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
@@ -45,6 +46,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 }`,
 		// 02 delta — an existing ask is re-quoted, a brand-new bid appears
 		`{
+	"id": "22f1bfca-ed3b-4f3b-b27b-0016817bb18d",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
@@ -60,6 +62,7 @@ var Ex6SnapshotThenDeltas = Scenario{
 }`,
 		// 03 delta — quantity "0" deletes on both sides, and 62725 is inserted
 		`{
+	"id": "58156014-f789-4930-818f-f5ad68ff65d3",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
@@ -148,6 +151,7 @@ var Ex6OneSidedDelta = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "4ae5cddb-2695-41c4-b6d9-b223176b0de7",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
@@ -163,6 +167,7 @@ var Ex6OneSidedDelta = Scenario{
 }`,
 		// 02 delta, asks only — no "b" key at all
 		`{
+	"id": "d0d03ef3-1eec-4350-a8be-045632686521",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
@@ -177,6 +182,7 @@ var Ex6OneSidedDelta = Scenario{
 }`,
 		// 03 delta, bids only — deletes 62799, says nothing about the asks
 		`{
+	"id": "1b99dfd1-c182-4f58-bb25-2c1c01aaa9ff",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
@@ -191,6 +197,7 @@ var Ex6OneSidedDelta = Scenario{
 }`,
 		// 04 snapshot, asks only — a wholesale replace of one side, the other untouched
 		`{
+	"id": "a407fd1c-cf0e-41d8-a057-d48e46d555a6",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000003006,
@@ -275,6 +282,7 @@ var Ex6SequenceGap = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "26bd49f0-7a9f-4f7e-ad61-a38f9bbec9f5",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
@@ -290,6 +298,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 02 delta, contiguous
 		`{
+	"id": "83164cc5-a429-4886-bfb8-153ac9587188",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
@@ -305,6 +314,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 03 delta, u jumps 301 -> 305
 		`{
+	"id": "98baddf3-c999-48e1-b976-0b6760b4b7db",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
@@ -320,6 +330,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 04 delta while still waiting for a re-sync
 		`{
+	"id": "ed7fb71d-bd80-49b1-aded-d8ce98fe2574",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000003006,
@@ -335,6 +346,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 05 snapshot — re-sync, on a fresh sequence
 		`{
+	"id": "f56a2b5a-3c51-4878-bfc5-eceee0a81749",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000004006,
@@ -350,6 +362,7 @@ var Ex6SequenceGap = Scenario{
 }`,
 		// 06 delta, contiguous again
 		`{
+	"id": "6ae295da-f218-452f-a3f4-d179aa862370",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000005006,
@@ -436,6 +449,7 @@ var Ex6NoBaseline = Scenario{
 	Sources: []string{
 		// 01 delta, cold — nothing to merge into
 		`{
+	"id": "de4ad080-f54d-42ad-a0c4-2b2b2cf85f2f",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
@@ -451,6 +465,7 @@ var Ex6NoBaseline = Scenario{
 }`,
 		// 02 snapshot — the first real baseline
 		`{
+	"id": "758413f7-b452-4b4d-8bd0-d8c2867dc8c3",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
@@ -466,6 +481,7 @@ var Ex6NoBaseline = Scenario{
 }`,
 		// 03 delta replaying the snapshot's own u
 		`{
+	"id": "a1a20d49-f77b-47c7-bc6d-b96902281049",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000002006,
@@ -481,6 +497,7 @@ var Ex6NoBaseline = Scenario{
 }`,
 		// 04 delta, contiguous with the snapshot
 		`{
+	"id": "e0ee1c2e-6ef8-48d1-800a-5bc5df81b883",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000003006,
@@ -533,6 +550,7 @@ var Ex6NoiseFrames = Scenario{
 	Sources: []string{
 		// 01 snapshot
 		`{
+	"id": "a0c75a39-9364-4c36-86d8-94e27e2e3490",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
@@ -548,6 +566,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 02 a type that is neither snapshot nor delta
 		`{
+	"id": "9ea02701-4a40-494b-8b45-a9bf13113890",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000106,
@@ -557,6 +576,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 03 no cts — the event time is not optional
 		`{
+	"id": "6d783a1c-2049-4885-9416-5ca307aab603",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000206,
@@ -565,6 +585,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 04 u as a string
 		`{
+	"id": "70257e0a-eaf2-434e-9c72-991834bb88f7",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000306,
@@ -574,6 +595,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 05 neither side present — nothing to report
 		`{
+	"id": "b35972bf-b618-42bc-9998-0b55e6c9001a",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000406,
@@ -584,6 +606,7 @@ var Ex6NoiseFrames = Scenario{
 		// 06 a market ex6 has no exchange_markets row for — dropped before job 2, so its far
 		// forward u never poisons the sequence state
 		`{
+	"id": "ad2b97da-1cd3-4987-803b-fc9ba4f18c3e",
 	"simulation": 1,
 	"topic": "orderbook.50.FOOBARUSDT",
 	"ts": 1800000000506,
@@ -593,6 +616,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 07 numeric levels — ex6's wire is string pairs, so the whole frame is unparseable
 		`{
+	"id": "b466d056-c291-4d15-9f10-8283f697750f",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000606,
@@ -602,6 +626,7 @@ var Ex6NoiseFrames = Scenario{
 }`,
 		// 08 delta, contiguous with 01
 		`{
+	"id": "888f7948-2392-4e1c-a3c3-c4720980ea1b",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,
@@ -650,6 +675,7 @@ var Ex6PrecisionDust = Scenario{
 	Sources: []string{
 		// 01 snapshot — two asks collide, two bids collide, one ask is dust
 		`{
+	"id": "a3f4530e-cb87-4d72-b810-417f4378ff3d",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000000006,
@@ -665,6 +691,7 @@ var Ex6PrecisionDust = Scenario{
 }`,
 		// 02 delta — dust on a price that is already in the book, and a colliding bid pair
 		`{
+	"id": "c7321a32-424c-49a1-ad91-0a476d83b520",
 	"simulation": 1,
 	"topic": "orderbook.50.BTCUSDT",
 	"ts": 1800000001006,

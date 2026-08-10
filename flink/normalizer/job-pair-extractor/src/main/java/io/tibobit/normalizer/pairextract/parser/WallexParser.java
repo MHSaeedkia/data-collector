@@ -12,11 +12,14 @@ import java.util.List;
  * sequence_id stays null (job 2 passes ex3 through unchecked) and event time is job-1 processing
  * time — nothing on the wire to use. See sample-raw-data.md § ex3.
  *
- * <p><b>The simulation flag rides in a THIRD element</b> (user 2026-08-03):
- * {@code ["{market}@{side}", [levels...], {"simulation": 1}]}. Every other exchange has an object
- * payload root, so NiFi injects the flag as a root FIELD there; ex3's root is an array, so it is
- * appended as a trailing object instead. Both the 2- and 3-element forms are accepted — the older
- * 2-element frame simply has no flag and reads as 0 (live data).
+ * <p><b>NiFi's metadata rides in a THIRD element</b> (user 2026-08-03):
+ * {@code ["{market}@{side}", [levels...], {"simulation": 1, "id": "<uuid>"}]}. Every other
+ * exchange has an object payload root, so NiFi injects these as root FIELDS there; ex3's root is an
+ * array, so they are appended as a trailing object instead — {@code id} goes in the SAME object
+ * as {@code simulation}, not as a fourth element. Both the 2- and 3-element forms are still accepted
+ * here, but they no longer behave the same: a 2-element frame has no flag (reads as 0, live) AND no
+ * id, and {@code PairExtractFunction} drops anything with no id. So in practice ex3 now
+ * requires the 3-element form.
  */
 public class WallexParser implements RawExchangeParser {
 
@@ -38,6 +41,7 @@ public class WallexParser implements RawExchangeParser {
                 null, 0L, System.currentTimeMillis(), null, null);
         // Trailing metadata object; absent on the 2-element form, which then reads as 0.
         event.setSimulation(Json.simulation(root.path(2)));
+        event.setSourceIds(Json.sourceIds(root.path(2)));
         switch (side) {
             case "sellDepth" -> event.setAsks(Levels.fromPriceQuantityObjects(root.get(1)));
             case "buyDepth" -> event.setBids(Levels.fromPriceQuantityObjects(root.get(1)));

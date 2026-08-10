@@ -80,14 +80,6 @@ const docTemplate = `{
                 }
             }
         },
-        "events.AvroTime": {
-            "type": "object",
-            "properties": {
-                "long": {
-                    "type": "string"
-                }
-            }
-        },
         "events.OrderbookSnapshot": {
             "type": "object",
             "properties": {
@@ -112,20 +104,9 @@ const docTemplate = `{
                 "pair_id": {
                     "type": "integer"
                 },
-                "pipeline_timings": {
-                    "$ref": "#/definitions/events.PipelineTimings"
-                },
                 "simulation": {
                     "description": "Simulation is NiFi's flag carried up the pipeline: 0 = live data, 1 =\nsimulation data, other values not yet defined. The book builder stamps\nthe emitted book with the flag of the event that produced it.",
                     "type": "integer"
-                }
-            }
-        },
-        "events.PipelineTimings": {
-            "type": "object",
-            "properties": {
-                "PipelineTimings": {
-                    "$ref": "#/definitions/events.StepTimings"
                 }
             }
         },
@@ -137,41 +118,6 @@ const docTemplate = `{
                 },
                 "quantity": {
                     "type": "string"
-                }
-            }
-        },
-        "events.StepTimings": {
-            "type": "object",
-            "properties": {
-                "book_build_in": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "book_build_out": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "pair_extract_in": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "pair_extract_out": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "precision_in": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "precision_out": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "rebase_in": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "rebase_out": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "type_validate_in": {
-                    "$ref": "#/definitions/events.AvroTime"
-                },
-                "type_validate_out": {
-                    "$ref": "#/definitions/events.AvroTime"
                 }
             }
         },

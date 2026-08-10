@@ -16,6 +16,12 @@
 			}
 		},
 		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "UUID minted by job 6 for this aggregated record. There is deliberately no record-level source_ids here: the union mixes exchanges, so the parent of a level is only meaningful per level — see source_id on AggregatedLevel."
+		},
+		{
 			"name": "event_time",
 			"type": {
 				"type": "long",
@@ -39,6 +45,12 @@
 							"type": "int",
 							"default": 0,
 							"doc": "The contributing exchange's simulation flag, per level: the union is across exchanges, so a level carries the flag of the book it came from. 0 = live, 1 = simulation."
+						},
+						{
+							"name": "source_id",
+							"type": "string",
+							"default": "",
+							"doc": "id of the job-5 snapshot this level came from — per level for the same reason exchange_id is: the union mixes exchanges, so one parent per record would be a lie. Singular, not an array: a level comes from exactly one snapshot."
 						},
 						{
 							"name": "price",

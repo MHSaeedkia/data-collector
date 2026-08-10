@@ -12,6 +12,13 @@ fixed-name subjects (no per-topic subjects), namespace `io.tibobit.orderbook`, e
 `_example.json`. All are TRUE Confluent Avro wire format (magic byte + schema-registry id + Avro
 payload):
 
+⚠ **The `_example.json` files are hand-maintained docs and go stale silently** — nothing reads them,
+no test validates them. Verified field-for-field and in schema order against all four avsc on
+2026-08-08 (the snapshot example had missed the per-level `source_id`). They are written in a
+HUMAN-readable shape, not goavro's textual encoding: ISO-8601 timestamps and plain nested records,
+with no union-branch wrappers. Keep that convention — and update the example in the same commit as
+the schema.
+
 - `raw_order_book_event.avsc` — subject `raw-order-book-event` (jobs 1–5 intermediate stream)
 - `order_book_snapshot.avsc` — subject `order-book-snapshot` (job 5 full-book output)
 - `rejected_order_book_event.avsc` — subject `rejected-order-book-event` (job 2 dead-letter)
@@ -50,15 +57,28 @@ captured wire formats in `sample-raw-data.md`):
 
 **`order_book_snapshot.avsc`** — record `OrderBookSnapshot`, subject `order-book-snapshot`. Job-5
 output (full maintained book per (exchange, pair)): `exchange_id`, `pair_id`, `event_time`,
-`last_sequence_id:["null","long"]` (null for ex3), required `asks[]`/`bids[]` of `PriceLevel`.
+`last_sequence_id:["null","long"]` (null for ex3), required `asks[]`/`bids[]` of `PriceLevel` —
+**the one `PriceLevel` that is NOT identical to the others: it alone carries `source_id`** (2026-08-08,
+see [[record-lineage]]).
 
 **`rejected_order_book_event.avsc`** — record `RejectedOrderBookEvent`, subject
 `rejected-order-book-event`. Dead-letter envelope: `event:RawOrderBookEvent` (full inline definition —
 kept field-for-field identical to `raw_order_book_event.avsc`; update BOTH if one changes),
 `reject_reason:string`, `rejected_at:timestamp-millis` (job-2 processing time).
 
-`PriceLevel`/`Type` are duplicated across these files with IDENTICAL definitions on purpose (Avro
-codegen tolerates identical redefinitions; divergent ones break the build).
+`PriceLevel`/`Type` are duplicated across these files. `Type`, and `PriceLevel` in the raw and
+rejected schemas, are identical on purpose — **within one file** Avro tolerates an identical
+redefinition and breaks on a divergent one, which is what the rule protects (`rejected_…` inlines
+the raw event, so those two must match field-for-field).
+
+**Divergence ACROSS files is fine and is now real**: `order_book_snapshot.avsc`'s `PriceLevel` has a
+third field, `source_id`. Nothing parses these files together — there is no avro-maven-plugin
+anywhere, each avsc is loaded on its own at runtime and read through `GenericRecord` — so the old
+blanket "all identical" rule was stronger than the constraint actually is. Do not "restore
+consistency" by adding the field to the other two: on a raw or rejected event every level belongs to
+the event carrying it, so it would be permanently blank. `serde/PriceLevels` decides from the SCHEMA
+(`getField("source_id") != null`), never from the value — a `GenericRecordBuilder` throws on a field
+its schema lacks, so a value-driven check would break the raw and rejected sinks.
 
 ## Schema: AggregatedOrderBookEvent
 

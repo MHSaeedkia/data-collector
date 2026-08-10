@@ -8,14 +8,21 @@ type RawLevel struct {
 	// Simulation is per level, not per book: the aggregator unions across
 	// exchanges, so one book can mix live and simulated sources.
 	// 0 = live data, 1 = simulation data.
-	Simulation int    `json:"simulation"`
-	Price      string `json:"price"`
-	Quantity   string `json:"quantity"`
+	Simulation int `json:"simulation"`
+	// SourceID is per level for the same reason Simulation is: it is the
+	// id of the job-5 snapshot this level came from, and one book's
+	// levels come from several snapshots.
+	SourceID string `json:"source_id"`
+	Price    string `json:"price"`
+	Quantity string `json:"quantity"`
 }
 
 type RawBook struct {
-	PairID    int        `json:"pair_id"`
-	Side      string     `json:"side"`
+	PairID int    `json:"pair_id"`
+	Side   string `json:"side"`
+	// ID is the aggregator's id for this record. There is no SourceIDs
+	// counterpart — the parents are per level, on RawLevel.SourceID.
+	ID        string     `json:"id"`
 	Levels    []RawLevel `json:"levels"`
 	EventTime int64      `json:"event_time"`
 }
@@ -27,6 +34,7 @@ type Level struct {
 	Price      string   `json:"price"`
 	Quantity   string   `json:"quantity"`
 	Simulation int      `json:"simulation"`
+	SourceID   string   `json:"source_id"`
 	Exchange   Exchange `json:"exchange"`
 }
 
@@ -35,6 +43,7 @@ type Book struct {
 	Base      string  `json:"base"`
 	Quote     string  `json:"quote"`
 	Side      string  `json:"side"`
+	ID        string  `json:"id"`
 	Levels    []Level `json:"levels"`
 	EventTime int64   `json:"event_time"`
 }

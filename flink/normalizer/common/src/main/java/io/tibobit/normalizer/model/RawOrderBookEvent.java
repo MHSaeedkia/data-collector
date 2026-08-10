@@ -17,6 +17,11 @@ import java.util.List;
  *   <li>{@code simulation}: NiFi's flag from the raw payload — 0 = live, 1 = simulation, other
  *       values undefined, absent = 0. Set by job 1 and carried unchanged by jobs 2–4. It is NOT
  *       part of any keying or validation rule; it only rides along.</li>
+ *   <li>{@code id}/{@code sourceIds}: record lineage. Unlike {@code simulation}, these are
+ *       RE-STAMPED at every hop — each job mints a fresh {@code id} when it writes the event to
+ *       its topic and sets {@code sourceIds} to the id(s) it read. Immediate parents only,
+ *       never the accumulated chain, so this list has exactly one element everywhere on the raw
+ *       stream. See memory/project_record_lineage.md.</li>
  * </ul>
  */
 public class RawOrderBookEvent {
@@ -25,6 +30,8 @@ public class RawOrderBookEvent {
     private int pairId;
     private String type;
     private int simulation;
+    private String id = "";
+    private List<String> sourceIds = List.of();
     private Long sequenceId;
     private long sequenceJump;
     private long eventTime;
@@ -78,6 +85,22 @@ public class RawOrderBookEvent {
 
     public void setSimulation(int simulation) {
         this.simulation = simulation;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public List<String> getSourceIds() {
+        return sourceIds;
+    }
+
+    public void setSourceIds(List<String> sourceIds) {
+        this.sourceIds = sourceIds;
     }
 
     public Long getSequenceId() {

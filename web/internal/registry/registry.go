@@ -75,6 +75,7 @@ func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 			Price:      rl.Price,
 			Quantity:   rl.Quantity,
 			Simulation: rl.Simulation,
+			SourceID:   rl.SourceID,
 			Exchange:   ex,
 		})
 	}
@@ -84,6 +85,7 @@ func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 		Base:      m.Base,
 		Quote:     m.Quote,
 		Side:      rb.Side,
+		ID:        rb.ID,
 		Levels:    levels,
 		EventTime: rb.EventTime,
 	}
