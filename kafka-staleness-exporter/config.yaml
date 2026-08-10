@@ -1,13 +1,19 @@
 kafka:
   bootstrap_servers: "kafka:29092"
 
-poll_interval_seconds: 15
+poll_interval_seconds: 60
 
 # How often to re-read the active topic list from postgres (seconds).
 db_refresh_interval_seconds: 60
 
-# Used for DB-sourced topics whose exchange_markets.staleness_threshold_seconds is NULL.
+# Used for DB-sourced stage topics whose exchange_markets.staleness_threshold_seconds
+# is NULL.
 default_threshold_seconds: 60
+
+# Threshold for the DB-derived aggregated output topics p{pair_id}-{asks,bids}.
+# One value for the whole family: that book is per-pair and is written whenever any
+# exchange on the pair emits, so it has no single subscription row to inherit from.
+output_threshold_seconds: 10
 
 postgres:
   host: postgres
@@ -16,29 +22,19 @@ postgres:
   user: postgres
   password: postgres
 
-# Manually listed topics — for anything NOT tied to a single exchange+pair
-# row in exchange_markets: consolidated outputs, raw topics, normalizer
-# stage topics, dead-letter topics, etc. Names must exactly match the
-# topic names on Kafka. These always override a same-named DB entry.
+# Manually listed topics — for anything NOT derivable from a subscription row.
+# Names must exactly match the topic names on Kafka (see scripts/warmup.sh).
+# These always override a same-named DB entry.
+#
+# Everything per-exchange+pair is derived from postgres instead of being listed here:
+#   ex{exchange_id}-p{pair_id}-{stage}  for the five normalizer stages
+#   p{pair_id}-{asks,bids}              for the aggregated output
+# The dead-letter ex{id}-p{id}-rejected-flink is intentionally not monitored — a silent
+# dead-letter means the pipeline is healthy, so staleness there is the normal state.
+#
+# ex{exchange_id}-raw is one topic per exchange (NiFi publishes verbatim exchange
+# payloads here), not one per subscription, so it stays listed by hand.
 topics:
-  p1-asks: 10
-  p1-bids: 10
-  p2-asks: 10
-  p2-bids: 10
-  p3-asks: 10
-  p3-bids: 10
-  p4-asks: 10
-  p4-bids: 10
-  p5-asks: 10
-  p5-bids: 10
-  p6-asks: 10
-  p6-bids: 10
-  p7-asks: 10
-  p7-bids: 10
-  p8-asks: 10
-  p8-bids: 10
-  p9-asks: 10
-  p9-bids: 10
   ex1-raw: 5
   ex2-raw: 5
   ex3-raw: 5

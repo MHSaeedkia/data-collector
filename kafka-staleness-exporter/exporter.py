@@ -3,13 +3,17 @@ Kafka topic staleness exporter.
 
 Topic list comes from two merged sources:
 
-  1. Postgres (exchange_markets, joined with markets/exchanges) — one
-     ex{exchange_id}-p{pair_id}-asks / -bids pair per active subscription,
-     using exchange_markets.staleness_threshold_seconds as the threshold
-     (falling back to default_threshold_seconds when NULL).
-  2. config.yaml `topics:` — manually listed topics (consolidated outputs,
-     raw topics, normalizer stages, anything not tied to one exchange+pair
-     row). These always win over a same-named DB entry.
+  1. Postgres (exchange_markets, joined with markets/exchanges), producing the
+     same topic names scripts/warmup.sh creates:
+       - ex{exchange_id}-p{pair_id}-{stage} for each of the five normalizer
+         stages, per active subscription, using that row's
+         exchange_markets.staleness_threshold_seconds (falling back to
+         default_threshold_seconds when NULL);
+       - p{pair_id}-{asks,bids} once per distinct active pair, using
+         output_threshold_seconds.
+  2. config.yaml `topics:` — manually listed topics, for anything not derivable
+     from a subscription row (the per-exchange ex{id}-raw ingest topics).
+     These always win over a same-named DB entry.
 
 The DB is re-queried every db_refresh_interval_seconds so new/removed
 subscriptions are picked up without restarting the exporter; metrics for
@@ -72,6 +76,21 @@ DB_QUERY = """
     WHERE em.status = 'subscribe'
 """
 
+# Per-exchange+pair pipeline stages, mirroring NORMALIZER_STAGES in scripts/warmup.sh.
+# Each entry is one raw-pipeline job's output topic, so a stalled stage points at the
+# job that stopped emitting.
+#
+# ex{id}-p{id}-rejected-flink is deliberately NOT monitored here: a silent dead-letter
+# means the pipeline is healthy, so a staleness check on it would report stale=1
+# permanently in the good case.
+NORMALIZER_STAGES = (
+    "raw-flink",                 # job 1 pair-extractor  out
+    "type-validated-raw-flink",  # job 2 type-validator  out
+    "rebased-flink",             # job 3 rebaser         out
+    "applied-precision-flink",   # job 4 precision       out
+    "orderbook-snapshot-flink",  # job 5 book-builder    out
+)
+
 
 def load_config():
     with open(CONFIG_PATH) as f:
@@ -87,8 +106,16 @@ def build_pg_dsn(pg_cfg):
     )
 
 
-def fetch_db_topics(pg_dsn, default_threshold):
-    """Returns {topic_name: threshold_seconds} derived from exchange_markets."""
+def fetch_db_topics(pg_dsn, default_threshold, output_threshold):
+    """Returns {topic_name: threshold_seconds} derived from exchange_markets.
+
+    Two families, both named exactly as scripts/warmup.sh creates them:
+      - ex{exchange_id}-p{pair_id}-{stage}, one per NORMALIZER_STAGES entry per
+        subscribed row, carrying that row's threshold;
+      - p{pair_id}-{asks,bids}, once per distinct subscribed pair. The aggregated
+        book is per-pair and is written whenever any exchange on that pair emits,
+        so it is not tied to a single subscription's threshold.
+    """
     topics = {}
     if not pg_dsn:
         return topics
@@ -96,18 +123,27 @@ def fetch_db_topics(pg_dsn, default_threshold):
         with psycopg2.connect(pg_dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(DB_QUERY)
-                for exchange_id, pair_id, threshold in cur.fetchall():
-                    t = threshold if threshold is not None else default_threshold
-                    topics[f"ex{exchange_id}-p{pair_id}-asks"] = t
-                    topics[f"ex{exchange_id}-p{pair_id}-bids"] = t
+                rows = cur.fetchall()
     except Exception as e:
         log.error("failed to refresh topic list from postgres: %s", e)
+        return topics
+
+    for exchange_id, pair_id, threshold in rows:
+        t = threshold if threshold is not None else default_threshold
+        for stage in NORMALIZER_STAGES:
+            topics[f"ex{exchange_id}-p{pair_id}-{stage}"] = t
+
+    for pair_id in {pair_id for _, pair_id, _ in rows}:
+        for side in ("asks", "bids"):
+            topics[f"p{pair_id}-{side}"] = output_threshold
+
     return topics
 
 
 def build_topic_config(cfg, pg_dsn):
     default_threshold = cfg.get("default_threshold_seconds", 60)
-    db_topics = fetch_db_topics(pg_dsn, default_threshold)
+    output_threshold = cfg.get("output_threshold_seconds", 10)
+    db_topics = fetch_db_topics(pg_dsn, default_threshold, output_threshold)
     manual_topics = cfg.get("topics") or {}
     combined = {**db_topics, **manual_topics}  # manual entries win on name collision
     log.info(
