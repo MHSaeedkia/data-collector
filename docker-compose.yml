@@ -241,16 +241,16 @@ services:
         networks:
             - data-collector-net
 
-    kafka-staleness-exporter:
-        build: ./kafka-staleness-exporter
-        container_name: kafka-staleness-exporter
-        hostname: kafka-staleness-exporter
+    lpa-staleness-exporter:
+        build: ./lpa-staleness-exporter
+        container_name: lpa-staleness-exporter
+        hostname: lpa-staleness-exporter
         restart: on-failure
         depends_on:
             kafka:
                 condition: service_healthy
         volumes:
-            - ./kafka-staleness-exporter/config.yaml:/config/config.yaml:ro
+            - ./lpa-staleness-exporter/config.yaml:/config/config.yaml:ro
         ports:
             - "9309:9309"
         networks:

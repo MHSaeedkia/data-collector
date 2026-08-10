@@ -1,9 +1,22 @@
 kafka:
   bootstrap_servers: "kafka:29092"
 
-poll_interval_seconds: 60
+# Also the resolution of the staleness-episode metrics: a topic going stale and
+# recovering inside one interval is never observed, and every episode timestamp and
+# duration is accurate only to within this many seconds.
+poll_interval_seconds: 10
+
+# Where the watch list comes from:
+#   both   — postgres-derived topics merged with the `topics:` block below; a manual
+#            entry wins on a name collision (default)
+#   db     — postgres only. The `topics:` block is ignored ENTIRELY, so the ex{id}-raw
+#            topics listed there stop being monitored
+#   config — the `topics:` block only; postgres is never queried
+# An unrecognised value logs an error and falls back to `both`.
+topic_source: config
 
 # How often to re-read the active topic list from postgres (seconds).
+# Not used when topic_source is `config`.
 db_refresh_interval_seconds: 60
 
 # Used for DB-sourced stage topics whose exchange_markets.staleness_threshold_seconds

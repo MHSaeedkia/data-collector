@@ -1,7 +1,8 @@
 """
 Kafka topic staleness exporter.
 
-Topic list comes from two merged sources:
+Topic list comes from two sources, selected by config.yaml `topic_source:`
+("both" the default, "db", or "config"):
 
   1. Postgres (exchange_markets, joined with markets/exchanges), producing the
      same topic names scripts/warmup.sh creates:
@@ -27,6 +28,22 @@ For each topic in the merged list, exposes:
   kafka_topic_staleness_threshold_seconds{topic="..."}  -> effective threshold
   kafka_topic_last_message_timestamp_seconds{topic="..."} -> unix ts (0 if never seen)
 
+Plus the staleness episode history — an episode is one continuous stretch of
+stale=1, and these expose its boundaries without needing a Prometheus range query:
+
+  kafka_topic_stale_since_timestamp_seconds{topic="..."}    -> start of the CURRENT
+                                                              episode, 0 if healthy
+  kafka_topic_last_recovery_timestamp_seconds{topic="..."}  -> when it last came back
+  kafka_topic_last_stale_duration_seconds{topic="..."}      -> length of the last
+                                                              COMPLETED episode
+  kafka_topic_stale_episodes_total{topic="..."}             -> counter, episodes seen
+  kafka_topic_stale_seconds_total{topic="..."}              -> counter, cumulative
+                                                              seconds spent stale
+
+Episode state is in-memory: the counters restart at 0 and an in-flight episode is
+forgotten when the exporter restarts. Transitions are only observed at poll time, so
+every timestamp and duration above is accurate to within one poll_interval_seconds.
+
 A topic with no partitions found, or with only empty partitions, is
 reported as stale=1 and seconds_since=-1 (meaning "unknown/never").
 """
@@ -37,10 +54,10 @@ import time
 import psycopg2
 import yaml
 from kafka import KafkaConsumer, TopicPartition
-from prometheus_client import Gauge, start_http_server
+from prometheus_client import Counter, Gauge, start_http_server
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("kafka-staleness-exporter")
+log = logging.getLogger("lpa-staleness-exporter")
 
 CONFIG_PATH = "/config/config.yaml"
 METRICS_PORT = 9309
@@ -66,7 +83,37 @@ g_last_ts = Gauge(
     ["topic"],
 )
 
-ALL_GAUGES = (g_seconds_since, g_stale, g_threshold, g_last_ts)
+g_stale_since = Gauge(
+    "kafka_topic_stale_since_timestamp_seconds",
+    "Unix timestamp when the topic's CURRENT stale episode began (0 if not stale)",
+    ["topic"],
+)
+g_last_recovery = Gauge(
+    "kafka_topic_last_recovery_timestamp_seconds",
+    "Unix timestamp when the topic last recovered from a stale episode (0 if never)",
+    ["topic"],
+)
+g_last_duration = Gauge(
+    "kafka_topic_last_stale_duration_seconds",
+    "Duration of the last COMPLETED stale episode (0 if none has completed yet)",
+    ["topic"],
+)
+c_episodes = Counter(
+    "kafka_topic_stale_episodes",
+    "Number of times this topic has entered a stale episode",
+    ["topic"],
+)
+c_stale_seconds = Counter(
+    "kafka_topic_stale_seconds",
+    "Cumulative seconds this topic has spent stale",
+    ["topic"],
+)
+
+ALL_METRICS = (
+    g_seconds_since, g_stale, g_threshold, g_last_ts,
+    g_stale_since, g_last_recovery, g_last_duration,
+    c_episodes, c_stale_seconds,
+)
 
 # enum values if they differ (e.g. 'subscribed' vs 'active').
 DB_QUERY = """
@@ -83,6 +130,8 @@ DB_QUERY = """
 # ex{id}-p{id}-rejected-flink is deliberately NOT monitored here: a silent dead-letter
 # means the pipeline is healthy, so a staleness check on it would report stale=1
 # permanently in the good case.
+TOPIC_SOURCES = ("db", "config", "both")
+
 NORMALIZER_STAGES = (
     "raw-flink",                 # job 1 pair-extractor  out
     "type-validated-raw-flink",  # job 2 type-validator  out
@@ -140,15 +189,35 @@ def fetch_db_topics(pg_dsn, default_threshold, output_threshold):
     return topics
 
 
+def resolve_topic_source(cfg):
+    """Validate topic_source, falling back to 'both' on an unknown value."""
+    source = cfg.get("topic_source", "both")
+    if source not in TOPIC_SOURCES:
+        log.error(
+            "invalid topic_source %r (expected one of %s), falling back to 'both'",
+            source, ", ".join(sorted(TOPIC_SOURCES)),
+        )
+        return "both"
+    return source
+
+
 def build_topic_config(cfg, pg_dsn):
+    source = resolve_topic_source(cfg)
     default_threshold = cfg.get("default_threshold_seconds", 60)
     output_threshold = cfg.get("output_threshold_seconds", 10)
-    db_topics = fetch_db_topics(pg_dsn, default_threshold, output_threshold)
-    manual_topics = cfg.get("topics") or {}
+
+    # In 'config' mode postgres is never queried; in 'db' mode the manual block is
+    # ignored outright, so an ex{id}-raw entry there stops being monitored.
+    db_topics = (
+        fetch_db_topics(pg_dsn, default_threshold, output_threshold)
+        if source in ("db", "both") else {}
+    )
+    manual_topics = (cfg.get("topics") or {}) if source in ("config", "both") else {}
+
     combined = {**db_topics, **manual_topics}  # manual entries win on name collision
     log.info(
-        "topic list refreshed: %d from db, %d manual, %d total",
-        len(db_topics), len(manual_topics), len(combined),
+        "topic list refreshed (topic_source=%s): %d from db, %d manual, %d total",
+        source, len(db_topics), len(manual_topics), len(combined),
     )
     return combined
 
@@ -176,14 +245,56 @@ def latest_offset_and_ts(consumer, tp, cache):
     return end, ts
 
 
-def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache):
+def record_staleness(topic, is_stale, now, history):
+    """Track stale/healthy transitions for one topic and export the episode metrics.
+
+    Called once per topic per poll. A whole poll interval is attributed to the state
+    the topic was in when that interval STARTED — a transition happening inside an
+    interval is not observable at this resolution, so every timestamp and duration
+    here is accurate only to within one poll_interval_seconds.
+    """
+    st = history.get(topic)
+    if st is None:
+        st = history[topic] = {"stale_since": None, "last_eval": None}
+        # Establish every episode series at 0 on first sight. Without this a topic that
+        # has never gone stale exports no episode series at all, which in Prometheus is
+        # indistinguishable from a topic the exporter does not know about.
+        g_last_recovery.labels(topic=topic).set(0)
+        g_last_duration.labels(topic=topic).set(0)
+        c_episodes.labels(topic=topic).inc(0)
+        c_stale_seconds.labels(topic=topic).inc(0)
+
+    was_stale = st["stale_since"] is not None
+
+    if was_stale and st["last_eval"] is not None:
+        c_stale_seconds.labels(topic=topic).inc(now - st["last_eval"])
+
+    if is_stale and not was_stale:
+        st["stale_since"] = now
+        c_episodes.labels(topic=topic).inc()
+        log.info("topic went stale: %s", topic)
+    elif not is_stale and was_stale:
+        duration = now - st["stale_since"]
+        st["stale_since"] = None
+        g_last_duration.labels(topic=topic).set(duration)
+        g_last_recovery.labels(topic=topic).set(now)
+        log.info("topic recovered: %s (stale for %.1fs)", topic, duration)
+
+    g_stale_since.labels(topic=topic).set(st["stale_since"] or 0)
+    st["last_eval"] = now
+
+
+def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, history):
+    now = time.time()
+    g_threshold.labels(topic=topic).set(threshold)
+
     partitions = partitions_by_topic.get(topic)
     if not partitions:
         log.warning("topic not found on cluster: %s", topic)
         g_seconds_since.labels(topic=topic).set(-1)
         g_stale.labels(topic=topic).set(1)
-        g_threshold.labels(topic=topic).set(threshold)
         g_last_ts.labels(topic=topic).set(0)
+        record_staleness(topic, True, now, history)
         return
 
     last_ts = None
@@ -198,28 +309,30 @@ def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache):
         if ts is not None and (last_ts is None or ts > last_ts):
             last_ts = ts
 
-    g_threshold.labels(topic=topic).set(threshold)
-
     if last_ts is None:
         g_seconds_since.labels(topic=topic).set(-1)
         g_stale.labels(topic=topic).set(1)
         g_last_ts.labels(topic=topic).set(0)
+        record_staleness(topic, True, now, history)
         return
 
     seconds_since = time.time() - last_ts
+    is_stale = seconds_since > threshold
     g_seconds_since.labels(topic=topic).set(seconds_since)
     g_last_ts.labels(topic=topic).set(last_ts)
-    g_stale.labels(topic=topic).set(1 if seconds_since > threshold else 0)
+    g_stale.labels(topic=topic).set(1 if is_stale else 0)
+    record_staleness(topic, is_stale, now, history)
 
 
-def drop_topic_metrics(topic, offset_cache):
-    for g in ALL_GAUGES:
+def drop_topic_metrics(topic, offset_cache, history):
+    for m in ALL_METRICS:
         try:
-            g.remove(topic)
+            m.remove(topic)
         except KeyError:
             pass
     for tp in [tp for tp in offset_cache if tp.topic == topic]:
         del offset_cache[tp]
+    history.pop(topic, None)
 
 
 def main():
@@ -234,10 +347,11 @@ def main():
         bootstrap_servers=bootstrap,
         enable_auto_commit=False,
         consumer_timeout_ms=5000,
-        client_id="kafka-staleness-exporter",
+        client_id="lpa-staleness-exporter",
     )
 
     offset_cache = {}
+    history = {}
     known_topics = set()
     topics_cfg = {}
     last_db_refresh = 0.0
@@ -254,13 +368,13 @@ def main():
             removed = known_topics - set(topics_cfg)
             for t in removed:
                 log.info("topic no longer active, dropping metrics: %s", t)
-                drop_topic_metrics(t, offset_cache)
+                drop_topic_metrics(t, offset_cache, history)
             known_topics = set(topics_cfg)
 
         partitions_by_topic = {t: consumer.partitions_for_topic(t) for t in topics_cfg}
         for topic, threshold in topics_cfg.items():
             try:
-                check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache)
+                check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, history)
             except Exception as e:
                 log.error("failed checking topic %s: %s", topic, e)
 

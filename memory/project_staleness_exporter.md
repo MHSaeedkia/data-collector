@@ -1,13 +1,13 @@
 ---
 name: staleness-exporter
-description: kafka-staleness-exporter derives topic names from postgres and MUST mirror scripts/warmup.sh; the dead-letter is deliberately unmonitored and the serial poll loop has a scaling ceiling.
+description: lpa-staleness-exporter derives topic names from postgres and MUST mirror scripts/warmup.sh; the dead-letter is deliberately unmonitored and the serial poll loop has a scaling ceiling.
 metadata:
     type: project
 ---
 
 # The exporter's topic names are a mirror of warmup.sh
 
-`kafka-staleness-exporter/exporter.py` builds its watch list from `exchange_markets`
+`lpa-staleness-exporter/exporter.py` builds its watch list from `exchange_markets`
 (`WHERE status = 'subscribe'`) and **must produce exactly the names
 `scripts/warmup.sh` creates**. If the two drift, the exporter silently watches topics
 that do not exist — `check_topic` logs `topic not found on cluster` and reports
@@ -42,6 +42,36 @@ so they have no single row to inherit from. They use a new
 `output_threshold_seconds` (10, matching the value the old hardcoded list used).
 `ex{id}-raw` stays a hand-listed manual entry because it is per-exchange, not
 per-subscription.
+
+## `topic_source` selects where the watch list comes from (2026-08-10)
+
+`both` (default) / `db` / `config`. **`db` ignores the `topics:` block outright** — the
+user's explicit choice — so the hand-listed `ex{id}-raw` topics go unmonitored in that
+mode; that is intended, not an oversight. `config` never opens a postgres connection at
+all. An unrecognised value logs an error and falls back to `both` rather than failing
+the process, because the exporter is a monitoring component: dying on a config typo
+would take out the very thing that reports outages.
+
+## Staleness episode metrics are in-memory and poll-resolution (2026-08-10)
+
+An *episode* is one continuous stretch of `stale=1`. Five series expose its boundaries
+so nobody needs a Prometheus range query: `..._stale_since_timestamp_seconds` (0 when
+healthy), `..._last_recovery_timestamp_seconds`, `..._last_stale_duration_seconds`,
+and the counters `..._stale_episodes_total` / `..._stale_seconds_total`.
+
+Three properties worth knowing before trusting a number off a dashboard:
+
+- **Poll-resolution only.** Transitions are observed solely at poll time, so a topic
+  that goes stale and recovers inside one `poll_interval_seconds` (currently **60**) is
+  never recorded at all, and every timestamp/duration is ±1 interval. A whole interval
+  is attributed to the state the topic was in when that interval *started*.
+- **In-memory** (user decision): counters reset to 0 and an in-flight episode is
+  forgotten on restart. Deliberate — `rate()`/`increase()` handle counter resets, and
+  the durable history lives in Prometheus. Persisting would need a writable volume,
+  which the compose service does not have (config.yaml is mounted read-only).
+- **Every series is zero-initialised on first sight of a topic.** Without that, a topic
+  that has never gone stale would export no episode series, which Prometheus cannot
+  tell apart from a topic the exporter does not know about.
 
 ## Known scaling ceiling (flagged, deliberately not fixed)
 
