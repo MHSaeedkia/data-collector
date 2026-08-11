@@ -37,15 +37,18 @@ func main() {
 
 	reg := registry.New(postgres.NewRepository(pool))
 	reg.Refresh(ctx) // initial load before anything uses the maps
+
+	h := hub.New()
+	h.SetCatalog(reg.Catalog()) // dropdowns are ready before the first client connects
 	go func() {
 		t := time.NewTicker(10 * time.Second)
 		defer t.Stop()
 		for range t.C {
 			reg.Refresh(ctx)
+			h.SetCatalog(reg.Catalog())
 		}
 	}()
 
-	h := hub.New()
 	dec := schema.NewDecoder(cfg.SchemaRegistryURL)
 
 	publicFS, err := fs.Sub(staticFiles, "public")
@@ -57,16 +60,24 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(publicFS)))
 	mux.HandleFunc("/ws", h.ServeWS)
 
-	go func() {
-		consumer, err := kafka.NewConsumer(cfg.KafkaBroker)
-		if err != nil {
-			log.Printf("Kafka consumer error (UI stays up; ensure broker at %s is reachable): %v", cfg.KafkaBroker, err)
-			return
-		}
-		consumer.Run(ctx, func(topic string, value []byte) {
-			ingest.HandleRecord(dec, reg, h, topic, value)
-		})
-	}()
+	// Two consumers, not one: the aggregated topics replay from the start
+	// so the book paints on load, the per-exchange ones start at the end
+	// (see internal/kafka), and the reset offset is a per-client setting.
+	for _, newConsumer := range []func(string) (*kafka.Consumer, error){
+		kafka.NewAggregatedConsumer,
+		kafka.NewSnapshotConsumer,
+	} {
+		go func() {
+			consumer, err := newConsumer(cfg.KafkaBroker)
+			if err != nil {
+				log.Printf("Kafka consumer error (UI stays up; ensure broker at %s is reachable): %v", cfg.KafkaBroker, err)
+				return
+			}
+			consumer.Run(ctx, func(topic string, value []byte) {
+				ingest.HandleRecord(dec, reg, h, topic, value)
+			})
+		}()
+	}
 
 	// Serve the UI immediately so the page loads even before (or without) Kafka.
 	log.Printf("Order book UI:    http://localhost:%s", cfg.Port)

@@ -79,6 +79,57 @@ func TestEnrich_UnknownIdsFallBackToPlaceholders(t *testing.T) {
 	assert.Equal(t, "نامشخص", got.Levels[0].Exchange.Label)
 }
 
+// A per-exchange book names its source exchange at the book level — that
+// is what the browser routes on — while the per-level exchange stays
+// filled so the table renders the same either way.
+func TestEnrich_PerExchangeBookResolvesTheBookLevelExchange(t *testing.T) {
+	repo := &fakeRepo{exchanges: map[int]domain.Exchange{8: {ID: 8, Name: "okx", Label: "OKX"}}}
+	r := New(repo)
+	r.Refresh(context.Background())
+
+	got := r.Enrich(domain.RawBook{
+		PairID:     1,
+		ExchangeID: 8,
+		Side:       "asks",
+		Levels:     []domain.RawLevel{{ExchangeID: 8, Price: "100", Quantity: "1"}},
+	})
+
+	require.NotNil(t, got.Exchange)
+	assert.Equal(t, "okx", got.Exchange.Name)
+	assert.Equal(t, "okx", got.Levels[0].Exchange.Name)
+}
+
+func TestEnrich_AggregatedBookHasNoBookLevelExchange(t *testing.T) {
+	r := New(&fakeRepo{})
+
+	got := r.Enrich(domain.RawBook{PairID: 1, Side: "asks"})
+
+	assert.Nil(t, got.Exchange, "the aggregated book belongs to no single exchange")
+	assert.Equal(t, 0, got.ExchangeID())
+}
+
+func TestCatalog_ListsEverythingSortedByID(t *testing.T) {
+	repo := &fakeRepo{
+		markets: map[int]domain.Market{
+			2: {ID: 2, Base: "ETH", Quote: "USDT"},
+			1: {ID: 1, Base: "BTC", Quote: "USDT"},
+		},
+		exchanges: map[int]domain.Exchange{
+			8: {ID: 8, Name: "okx"},
+			1: {ID: 1, Name: "nobitex"},
+		},
+	}
+	r := New(repo)
+	r.Refresh(context.Background())
+
+	got := r.Catalog()
+
+	require.Len(t, got.Markets, 2)
+	assert.Equal(t, []int{1, 2}, []int{got.Markets[0].ID, got.Markets[1].ID})
+	require.Len(t, got.Exchanges, 2)
+	assert.Equal(t, []int{1, 8}, []int{got.Exchanges[0].ID, got.Exchanges[1].ID})
+}
+
 func TestEnrich_PreservesLevelOrderAndFields(t *testing.T) {
 	repo := &fakeRepo{
 		exchanges: map[int]domain.Exchange{

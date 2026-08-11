@@ -13,25 +13,44 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// Aggregated output topics: p{pair_id}-{side} (e.g. p2-asks). Input
-// topics (ex{exchange_id}-p{pair_id}-{side}) carry a leading ex... so
-// they don't match.
-const topicPattern = `^p[0-9]+-(asks|bids)$`
+const (
+	// Aggregated output topics: p{pair_id}-{side} (e.g. p2-asks).
+	// Per-exchange topics carry a leading ex... so they don't match.
+	aggregatedPattern = `^p[0-9]+-(asks|bids)$`
+	// Job 5's per-exchange books: one record holds both sides.
+	snapshotPattern = `^ex[0-9]+-p[0-9]+-orderbook-snapshot-flink$`
+)
 
 type Consumer struct {
 	client *kgo.Client
 }
 
-// NewConsumer connects with a fresh consumer group reset to the earliest
-// offset, so the current book replays on load (dev only).
-func NewConsumer(broker string) (*Consumer, error) {
-	group := "orderbook-web-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+// NewAggregatedConsumer reads the aggregator's output from the earliest
+// offset, so the current book renders on page load (dev only — it
+// replays the retention window each restart).
+func NewAggregatedConsumer(broker string) (*Consumer, error) {
+	return newConsumer(broker, "agg", aggregatedPattern, kgo.NewOffset().AtStart())
+}
+
+// NewSnapshotConsumer reads job 5's per-exchange books from the LATEST
+// offset, unlike the aggregated one. These topics carry a full book on
+// every event, one per exchange × pair, so replaying their retention
+// window at startup would cost far more than it is worth; the trade is
+// that an idle exchange shows nothing until its next event.
+func NewSnapshotConsumer(broker string) (*Consumer, error) {
+	return newConsumer(broker, "ex", snapshotPattern, kgo.NewOffset().AtEnd())
+}
+
+// newConsumer connects with a fresh consumer group at the given offset.
+// The two families need separate clients because the reset offset is a
+// client-wide setting.
+func newConsumer(broker, group, pattern string, offset kgo.Offset) (*Consumer, error) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(broker),
 		kgo.ConsumeRegex(),
-		kgo.ConsumeTopics(topicPattern),
-		kgo.ConsumerGroup(group),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.ConsumeTopics(pattern),
+		kgo.ConsumerGroup("orderbook-web-"+group+"-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
+		kgo.ConsumeResetOffset(offset),
 	)
 	if err != nil {
 		return nil, err

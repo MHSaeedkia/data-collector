@@ -89,7 +89,9 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 .
 ├── docker-compose.yml         # full stack; Flink cluster builds flink/normalizer
 ├── flink/
-│   └── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
+│   ├── run-job.sh             # builds + submits any job below; run with no arg to list them
+│   ├── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
+│   └── merger/                # sums the aggregated book's levels per price (p{id}-{side}-merged)
 ├── nifi/
 │   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
 ├── postgres/
@@ -104,8 +106,11 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ```
 ./scripts/warmup.sh
 
-# Submit the 6 pipeline jobs downstream-first (aggregator first). See `make refresh-normalizer`.
-cd flink/normalizer
+# One script builds and submits any job, from any project under flink/.
+# Run it with no argument to list them. Order matters: downstream-first, because
+# every source reads from `latest`. See `make run-all-jobs`.
+cd flink
+./run-job.sh merger
 ./run-job.sh job-aggregator
 ./run-job.sh job-book-builder
 ./run-job.sh job-precision
@@ -113,6 +118,6 @@ cd flink/normalizer
 ./run-job.sh job-type-validator
 ./run-job.sh job-pair-extractor
 
-cd ../../web
+cd ../web
 npm i && npm start
 ```
