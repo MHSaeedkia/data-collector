@@ -82,9 +82,9 @@ schema, which `GenericData.validate` alone would not catch). Jar packages with t
 Main-Class. **NOT run live — no stack was up, no smoke test, no e2e scenario.**
 
 Deliberately **not** done, needs a decision:
-- Root `Makefile` `refresh-normalizer` / `run-normalizer-jobs` do **not** submit this job
-  ([[scope-discipline]] — it changes deploy behaviour on the shared server). Deploy by hand with
-  `cd flink/merger && ./run-job.sh`.
+- ~~Not wired into deployment~~ **done 2026-08-11**: `make run-all-jobs` submits it, first in the
+  chain (it is downstream of job 6). `refresh-normalizer` / `run-normalizer-jobs` are still
+  normalizer-only, so a refresh leaves the merger down — see [[flink-deploy-tooling]].
 - [[staleness-exporter]] does not watch the `-merged` topics.
 - No e2e coverage; `e2e/` asserts jobs 5 and 6 only ([[e2e-harness]]).
 - The web UI does not consume `-merged` ([[project_orderbook_web]]).

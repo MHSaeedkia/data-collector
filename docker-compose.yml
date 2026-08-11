@@ -1,7 +1,7 @@
 ---
 # Full stack for the raw-normalization pipeline: the Flink image builds from ./flink/normalizer
 # and the taskmanager has 8 slots, enough for the 5 upstream normalizer jobs PLUS the terminal
-# aggregator submitted to this one cluster via flink/normalizer/run-job.sh.
+# aggregator submitted to this one cluster via flink/run-job.sh.
 services:
     jobmanager:
         build: ./flink/normalizer
