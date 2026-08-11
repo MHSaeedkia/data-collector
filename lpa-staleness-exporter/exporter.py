@@ -40,9 +40,28 @@ stale=1, and these expose its boundaries without needing a Prometheus range quer
   kafka_topic_stale_seconds_total{topic="..."}              -> counter, cumulative
                                                               seconds spent stale
 
-Episode state is in-memory: the counters restart at 0 and an in-flight episode is
-forgotten when the exporter restarts. Transitions are only observed at poll time, so
-every timestamp and duration above is accurate to within one poll_interval_seconds.
+Transitions are only observed at poll time, so every timestamp and duration above is
+accurate to within one poll_interval_seconds.
+
+Every completed episode is additionally persisted as a row in the Postgres table
+topic_staleness_episodes (topic, stale_since, recovered_at, duration_seconds,
+threshold_seconds) — this is the source for historical "which topic was down from
+when to when" reporting in Grafana, since the Gauges above only ever expose the
+CURRENT and the single most-recently-completed episode. The table is created
+automatically on startup (see run_migrations); no manual migration step is needed.
+An in-flight episode open when the exporter restarts is recovered from this table
+at startup (see load_open_episodes), so it is not lost — only the Prometheus
+Counters (kafka_topic_stale_episodes, kafka_topic_stale_seconds) reset to 0 on
+restart, since those live in process memory only.
+
+A topic has at most one open episode, enforced by a unique partial index. A topic
+that leaves the watch list mid-episode has that episode closed at drop time, so
+"dropped while stale" and "recovered" are indistinguishable in the table — an
+open row always means genuinely still stale, never a bookkeeping leak.
+
+This persistence runs regardless of topic_source: `config` mode still skips
+postgres for the TOPIC LIST, but episode history is written whenever a
+`postgres:` block is configured.
 
 A topic with no partitions found, or with only empty partitions, is
 reported as stale=1 and seconds_since=-1 (meaning "unknown/never").
@@ -155,6 +174,116 @@ def build_pg_dsn(pg_cfg):
     )
 
 
+def run_migrations(pg_dsn):
+    """Create/upgrade the episode-history table. Called once on startup — no manual
+    migration step is needed, this is idempotent and safe to run on every boot."""
+    if not pg_dsn:
+        log.warning("no postgres configured — staleness episode history will not be persisted")
+        return
+    try:
+        with psycopg2.connect(pg_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS topic_staleness_episodes (
+                        id SERIAL PRIMARY KEY,
+                        topic TEXT NOT NULL,
+                        stale_since TIMESTAMPTZ NOT NULL,
+                        recovered_at TIMESTAMPTZ,
+                        duration_seconds DOUBLE PRECISION,
+                        threshold_seconds DOUBLE PRECISION,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_tse_topic_time
+                    ON topic_staleness_episodes (topic, stale_since)
+                """)
+                # Partial index: fast lookup of "the currently-open episode for topic X",
+                # used by close_episode and by load_open_episodes on restart. UNIQUE so
+                # a topic can never have two open episodes — that state is unrecoverable
+                # (close_episode only ever closes the newest, so the older row would stay
+                # open forever and the topic would read as permanently down). The older
+                # non-unique index is dropped by name so existing deployments upgrade.
+                cur.execute("DROP INDEX IF EXISTS idx_tse_open")
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_tse_open_unique
+                    ON topic_staleness_episodes (topic)
+                    WHERE recovered_at IS NULL
+                """)
+        log.info("topic_staleness_episodes table ready")
+    except Exception as e:
+        log.error("failed to run episode-table migration: %s", e)
+
+
+def load_open_episodes(pg_dsn):
+    """On startup, recover any episode that was still open (recovered_at IS NULL)
+    when the exporter last stopped, so its original stale_since is preserved instead
+    of a fresh one being started at process boot."""
+    open_episodes = {}
+    if not pg_dsn:
+        return open_episodes
+    try:
+        with psycopg2.connect(pg_dsn) as conn:
+            with conn.cursor() as cur:
+                # ::float8 is load-bearing: on postgres >= 14 EXTRACT returns numeric,
+                # which psycopg2 hands back as Decimal, and stale_since is later
+                # subtracted from a time.time() float — that raises TypeError.
+                cur.execute("""
+                    SELECT DISTINCT ON (topic)
+                           topic, extract(epoch FROM stale_since)::float8
+                    FROM topic_staleness_episodes
+                    WHERE recovered_at IS NULL
+                    ORDER BY topic, id DESC
+                """)
+                for topic, stale_since in cur.fetchall():
+                    open_episodes[topic] = stale_since
+    except Exception as e:
+        log.error("failed to load open episodes from postgres: %s", e)
+    return open_episodes
+
+
+def insert_episode_start(pg_dsn, topic, stale_since_ts, threshold):
+    if not pg_dsn:
+        return
+    try:
+        with psycopg2.connect(pg_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO topic_staleness_episodes
+                        (topic, stale_since, threshold_seconds)
+                    VALUES (%s, to_timestamp(%s), %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (topic, stale_since_ts, threshold),
+                )
+    except Exception as e:
+        log.error("failed to persist episode start for %s: %s", topic, e)
+
+
+def close_episode(pg_dsn, topic, recovered_at_ts, duration):
+    if not pg_dsn:
+        return
+    try:
+        with psycopg2.connect(pg_dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE topic_staleness_episodes
+                    SET recovered_at = to_timestamp(%s),
+                        duration_seconds = %s
+                    WHERE id = (
+                        SELECT id FROM topic_staleness_episodes
+                        WHERE topic = %s AND recovered_at IS NULL
+                        ORDER BY id DESC LIMIT 1
+                    )
+                    """,
+                    (recovered_at_ts, duration, topic),
+                )
+    except Exception as e:
+        log.error("failed to persist episode close for %s: %s", topic, e)
+
+
 def fetch_db_topics(pg_dsn, default_threshold, output_threshold):
     """Returns {topic_name: threshold_seconds} derived from exchange_markets.
 
@@ -245,8 +374,22 @@ def latest_offset_and_ts(consumer, tp, cache):
     return end, ts
 
 
-def record_staleness(topic, is_stale, now, history):
-    """Track stale/healthy transitions for one topic and export the episode metrics.
+def init_topic_history(topic, history, stale_since=None):
+    """Establish every episode series at 0 on first sight (or restore stale_since on
+    restart-recovery). Without this a topic that has never gone stale exports no
+    episode series at all, which in Prometheus is indistinguishable from a topic the
+    exporter does not know about."""
+    history[topic] = {"stale_since": stale_since, "last_eval": None}
+    g_last_recovery.labels(topic=topic).set(0)
+    g_last_duration.labels(topic=topic).set(0)
+    c_episodes.labels(topic=topic).inc(0)
+    c_stale_seconds.labels(topic=topic).inc(0)
+    g_stale_since.labels(topic=topic).set(stale_since or 0)
+
+
+def record_staleness(topic, is_stale, threshold, now, history, pg_dsn):
+    """Track stale/healthy transitions for one topic, export the episode metrics, and
+    persist each episode's boundaries to Postgres for historical reporting.
 
     Called once per topic per poll. A whole poll interval is attributed to the state
     the topic was in when that interval STARTED — a transition happening inside an
@@ -255,14 +398,8 @@ def record_staleness(topic, is_stale, now, history):
     """
     st = history.get(topic)
     if st is None:
-        st = history[topic] = {"stale_since": None, "last_eval": None}
-        # Establish every episode series at 0 on first sight. Without this a topic that
-        # has never gone stale exports no episode series at all, which in Prometheus is
-        # indistinguishable from a topic the exporter does not know about.
-        g_last_recovery.labels(topic=topic).set(0)
-        g_last_duration.labels(topic=topic).set(0)
-        c_episodes.labels(topic=topic).inc(0)
-        c_stale_seconds.labels(topic=topic).inc(0)
+        init_topic_history(topic, history)
+        st = history[topic]
 
     was_stale = st["stale_since"] is not None
 
@@ -273,18 +410,20 @@ def record_staleness(topic, is_stale, now, history):
         st["stale_since"] = now
         c_episodes.labels(topic=topic).inc()
         log.info("topic went stale: %s", topic)
+        insert_episode_start(pg_dsn, topic, now, threshold)
     elif not is_stale and was_stale:
         duration = now - st["stale_since"]
         st["stale_since"] = None
         g_last_duration.labels(topic=topic).set(duration)
         g_last_recovery.labels(topic=topic).set(now)
         log.info("topic recovered: %s (stale for %.1fs)", topic, duration)
+        close_episode(pg_dsn, topic, now, duration)
 
     g_stale_since.labels(topic=topic).set(st["stale_since"] or 0)
     st["last_eval"] = now
 
 
-def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, history):
+def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, history, pg_dsn):
     now = time.time()
     g_threshold.labels(topic=topic).set(threshold)
 
@@ -294,7 +433,7 @@ def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, h
         g_seconds_since.labels(topic=topic).set(-1)
         g_stale.labels(topic=topic).set(1)
         g_last_ts.labels(topic=topic).set(0)
-        record_staleness(topic, True, now, history)
+        record_staleness(topic, True, threshold, now, history, pg_dsn)
         return
 
     last_ts = None
@@ -313,7 +452,7 @@ def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, h
         g_seconds_since.labels(topic=topic).set(-1)
         g_stale.labels(topic=topic).set(1)
         g_last_ts.labels(topic=topic).set(0)
-        record_staleness(topic, True, now, history)
+        record_staleness(topic, True, threshold, now, history, pg_dsn)
         return
 
     seconds_since = time.time() - last_ts
@@ -321,10 +460,20 @@ def check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, h
     g_seconds_since.labels(topic=topic).set(seconds_since)
     g_last_ts.labels(topic=topic).set(last_ts)
     g_stale.labels(topic=topic).set(1 if is_stale else 0)
-    record_staleness(topic, is_stale, now, history)
+    record_staleness(topic, is_stale, threshold, now, history, pg_dsn)
 
 
-def drop_topic_metrics(topic, offset_cache, history):
+def drop_topic_metrics(topic, offset_cache, history, pg_dsn):
+    # A topic dropped mid-episode must have that episode closed, otherwise the row
+    # stays recovered_at IS NULL forever: the history panel reads it as still down,
+    # every restart resurrects it, and if the topic is ever re-added its new episode
+    # can never be closed past the orphan.
+    st = history.get(topic)
+    if st and st["stale_since"] is not None:
+        now = time.time()
+        log.info("topic dropped while stale, closing episode: %s", topic)
+        close_episode(pg_dsn, topic, now, now - st["stale_since"])
+
     for m in ALL_METRICS:
         try:
             m.remove(topic)
@@ -342,6 +491,8 @@ def main():
     db_refresh_interval = cfg.get("db_refresh_interval_seconds", 60)
     pg_dsn = build_pg_dsn(cfg.get("postgres"))
 
+    run_migrations(pg_dsn)
+
     log.info("connecting to kafka at %s", bootstrap)
     consumer = KafkaConsumer(
         bootstrap_servers=bootstrap,
@@ -352,9 +503,18 @@ def main():
 
     offset_cache = {}
     history = {}
-    known_topics = set()
     topics_cfg = {}
     last_db_refresh = 0.0
+
+    open_episodes = load_open_episodes(pg_dsn)
+    for topic, stale_since in open_episodes.items():
+        init_topic_history(topic, history, stale_since=stale_since)
+        c_episodes.labels(topic=topic).inc()  # this episode is active as of restart
+        log.info("recovered open episode for %s (stale since %s)", topic, stale_since)
+    # Seed known_topics with the recovered set so the first refresh below drops (and
+    # closes the episode of) any topic that is no longer in the watch list. Starting
+    # from an empty set would leave those exporting metrics nothing ever checks.
+    known_topics = set(open_episodes)
 
     start_http_server(METRICS_PORT)
     log.info("metrics available on :%d/metrics", METRICS_PORT)
@@ -368,13 +528,13 @@ def main():
             removed = known_topics - set(topics_cfg)
             for t in removed:
                 log.info("topic no longer active, dropping metrics: %s", t)
-                drop_topic_metrics(t, offset_cache, history)
+                drop_topic_metrics(t, offset_cache, history, pg_dsn)
             known_topics = set(topics_cfg)
 
         partitions_by_topic = {t: consumer.partitions_for_topic(t) for t in topics_cfg}
         for topic, threshold in topics_cfg.items():
             try:
-                check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, history)
+                check_topic(consumer, topic, threshold, partitions_by_topic, offset_cache, history, pg_dsn)
             except Exception as e:
                 log.error("failed checking topic %s: %s", topic, e)
 

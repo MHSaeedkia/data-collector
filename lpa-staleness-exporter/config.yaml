@@ -4,7 +4,7 @@ kafka:
 # Also the resolution of the staleness-episode metrics: a topic going stale and
 # recovering inside one interval is never observed, and every episode timestamp and
 # duration is accurate only to within this many seconds.
-poll_interval_seconds: 10
+poll_interval_seconds: 20
 
 # Where the watch list comes from:
 #   both   — postgres-derived topics merged with the `topics:` block below; a manual
@@ -48,12 +48,12 @@ postgres:
 # ex{exchange_id}-raw is one topic per exchange (NiFi publishes verbatim exchange
 # payloads here), not one per subscription, so it stays listed by hand.
 topics:
-  ex1-raw: 5
-  ex2-raw: 5
-  ex3-raw: 5
-  ex4-raw: 5
-  ex5-raw: 5
-  ex6-raw: 5
-  ex7-raw: 5
-  ex8-raw: 5
-  ex9-raw: 5
+  ex1-raw: 30
+  ex2-raw: 30
+  ex3-raw: 30
+  ex4-raw: 30
+  ex5-raw: 30
+  ex6-raw: 30
+  ex7-raw: 30
+  ex8-raw: 30
+  ex9-raw: 30

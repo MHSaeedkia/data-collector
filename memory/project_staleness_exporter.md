@@ -1,6 +1,6 @@
 ---
 name: staleness-exporter
-description: lpa-staleness-exporter derives topic names from postgres and MUST mirror scripts/warmup.sh; the dead-letter is deliberately unmonitored and the serial poll loop has a scaling ceiling.
+description: lpa-staleness-exporter derives topic names from postgres and MUST mirror scripts/warmup.sh; the dead-letter is deliberately unmonitored, episodes persist to topic_staleness_episodes under three sharp invariants, and the serial poll loop has a scaling ceiling.
 metadata:
     type: project
 ---
@@ -73,6 +73,48 @@ Three properties worth knowing before trusting a number off a dashboard:
   that has never gone stale would export no episode series, which Prometheus cannot
   tell apart from a topic the exporter does not know about.
 
+## Episodes are ALSO persisted to postgres — `topic_staleness_episodes` (2026-08-11)
+
+The five in-memory series above only ever hold the *current* and the *single last
+completed* episode, which cannot answer "which topic was down from when to when".
+So every episode is additionally written as a row (`topic, stale_since,
+recovered_at, duration_seconds, threshold_seconds`) in the `markets` DB. The table is
+created by `run_migrations` on every boot — **there is deliberately no entry for it in
+`postgres/01_schema.sql`**, so someone reading the committed schema will not know it
+exists. That is the tradeoff for the exporter being self-installing.
+
+Three invariants, each of which was a bug before it was one:
+
+- **`extract(epoch FROM ...)` MUST be cast `::float8`.** Postgres >= 14 (compose runs
+  18) returns `numeric` there, psycopg2 hands that back as `Decimal`, and the value is
+  later subtracted from a `time.time()` float → `TypeError`. The per-topic `try/except`
+  in the poll loop swallows it, so the symptom is not a crash but a topic that logs
+  `failed checking topic` every poll and can *never* recover or close its row.
+- **A topic has at most one open episode, enforced by a UNIQUE partial index**
+  (`idx_tse_open_unique`, replacing the non-unique `idx_tse_open`). Two open rows is an
+  unrecoverable state: `close_episode` only ever closes `ORDER BY id DESC LIMIT 1`, so
+  the older row stays open forever and the topic reads as permanently down. The insert
+  is `ON CONFLICT DO NOTHING` (no conflict target — that form arbitrates on any unique
+  violation, which a partial index needs).
+- **Dropping a topic from the watch list closes its open episode.** `drop_topic_metrics`
+  takes `pg_dsn` for exactly this. Consequence worth knowing: *"dropped while stale" and
+  "recovered" are indistinguishable in the table* — the win is that `recovered_at IS
+  NULL` then always means genuinely-still-stale, never a bookkeeping leak.
+
+`known_topics` is seeded from the recovered open episodes rather than from an empty set,
+so the first refresh drops any recovered topic that is no longer being watched. Without
+that seed those topics export metrics nothing ever checks.
+
+**This persistence runs regardless of `topic_source`** — revising the rule above: in
+`config` mode postgres is still never queried *for the topic list*, but episode history
+is written whenever a `postgres:` block exists. The committed config is `config` mode,
+so skipping persistence there would have made the feature dead on arrival.
+
+`poll_interval_seconds` is the resolution of this table too, and it was raised 10 → 30
+on 2026-08-11 while `ex{id}-raw` thresholds are 5s and `output_threshold_seconds` is 10s
+— so episode boundaries are 3–6× coarser than the thresholds they describe, and any
+outage shorter than 30s is never recorded. Flagged to the user, left as-is.
+
 ## Known scaling ceiling (flagged, deliberately not fixed)
 
 The poll loop is **serial**: per topic it does `partitions_for_topic`, then per
@@ -85,7 +127,18 @@ parallelising needs one consumer per worker, not a shared one.
 
 ## Consumers of these metrics live outside this repo
 
-No Grafana or Prometheus config is committed here; `docker-compose.yml` only exposes
-port 9309. The rename changed the `topic=` label values, so **external dashboards and
-the `KafkaTopicStale` alert rule (see the alert-gateway routing in
-[[alert-gateway]]) must be updated by hand** — nothing in this repo will flag it.
+No Prometheus config is committed here; `docker-compose.yml` only exposes port 9309.
+The rename changed the `topic=` label values, so **external dashboards and the
+`KafkaTopicStale` alert rule (see the alert-gateway routing in [[alert-gateway]]) must
+be updated by hand** — nothing in this repo will flag it.
+
+The one exception since 2026-08-11 is `lpa-staleness-exporter/grafana-dashboard.json`,
+a committed *copy* of the "LPA Staleness Monitoring" dashboard (uid `dfsv0halr3im8d`).
+Grafana is not provisioned from it — it is imported by hand, so **it is a snapshot that
+drifts the moment anyone edits the dashboard in the UI**. Its third section is one
+repeated table per topic reading `topic_staleness_episodes` over a **postgres**
+datasource, whose uid is the literal `PLACEHOLDER_PG_UID` because no postgres datasource
+existed in Grafana when it was written. The episode query filters by *overlap*
+(`stale_since <= $__timeTo() AND COALESCE(recovered_at, now()) >= $__timeFrom()`), not
+`$__timeFilter(stale_since)`, so an outage that began before the dashboard window but is
+still running is visible — that is the row you most want and containment would hide it.
