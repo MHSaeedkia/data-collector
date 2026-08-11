@@ -11,9 +11,13 @@ services:
         command: jobmanager
         ports:
             - "7070:8081"
+            - "9249:9249" 
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
+                metrics.reporters: prom
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
         networks:
@@ -29,6 +33,8 @@ services:
         hostname: taskmanager
         restart: on-failure
         command: taskmanager
+        ports:
+            - "9250:9250"
         depends_on:
             jobmanager:
                 condition: service_healthy
@@ -36,6 +42,9 @@ services:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 8
+                metrics.reporters: prom
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-logs:/opt/flink/log
         networks:
@@ -139,7 +148,7 @@ services:
         environment:
             SINGLE_USER_CREDENTIALS_USERNAME: admin
             SINGLE_USER_CREDENTIALS_PASSWORD: admin123456789
-            NIFI_WEB_PROXY_HOST: "192.168.150.104:8443,192.168.150.102:8443,192.168.150.31:8443,192.168.150.32:8443,localhost:8443"
+            NIFI_WEB_PROXY_HOST: "192.168.150.104:8443,192.168.150.102:8443,192.168.150.31:8443,192.168.150.32:8443,192.168.150.33:8443,localhost:8443"
             NIFI_JVM_HEAP_INIT: "8g"
             NIFI_JVM_HEAP_MAX: "8g"
         ports:
