@@ -8,12 +8,14 @@ POSTGRES_DB="${POSTGRES_DB:-markets}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://localhost:8082}"
 AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT="${AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT:-aggregated-order-book-event}"
+MERGED_ORDER_BOOK_SCHEMA_SUBJECT="${MERGED_ORDER_BOOK_SCHEMA_SUBJECT:-merged-order-book-event}"
 RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-event}"
 ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
 REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGGREGATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/aggregated_order_book_event.avsc"
+MERGED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/merged_order_book_event.avsc"
 RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
 ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
 REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
@@ -51,6 +53,7 @@ register_schema() {
 # --- Schema Registry ---
 
 register_schema "$AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$AGGREGATED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$MERGED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$MERGED_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
 register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
@@ -119,11 +122,16 @@ while IFS='|' read -r exchange_id; do
     create_topic "ex${exchange_id}-raw" "$RAW_RETENTION_MS"
 done <<< "$distinct_exchanges"
 
-# Output topics — one per pair+side (Flink aggregation writes the aggregated book here).
+# Output topics — one per pair+side. Two parallel views of the same cross-exchange book:
+#   p{id}-{side}          normalizer job 6 — levels UNIONED, each keeping its own exchange_id
+#   p{id}-{side}-merged   flink/merger     — levels SUMMED, one per price, exchange_ids as a list
+# The -merged family is created here (not in the merger project) for the same reason as every other
+# topic: its source reads from `latest`, so the topic must exist before the job starts.
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
         create_topic "p${pair_id}-${side}" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}-merged" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 

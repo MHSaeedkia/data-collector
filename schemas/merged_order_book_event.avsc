@@ -1,0 +1,84 @@
+{
+	"type": "record",
+	"name": "MergedOrderBookEvent",
+	"namespace": "io.tibobit.orderbook",
+	"doc": "Cross-exchange PRICE-MERGED order book for one pair+side. The sibling of AggregatedOrderBookEvent, not a replacement for it: that one UNIONS levels (equal prices from different exchanges stay separate, each keeping its exchange_id), this one SUMS them (one level per price, carrying the set of exchanges behind it). Both are published; consumers pick the view they want.",
+	"fields": [
+		{
+			"name": "pair_id",
+			"type": "int"
+		},
+		{
+			"name": "side",
+			"type": {
+				"type": "enum",
+				"name": "Side",
+				"symbols": ["asks", "bids"]
+			}
+		},
+		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "UUID minted by the merger for this record. Re-minted at this hop like every other id in the pipeline — it is not an end-to-end correlation id."
+		},
+		{
+			"name": "source_id",
+			"type": "string",
+			"default": "",
+			"doc": "id of the AggregatedOrderBookEvent this record was merged from. Singular and record-level, unlike the aggregated schema's per-level source_id: the merger consumes exactly one aggregated record per output record, so there is a single unambiguous parent here."
+		},
+		{
+			"name": "event_time",
+			"type": {
+				"type": "long",
+				"logicalType": "timestamp-millis"
+			},
+			"doc": "Carried verbatim from the aggregated record (which already took the max across contributing exchange books)."
+		},
+		{
+			"name": "levels",
+			"type": {
+				"type": "array",
+				"items": {
+					"type": "record",
+					"name": "MergedLevel",
+					"doc": "One price across all exchanges. quantity is the exact BigDecimal sum of every contributing level's quantity.",
+					"fields": [
+						{
+							"name": "simulation",
+							"type": "int",
+							"default": 0,
+							"doc": "0 = live, 1 = simulation. Levels are grouped by (price, simulation), NOT by price alone, so simulated liquidity is never summed into a live number. A price quoted both live and simulated therefore yields TWO levels here, live first."
+						},
+						{
+							"name": "exchange_ids",
+							"type": {
+								"type": "array",
+								"items": "int"
+							},
+							"doc": "The exchanges whose levels were summed into this one, in the aggregated record's level order (price, then quantity descending). One entry per contributing exchange — an exchange's book is price-keyed, so it can contribute at most once per price."
+						},
+						{
+							"name": "source_ids",
+							"type": {
+								"type": "array",
+								"items": "string"
+							},
+							"doc": "The ids that created this merged level: the source_id of each contributing AggregatedLevel, positionally aligned with exchange_ids. Note these name job-5 snapshots rather than the immediate parent record — the aggregated LEVEL has no id of its own to point at, so the per-level chain reaches back through job 6 by one extra hop. The record-level source_id above is the strict one-hop parent."
+						},
+						{
+							"name": "price",
+							"type": "string",
+							"doc": "Canonical decimal string (trailing zeros stripped, plain notation). Merging has to compare prices numerically, so '10.00' and '10' are one level and the output spells it one way."
+						},
+						{
+							"name": "quantity",
+							"type": "string"
+						}
+					]
+				}
+			}
+		}
+	]
+}
