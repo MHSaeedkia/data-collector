@@ -21,6 +21,11 @@ Example — BTC-USDT asks: nobitex qty 10 @ 100000, wallex qty 4 @ 100000 → ou
 `qty 14 @ 100000`; it is two adjacent entries `{exchange_id:1, qty:10, price:100000}` and
 `{exchange_id:3, qty:4, price:100000}`.
 
+**Scope of this rule (2026-08-11):** union-never-sum governs `p{pair_id}-{side}` and is unchanged.
+Summing is not forbidden platform-wide — a *separate* job, [[price-merger]], publishes the summed
+view on `p{pair_id}-{side}-merged`. Two parallel topics, consumers pick. Do not "fix" either one
+into the other.
+
 Rules:
 - Asks sorted ascending by price; bids descending (highest first).
 - Tie-break at equal price (different exchanges): larger quantity first.
