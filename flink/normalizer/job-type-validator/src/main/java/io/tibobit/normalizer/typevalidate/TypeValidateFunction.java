@@ -1,5 +1,6 @@
 package io.tibobit.normalizer.typevalidate;
 
+import io.tibobit.normalizer.model.ControlCommand;
 import io.tibobit.normalizer.model.Lineage;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
@@ -50,6 +51,10 @@ public class TypeValidateFunction
     public static final OutputTag<RejectedOrderBookEvent> REJECTED =
             new OutputTag<>("rejected") {};
 
+     /** Control-plane side output: snapshot_request commands routed to NiFi. NEW. */
+    public static final OutputTag<ControlCommand> CONTROL =
+            new OutputTag<>("control") {};
+
     static final String STALE_OR_DUPLICATE = "stale_or_duplicate";
     static final String SEQUENCE_GAP = "sequence_gap";
     static final String AWAITING_SNAPSHOT = "awaiting_snapshot";
@@ -68,6 +73,10 @@ public class TypeValidateFunction
     private transient ValueState<Boolean> baselinePending;
     private transient ValueState<Long> lastEventTime;
 
+    // NEW: guards against re-sending snapshot_request on every rejected event while we
+    // wait for the snapshot that resolves the gap/no-baseline condition.
+    private transient ValueState<Boolean> snapshotRequested;
+
     @Override
     public void open(OpenContext openContext) {
         lastSeq = getRuntimeContext().getState(
@@ -78,6 +87,8 @@ public class TypeValidateFunction
                 new ValueStateDescriptor<>("baselinePending", Boolean.class));
         lastEventTime = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastEventTime", Long.class));
+         snapshotRequested = getRuntimeContext().getState(   // NEW
+                new ValueStateDescriptor<>("snapshotRequested", Boolean.class));
     }
 
     @Override
@@ -99,6 +110,7 @@ public class TypeValidateFunction
             }
             baselinePending.update(true);
             awaitingSnapshot.update(false);
+            snapshotRequested.update(false);   // NEW: this resync satisfies any pending request
             emit(event, out);
             return;
         }
@@ -113,6 +125,7 @@ public class TypeValidateFunction
             }
             lastSeq.update(seq);
             awaitingSnapshot.update(false);
+            snapshotRequested.update(false);   // NEW: the requested snapshot has arrived
             emit(event, out);
             return;
         }
@@ -123,10 +136,12 @@ public class TypeValidateFunction
             // baseline unconditionally, then resume contiguity checks from there.
             lastSeq.update(seq);
             baselinePending.update(false);
+            snapshotRequested.update(false);   // NEW: baseline established, any request is moot
             emit(event, out);
             return;
         }
         if (last == null) {
+            requestSnapshotOnce(event, ctx);   // NEW
             reject(event, NO_BASELINE, ctx);
             return;
         }
@@ -141,9 +156,24 @@ public class TypeValidateFunction
             reject(event, STALE_OR_DUPLICATE, ctx);
         } else {
             awaitingSnapshot.update(true);
+            requestSnapshotOnce(event, ctx);   // NEW
             emitReset(event, out);
             reject(event, SEQUENCE_GAP, ctx);
         }
+    }
+
+    /**
+     * Emits a snapshot_request control command exactly once per gap/no-baseline episode — a
+     * second call before the flag is cleared is a no-op, so NiFi doesn't get flooded with
+     * duplicate requests while every subsequent update keeps rejecting on the same condition.
+     */
+    private void requestSnapshotOnce(RawOrderBookEvent event, Context ctx) throws Exception {
+        if (Boolean.TRUE.equals(snapshotRequested.value())) {
+            return;
+        }
+        snapshotRequested.update(true);
+        ctx.output(CONTROL, new ControlCommand(
+                ControlCommand.SNAPSHOT_REQUEST, event.getExchangeId(), event.getPairId()));
     }
 
     /**
