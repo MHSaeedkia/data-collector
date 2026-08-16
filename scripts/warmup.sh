@@ -79,6 +79,7 @@ RAW_RETENTION_MS=604800000    # 7 days
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
 REJECTED_RETENTION_MS=604800000  # 7 days — dead-letter is an audit point, read by hand long after the fact
+CONTROL_RETENTION_MS=3600000  # 1 hour — a stale command has no value once the gap it addressed is resolved
 
 create_topic() {
     local topic="$1"
@@ -93,6 +94,11 @@ create_topic() {
         --replication-factor 1 \
         --config "retention.ms=$retention_ms"
 }
+
+# Control plane — one shared topic, independent of which pairs are subscribed.
+# Created unconditionally (not from the `pairs` query) since NiFi needs it regardless of
+# how many markets are currently active.
+create_topic "control-plane" "$CONTROL_RETENTION_MS"
 
 # Normalizer topics — the raw pipeline's intermediate stages, one family per job output.
 # Created FIRST because every normalizer source reads from `latest`: a topic that does not exist
