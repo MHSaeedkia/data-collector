@@ -96,18 +96,16 @@ public class TypeValidatorJob {
                 // fresh snapshot.
                 DataStream<ControlCommand> controlCommands = validated.getSideOutput(TypeValidateFunction.CONTROL);
                 controlCommands.sinkTo(KafkaSink.<ControlCommand>builder()
-                                .setBootstrapServers(bootstrapServers)
-                                .setRecordSerializer(KafkaRecordSerializationSchema.<ControlCommand>builder()
-                                                .setTopic("control-plane")
-                                                // Keyed by (exchange, pair) so commands for the same target keep their
-                                                // relative order even if the topic ever gets more than one partition.
-                                                .setKeySerializationSchema(
-                                                                cmd -> (cmd.getExchangeId() + "|" + cmd.getPairId())
-                                                                                .getBytes(StandardCharsets.UTF_8))
-                                                .setValueSerializationSchema(new ControlCommandSerializer())
-                                                .build())
-                                .build())
-                                .name("control-plane-sink");
+                .setBootstrapServers(bootstrapServers)
+                .setRecordSerializer(KafkaRecordSerializationSchema.<ControlCommand>builder()
+                        .setTopic("control-plane")
+                        .setKeySerializationSchema(cmd ->
+                                (cmd.getExchangeId() + "|" + cmd.getPairId())
+                                        .getBytes(StandardCharsets.UTF_8))
+                        .setValueSerializationSchema(new ControlCommandSerializer(schemaRegistryUrl))
+                        .build())
+                .build())
+        .name("control-plane-sink");
 
                 env.execute("normalizer-type-validator");
         }

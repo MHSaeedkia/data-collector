@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "name": "ControlCommand",
+  "namespace": "io.tibobit.normalizer.avro",
+  "fields": [
+    {"name": "action", "type": "string"},
+    {"name": "exchange_id", "type": "int"},
+    {"name": "pair_id", "type": "int"},
+    {"name": "simulation_id", "type": "int"},
+    {"name": "id", "type": "string"},
+    {"name": "source_ids", "type": {"type": "array", "items": "string"}, "default": []}
+  ]
+}

@@ -1,43 +1,55 @@
 package io.tibobit.normalizer.serde;
 
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
+import io.tibobit.normalizer.avro.AvroSchemaLoader;
 import io.tibobit.normalizer.model.ControlCommand;
 
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.generic.GenericRecordBuilder;
 import org.apache.flink.api.common.serialization.SerializationSchema;
+import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroSerializationSchema;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Encodes a ControlCommand to plain JSON bytes — no Avro / Schema Registry, unlike the
- * data-plane serializers. NiFi consumes this directly with a JSON processor, so a frozen
- * Avro contract isn't needed here; the shape is fixed by convention with the NiFi side instead.
+ * Encodes a ControlCommand to Confluent-wire-format Avro bytes (schema
+ * schemas/control_command.avsc, subject control-command). The write schema is fetched from the
+ * Schema Registry at first use — never from a local/bundled copy. Same pattern as the data-plane
+ * serializers (see AggregatedOrderBookSerializer): not Serializable, so the Avro serializer and
+ * schema are built lazily on first use, after Flink ships this instance to the task.
  */
 public class ControlCommandSerializer implements SerializationSchema<ControlCommand> {
 
-    // Not guaranteed Serializable across Jackson versions — build lazily on the task, same
-    // pattern as the Avro serializers (see AggregatedOrderBookSerializer).
-    private transient ObjectMapper mapper;
+    static final String SUBJECT = "control-command";
+
+    private final String schemaRegistryUrl;
+
+    private transient SerializationSchema<GenericRecord> avroSerializer;
+    private transient Schema schema;
+
+    public ControlCommandSerializer(String schemaRegistryUrl) {
+        this.schemaRegistryUrl = schemaRegistryUrl;
+    }
 
     @Override
     public byte[] serialize(ControlCommand element) {
-        if (mapper == null) {
-            mapper = new ObjectMapper();
+        if (avroSerializer == null) {
+            schema = AvroSchemaLoader.loadLatest(schemaRegistryUrl, SUBJECT);
+            avroSerializer = ConfluentRegistryAvroSerializationSchema.forGeneric(SUBJECT, schema, schemaRegistryUrl);
         }
-        ObjectNode root = mapper.createObjectNode();
-        root.put("action", element.getAction());
-        ObjectNode payload = root.putObject("payload");
-        payload.put("pair_id", element.getPairId());
-        payload.put("exchange_id", element.getExchangeId());
-        payload.put("simulation_id", element.getSimulationId());
-        payload.put("id", element.getId());
-        payload.set("source_ids",
-        mapper.valueToTree(element.getSourceIds()));
+        return avroSerializer.serialize(toGenericRecord(element, schema));
+    }
 
-        try {
-            return mapper.writeValueAsBytes(root);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize ControlCommand", e);
-        }
+    static GenericRecord toGenericRecord(ControlCommand command, Schema schema) {
+        List<String> sourceIds = command.getSourceIds() == null ? List.of() : command.getSourceIds();
+        return new GenericRecordBuilder(schema)
+                .set("action", command.getAction())
+                .set("exchange_id", command.getExchangeId())
+                .set("pair_id", command.getPairId())
+                .set("simulation_id", command.getSimulationId())
+                .set("id", command.getId())
+                .set("source_ids", new ArrayList<>(sourceIds))
+                .build();
     }
 }
