@@ -2,6 +2,7 @@
 package consumer
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -79,6 +80,32 @@ func ReadAggregated(ctx context.Context, broker, registryURL, topic string, wait
 		sides = append(sides, side)
 	}
 	return sides, nil
+}
+
+// ReadControlCommands returns every control-plane command on topic, in the order
+// job 2 emitted them.
+//
+// This is the one reader that takes no registry URL: the control topic is plain
+// JSON rather than Confluent-framed Avro, so there is no schema id to resolve and
+// a malformed record fails here as a JSON error instead of a wire-format one.
+// The Kafka key is read as well — it is part of what job 2 writes, and nothing
+// else in the record would catch it being built from the wrong pair.
+func ReadControlCommands(ctx context.Context, broker, topic string, wait time.Duration) ([]events.ControlCommand, error) {
+	records, err := readRecords(ctx, broker, topic, wait)
+	if err != nil {
+		return nil, err
+	}
+
+	commands := make([]events.ControlCommand, 0, len(records))
+	for i, r := range records {
+		command, err := decodeControlCommand(r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		command.Key = string(r.Key)
+		commands = append(commands, command)
+	}
+	return commands, nil
 }
 
 // readRecords returns every record on topic, in offset order. The topics are
@@ -187,6 +214,31 @@ func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, 
 		ID:        wire.ID,
 		EventTime: time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
 		Levels:    wire.Levels,
+	}, nil
+}
+
+// decodeControlCommand flattens the command's nested payload into the harness's
+// view of it. Unknown fields are rejected: the shape is a convention with the
+// NiFi side rather than a registered schema, so a field quietly renamed on the
+// producing end has nothing but this to fail against.
+func decodeControlCommand(value []byte) (events.ControlCommand, error) {
+	var wire struct {
+		Action  string `json:"action"`
+		Payload struct {
+			ExchangeID int64 `json:"exchange_id"`
+			PairID     int64 `json:"pair_id"`
+		} `json:"payload"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(value))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&wire); err != nil {
+		return events.ControlCommand{}, fmt.Errorf("decode control command %q: %w", value, err)
+	}
+
+	return events.ControlCommand{
+		Action:     wire.Action,
+		ExchangeID: wire.Payload.ExchangeID,
+		PairID:     wire.Payload.PairID,
 	}, nil
 }
 
