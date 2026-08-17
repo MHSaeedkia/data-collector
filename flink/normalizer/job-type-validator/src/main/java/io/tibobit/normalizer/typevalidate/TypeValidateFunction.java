@@ -173,7 +173,7 @@ public class TypeValidateFunction
         }
         snapshotRequested.update(true);
         ctx.output(CONTROL, new ControlCommand(
-                ControlCommand.SNAPSHOT_REQUEST, event.getExchangeId(), event.getPairId()));
+                ControlCommand.SNAPSHOT_REQUEST, event.getExchangeId(), event.getPairId(),event.getSimulation(),event.getId(),event.getSourceIds()));
     }
 
     /**

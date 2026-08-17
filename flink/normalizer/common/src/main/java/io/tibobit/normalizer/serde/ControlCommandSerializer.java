@@ -29,6 +29,11 @@ public class ControlCommandSerializer implements SerializationSchema<ControlComm
         ObjectNode payload = root.putObject("payload");
         payload.put("pair_id", element.getPairId());
         payload.put("exchange_id", element.getExchangeId());
+        payload.put("simulation_id", element.getSimulationId());
+        payload.put("id", element.getId());
+        payload.set("source_ids",
+        mapper.valueToTree(element.getSourceIds()));
+
         try {
             return mapper.writeValueAsBytes(root);
         } catch (Exception e) {
