@@ -101,6 +101,31 @@ type AggregatedLevel struct {
 // Union unwrapping belongs in consumer's wire structs anyway, the way
 // event_time's epoch millis do — this package holds the harness's normalized
 // view.
+// ControlCommand is one record on the shared `control-plane` topic — job 2
+// asking NiFi to re-send a snapshot for a market whose stream it can no longer
+// trust. It is the one topic in the pipeline that is NOT Avro: plain JSON, no
+// Schema Registry, because NiFi consumes it with a JSON processor.
+//
+// The wire shape nests the ids under a payload object:
+//
+//	{"action": "snapshot_request", "payload": {"pair_id": 1, "exchange_id": 6}}
+//
+// They are flattened here the way consumer unwraps epoch millis and Avro union
+// branches elsewhere: this package holds the harness's normalized view, and a
+// two-field payload object buys a scenario nothing but an extra nesting level.
+//
+// Key is the record's Kafka key, `{exchange_id}|{pair_id}`, which job 2 sets so
+// commands for one market stay ordered if the topic is ever repartitioned. Like
+// the lineage ids it is checked structurally and then cleared before the literal
+// comparison — it is derived from the payload, so a scenario declaring it would
+// only be restating ExchangeID and PairID. swaggerignore for the same reason.
+type ControlCommand struct {
+	Action     string `json:"action"` // "snapshot_request"
+	ExchangeID int64  `json:"exchange_id"`
+	PairID     int64  `json:"pair_id"`
+	Key        string `json:"key" swaggerignore:"true"`
+}
+
 type PipelineTimings struct {
 	PairExtractIn   *int64 `json:"pair_extract_in"`
 	PairExtractOut  *int64 `json:"pair_extract_out"`
