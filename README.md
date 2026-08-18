@@ -90,6 +90,7 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ├── docker-compose.yml         # full stack; Flink cluster builds flink/normalizer
 ├── flink/
 │   ├── run-job.sh             # builds + submits any job below; run with no arg to list them
+│   ├── run-local.sh           # runs one job in-process instead — no Flink cluster at all
 │   ├── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
 │   └── merger/                # sums the aggregated book's levels per price (p{id}-{side}-merged)
 ├── nifi/
@@ -117,6 +118,12 @@ cd flink
 ./run-job.sh job-rebaser
 ./run-job.sh job-type-validator
 ./run-job.sh job-pair-extractor
+
+# Or run a single job on your own machine, with no Flink cluster and no Flink image:
+# an in-process MiniCluster, pointed at the stack's published ports. Ctrl-C stops it.
+# Cancel the cluster's copy first (../scripts/cancel-flink-jobs.sh) or both write the
+# same downstream topics.
+./run-local.sh job-rebaser
 
 cd ../web
 npm i && npm start
