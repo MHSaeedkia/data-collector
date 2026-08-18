@@ -12,6 +12,7 @@ MERGED_ORDER_BOOK_SCHEMA_SUBJECT="${MERGED_ORDER_BOOK_SCHEMA_SUBJECT:-merged-ord
 RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-event}"
 ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
 REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
+CONTROL_COMMAND_SCHEMA_SUBJECT="${CONTROL_COMMAND_SCHEMA_SUBJECT:-control-command}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGGREGATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/aggregated_order_book_event.avsc"
@@ -19,6 +20,7 @@ MERGED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/merged_order_book_event.av
 RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
 ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
 REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
+CONTROL_COMMAND_SCHEMA_FILE="$SCRIPT_DIR/../schemas/control_command.avsc"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required but not installed."; exit 1; }
@@ -57,6 +59,7 @@ register_schema "$MERGED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$MERGED_ORDER_BOOK_S
 register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
 register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$CONTROL_COMMAND_SCHEMA_SUBJECT" "AVRO" "$CONTROL_COMMAND_SCHEMA_FILE"
 
 # --- Kafka Topics ---
 
@@ -82,6 +85,7 @@ RAW_RETENTION_MS=604800000    # 7 days
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
 REJECTED_RETENTION_MS=604800000  # 7 days — dead-letter is an audit point, read by hand long after the fact
+CONTROL_RETENTION_MS=3600000  # 1 hour — a stale command has no value once the gap it addressed is resolved
 
 create_topic() {
     local topic="$1"
@@ -96,6 +100,11 @@ create_topic() {
         --replication-factor 1 \
         --config "retention.ms=$retention_ms"
 }
+
+# Control plane — one shared topic, independent of which pairs are subscribed.
+# Created unconditionally (not from the `pairs` query) since NiFi needs it regardless of
+# how many markets are currently active.
+create_topic "control-plane" "$CONTROL_RETENTION_MS"
 
 # Normalizer topics — the raw pipeline's intermediate stages, one family per job output.
 # Created FIRST because every normalizer source reads from `latest`: a topic that does not exist
