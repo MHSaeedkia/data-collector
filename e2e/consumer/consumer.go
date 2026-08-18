@@ -2,7 +2,6 @@
 package consumer
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -85,12 +84,11 @@ func ReadAggregated(ctx context.Context, broker, registryURL, topic string, wait
 // ReadControlCommands returns every control-plane command on topic, in the order
 // job 2 emitted them.
 //
-// This is the one reader that takes no registry URL: the control topic is plain
-// JSON rather than Confluent-framed Avro, so there is no schema id to resolve and
-// a malformed record fails here as a JSON error instead of a wire-format one.
 // The Kafka key is read as well — it is part of what job 2 writes, and nothing
 // else in the record would catch it being built from the wrong pair.
-func ReadControlCommands(ctx context.Context, broker, topic string, wait time.Duration) ([]events.ControlCommand, error) {
+func ReadControlCommands(ctx context.Context, registryURL, broker, topic string,
+	wait time.Duration) ([]events.ControlCommand, error) {
+
 	records, err := readRecords(ctx, broker, topic, wait)
 	if err != nil {
 		return nil, err
@@ -98,7 +96,7 @@ func ReadControlCommands(ctx context.Context, broker, topic string, wait time.Du
 
 	commands := make([]events.ControlCommand, 0, len(records))
 	for i, r := range records {
-		command, err := decodeControlCommand(r.Value)
+		command, err := decodeControlCommand(registryURL, r.Value)
 		if err != nil {
 			return nil, fmt.Errorf("record %d: %w", i, err)
 		}
@@ -217,29 +215,21 @@ func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, 
 	}, nil
 }
 
-// decodeControlCommand flattens the command's nested payload into the harness's
-// view of it. Unknown fields are rejected: the shape is a convention with the
-// NiFi side rather than a registered schema, so a field quietly renamed on the
-// producing end has nothing but this to fail against.
-func decodeControlCommand(value []byte) (events.ControlCommand, error) {
-	var wire struct {
-		Action  string `json:"action"`
-		Payload struct {
-			ExchangeID int64 `json:"exchange_id"`
-			PairID     int64 `json:"pair_id"`
-		} `json:"payload"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(value))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&wire); err != nil {
-		return events.ControlCommand{}, fmt.Errorf("decode control command %q: %w", value, err)
+// decodeControlCommand decodes one control-plane command. Confluent-framed Avro
+// on subject `control-command`, like every other topic — it was plain JSON with
+// the ids nested under a `payload` object until 2026-08-18, and the registry is
+// now what catches a field renamed on the producing side.
+func decodeControlCommand(registryURL string, value []byte) (events.ControlCommand, error) {
+	text, err := textual(registryURL, value)
+	if err != nil {
+		return events.ControlCommand{}, fmt.Errorf("decode control command: %w", err)
 	}
 
-	return events.ControlCommand{
-		Action:     wire.Action,
-		ExchangeID: wire.Payload.ExchangeID,
-		PairID:     wire.Payload.PairID,
-	}, nil
+	var command events.ControlCommand
+	if err := json.Unmarshal(text, &command); err != nil {
+		return events.ControlCommand{}, fmt.Errorf("decode control command: %w", err)
+	}
+	return command, nil
 }
 
 func decodeRejection(registryURL string, value []byte) (string, error) {

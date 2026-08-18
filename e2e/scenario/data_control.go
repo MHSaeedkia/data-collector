@@ -278,8 +278,8 @@ var ControlEx6GapResyncGap = Scenario{
 	// Four dead letters, two commands. The count is the whole point: one per
 	// episode, and the second only because a snapshot re-synced in between.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1},
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1},
+		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
@@ -559,8 +559,8 @@ var ControlEx1NoBaselineThenGap = Scenario{
 	// One for the cold start, one for the gap. The REST snapshot at 02 and the
 	// delta at 03 that adopted its offset are what let the second one be sent.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1},
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1},
+		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{

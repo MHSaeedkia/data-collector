@@ -18,13 +18,27 @@ to send a snapshot of its own. Delta-only feeds may never do that.
 
 ## Decisions
 
-**Plain JSON, not Avro.** The only topic in the platform that is not Confluent-framed. NiFi
-consumes it with a JSON processor and the payload is three fields, so a registered schema would
-buy a version bump ritual and nothing else. The cost is real and accepted: the four Avro
-subjects are enforced by the registry, this one is enforced by convention plus the e2e decoder.
-Wire shape, fixed:
+**Avro on the Schema Registry, subject `control-command`** (schema `schemas/control_command.avsc`,
+added 2026-08-18). This REVERSES the branch's original decision, which was plain JSON with the
+shape `{"action":..., "payload":{pair_id, exchange_id}}` — the one topic in the platform outside
+the registry, justified at the time by "NiFi reads it with a JSON processor and it is three
+fields". Two things changed that: lineage and `simulation` went onto the command (below), so it
+is no longer three fields, and a topic outside the registry has nothing but convention enforcing
+it. `ControlCommandSerializer` is now the same shape as the four data-plane serializers — fetch
+the write schema from the registry at first use, never a bundled copy, lazily on the task because
+the Avro serializer is not Serializable. The payload nesting is gone; the record is flat.
 
-    {"action": "snapshot_request", "payload": {"pair_id": N, "exchange_id": N}}
+**Two registration paths, and only one of them is the real one.** The e2e harness registers
+every `schemas/*.avsc` and derives the subject from the filename, so a new schema works there the
+moment the file exists. `scripts/warmup.sh` names each subject explicitly and does NOT, so a
+schema can pass the whole e2e suite while job 2 dies at the first gap for anyone who set the
+stack up from the README — which is what happened for two days after the Avro switch. **A green
+e2e run says nothing about `make warmup`.** Add the `register_schema` line too.
+
+The schema field is `simulation`, matching the other four subjects and [[simulation-flag]] — it
+shipped once as `simulation_id`, which is both inconsistent and wrong (it is a 0/1 flag, not an
+id). Worth catching before a subject has consumers, since renaming after that is an evolution
+event.
 
 **One shared topic, not one per market.** The target is in the record, so a per-pair topic
 family would multiply topics for a stream that is nearly always empty. `scripts/warmup.sh`
@@ -41,6 +55,11 @@ clears on the three branches that actually resolve the condition — a sequenced
 null-seq (ex1/ex2 REST) snapshot, and the first update that adopts a baseline after one — so the
 NEXT gap is a new episode and does ask again.
 
+**The command carries `simulation`, `id` and `source_ids`** (2026-08-18), closing what was the
+loudest gap in the review: a simulated gap used to ask for a real snapshot, and no request could
+be traced to the event that caused it. See the defect note below — the lineage is currently
+inherited from the gap event rather than derived, which is not what [[record-lineage]] means.
+
 **Triggers are `no_baseline` and `sequence_gap` only.** Not `stale_or_duplicate` (a replayed
 sequence is a duplicate, not a hole — the book is intact) and not `out_of_order` (an old
 snapshot arriving late; the newer book is already correct). Asking for a snapshot only makes
@@ -55,14 +74,25 @@ sense when the book is actually untrustworthy.
 - **Cold start is a thundering herd.** No checkpointing, so after a job restart every delta-feed
   key hits `no_baseline` on its first update and asks at once: one command per subscribed
   (exchange, pair), all within seconds. NiFi needs to expect that.
-- **`ControlCommand` carries no `simulation` flag and no `id`/`source_ids`**, unlike every
-  record on the data plane ([[simulation-flag]], [[record-lineage]]). So a simulated gap asks
-  for a real snapshot, and there is no way to trace which event caused a request. The e2e suite
-  runs entirely on `simulation: 1` sources, so a harness run against a stack wired to a live
-  NiFi would fire real snapshot requests.
 - **Name collision**: `control-plane` is already the market subscribe/unsubscribe HTTP API
   (`markets/README.md`, `BASE_URL=http://localhost:8081/control-plane`). Same words, unrelated
   thing.
+
+## Lineage on the command is DERIVED (fixed 2026-08-18)
+
+The command lands on a topic, so it mints its own id and names the update that triggered it as
+its single parent — `Lineage.newId()` / `List.of(event.getId())`, the same two lines `reject()`
+and `emitReset` already use. It briefly shipped inheriting them instead (`id = event.getId()`,
+`source_ids = event.getSourceIds()`), which is the failure `Lineage`'s own javadoc warns about:
+every field still holds a well-formed uuid, so nothing that merely checks "is it set" notices.
+What it actually cost was the trace — the command reused an id the dead-letter envelope already
+carries, and named a grandparent, so no request could be tied to the event that caused it.
+
+One gap event is therefore the parent of THREE records at once: the reset marker, the dead-letter
+record, and the command. That fan-out is expected and is not a reason to inherit.
+
+`simulation` is carried, not derived — it describes the data, not the record. A gap in simulated
+data must not make NiFi call a real exchange, and the whole e2e suite feeds `simulation: 1`.
 
 ## e2e (2026-08-17)
 
@@ -80,8 +110,18 @@ null-seq REST snapshot whose offset the next delta adopts.
 
 The Kafka key is checked structurally and then stripped before the literal comparison, the same
 shape as the lineage checks — it is derived from the payload, so a scenario declaring it would
-only restate its own ids. The decoder uses `DisallowUnknownFields`: with no registered schema,
-a field renamed on the producing side has nothing else to fail against.
+only restate its own ids. `id`/`source_ids` are stripped the same way and checked structurally
+first — the parent is a raw event the harness never reads back, so only the shape is assertable:
+a minted id, unique across the stream, exactly one parent, and the parent not equal to the
+command's own id (which is the check that would have caught the inherited-lineage bug).
+
+`simulation` IS declared and compared literally, like it is on a snapshot, and the server rejects
+a declared command that does not say 1 — every fixture in the suite feeds simulated data, so a
+command that dropped the flag would otherwise pass unnoticed.
+
+The decoder used `DisallowUnknownFields` while the topic was plain JSON, since a field renamed on
+the producing side had nothing else to fail against. The registry does that job now, so it goes
+through `textual()` like the other four and the flattening is gone.
 
 **Verified live 2026-08-17** over `-serve`, unlike most of the suite: 42 PASS (8 snapshots / 4
 rejections / 2 commands), 43 PASS (5 / 3 / 2), and `30-ex6-snapshot-then-deltas` re-run as the
@@ -89,3 +129,13 @@ negative control read 0 commands. So the counts are real, not a vacuous match, a
 normalizer half of the feature does what it claims — one request per episode, re-armed by a
 resync, silence on a healthy feed. What is still unverified is everything past the topic: no
 NiFi flow consumes it.
+
+**Re-verified live 2026-08-18** on a stack rebuilt from scratch (`docker compose up --build` +
+`scripts/warmup.sh` + all six jobs), after the Avro switch and the four fixes: identical counts —
+42 = 8/4/2, 43 = 5/3/2, 30 = 3/0/0. Identical is the point: the encoding changed, the episode
+rule did not.
+
+The topic was also read directly rather than only through the assertions, since a defaulted field
+and a carried one both compare equal to zero when the fixture happens to be zero. The two commands
+from run 42 carried `simulation: 1`, two distinct minted ids, and one distinct parent each — so
+the values are really on the wire, not defaults the harness agreed with.

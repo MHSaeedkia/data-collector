@@ -410,7 +410,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 	// The cold delta is also what makes job 2 ask NiFi for a snapshot: it has no
 	// baseline, and only a snapshot can give it one.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1},
+		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
@@ -748,7 +748,7 @@ var Ex1SequenceGap = Scenario{
 	// One command for the episode, not one per rejected event: the second update
 	// rejects on the same unresolved gap, and job 2 does not re-ask.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1},
+		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{

@@ -176,14 +176,18 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
-	commands, err := consumer.ReadControlCommands(ctx, cfg.KafkaBroker, topics.ControlTopic, controlWait)
+	commands, err := consumer.ReadControlCommands(ctx, cfg.SchemaRegistryURL, cfg.KafkaBroker,
+		topics.ControlTopic, controlWait)
 	if err != nil {
 		return err
 	}
 	if err := checkControlKeys(topics.ControlTopic, commands); err != nil {
 		return err
 	}
-	stripControlKeys(commands)
+	if err := checkControlLineage(topics.ControlTopic, commands); err != nil {
+		return err
+	}
+	stripControlLineage(commands)
 	if err := compare(topics.ControlTopic, commands, s.wantControlCommands()); err != nil {
 		return err
 	}
@@ -219,9 +223,50 @@ func checkControlKeys(topic string, commands []events.ControlCommand) error {
 	return nil
 }
 
-func stripControlKeys(commands []events.ControlCommand) {
+// checkControlLineage checks each command's own lineage. A command is a write to
+// a topic, so it mints an id of its own and names the update that triggered it as
+// its parent — inheriting the triggering event's pair instead looks identical
+// field-by-field but reuses an id the dead-letter record already carries, and
+// points one hop too far back to say which event caused the request.
+//
+// Only the shape is assertable: the parent is a raw event, which the harness
+// never reads back, so there is no id here to match it against.
+func checkControlLineage(topic string, commands []events.ControlCommand) error {
+	seen := map[string]int{}
+	for i, command := range commands {
+		if err := validID(command.ID); err != nil {
+			return fmt.Errorf("%s record %d: id: %w", topic, i, err)
+		}
+		if first, dup := seen[command.ID]; dup {
+			return fmt.Errorf("%s record %d: id %s already used by record %d",
+				topic, i, command.ID, first)
+		}
+		seen[command.ID] = i
+
+		if len(command.SourceIDs) != 1 {
+			return fmt.Errorf("%s record %d: source_ids has %d entries, want exactly 1 — "+
+				"a command has one parent, the update that hit no_baseline or sequence_gap",
+				topic, i, len(command.SourceIDs))
+		}
+		if err := validID(command.SourceIDs[0]); err != nil {
+			return fmt.Errorf("%s record %d: source_ids[0]: %w", topic, i, err)
+		}
+		if command.SourceIDs[0] == command.ID {
+			return fmt.Errorf("%s record %d: source_ids[0] is the command's own id %s — "+
+				"lineage is derived, not inherited", topic, i, command.ID)
+		}
+	}
+	return nil
+}
+
+// stripControlLineage clears the derived fields so what remains compares
+// literally against what a scenario declared: the ids are minted per run, and
+// the key only restates the ids the scenario already spells out.
+func stripControlLineage(commands []events.ControlCommand) {
 	for i := range commands {
 		commands[i].Key = ""
+		commands[i].ID = ""
+		commands[i].SourceIDs = nil
 	}
 }
 

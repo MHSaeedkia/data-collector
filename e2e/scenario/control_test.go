@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -67,10 +68,69 @@ func TestScenarioControlCommandsNameTheirOwnMarket(t *testing.T) {
 				t.Errorf("%s: want_control_commands[%d] names exchange %d pair %d, scenario feeds exchange %d pair %d",
 					sc.Name, i, command.ExchangeID, command.PairID, sc.S.ExchangeID, sc.S.PairID)
 			}
-			if command.Key != "" {
-				t.Errorf("%s: want_control_commands[%d] declares a key; keys are checked structurally, then stripped",
+			if command.Simulation != 1 {
+				t.Errorf("%s: want_control_commands[%d] simulation = %d, want 1 — every fixture in the suite feeds simulated data, and a command that lost the flag would have NiFi call a real exchange",
+					sc.Name, i, command.Simulation)
+			}
+			if command.Key != "" || command.ID != "" || command.SourceIDs != nil {
+				t.Errorf("%s: want_control_commands[%d] declares a key or lineage; both are checked structurally, then stripped",
 					sc.Name, i)
 			}
 		}
+	}
+}
+
+// The lineage check is the only thing that would notice a command built by
+// copying the triggering event's id across instead of minting one — every field
+// still holds a well-formed uuid either way, and the literal comparison never
+// sees them because they are stripped first.
+func TestCheckControlLineage(t *testing.T) {
+	const own = "11111111-1111-4111-8111-111111111111"
+	const parent = "22222222-2222-4222-8222-222222222222"
+
+	ok := []events.ControlCommand{{ID: own, SourceIDs: []string{parent}}}
+	if err := checkControlLineage("control-plane", ok); err != nil {
+		t.Fatalf("well-formed lineage rejected: %v", err)
+	}
+
+	// The mistake this exists for: the command carrying the triggering event's
+	// id as its own, which is what the producer did before 2026-08-18.
+	inherited := []events.ControlCommand{{ID: parent, SourceIDs: []string{parent}}}
+	if err := checkControlLineage("control-plane", inherited); err == nil {
+		t.Error("a command that inherited its parent's id was accepted")
+	}
+
+	for name, commands := range map[string][]events.ControlCommand{
+		"no id":             {{SourceIDs: []string{parent}}},
+		"no parent":         {{ID: own}},
+		"two parents":       {{ID: own, SourceIDs: []string{parent, own}}},
+		"parent not a uuid": {{ID: own, SourceIDs: []string{"job1-gap"}}},
+		"id reused across records": {
+			{ID: own, SourceIDs: []string{parent}},
+			{ID: own, SourceIDs: []string{parent}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := checkControlLineage("control-plane", commands); err == nil {
+				t.Errorf("%s was accepted", name)
+			}
+		})
+	}
+}
+
+// Stripping has to clear all three derived fields, or a scenario would have to
+// declare a uuid it cannot know.
+func TestStripControlLineage(t *testing.T) {
+	commands := []events.ControlCommand{{
+		Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1,
+		Key: "6|1", ID: "an-id", SourceIDs: []string{"a-parent"},
+	}}
+	stripControlLineage(commands)
+
+	want := events.ControlCommand{
+		Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1,
+	}
+	if !reflect.DeepEqual(commands[0], want) {
+		t.Errorf("stripped = %+v, want %+v", commands[0], want)
 	}
 }

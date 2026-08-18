@@ -10,7 +10,6 @@ import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroSerializationSchema;
 
 import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Encodes a ControlCommand to Confluent-wire-format Avro bytes (schema
@@ -42,14 +41,13 @@ public class ControlCommandSerializer implements SerializationSchema<ControlComm
     }
 
     static GenericRecord toGenericRecord(ControlCommand command, Schema schema) {
-        List<String> sourceIds = command.getSourceIds() == null ? List.of() : command.getSourceIds();
         return new GenericRecordBuilder(schema)
                 .set("action", command.getAction())
                 .set("exchange_id", command.getExchangeId())
                 .set("pair_id", command.getPairId())
-                .set("simulation_id", command.getSimulationId())
+                .set("simulation", command.getSimulation())
                 .set("id", command.getId())
-                .set("source_ids", new ArrayList<>(sourceIds))
+                .set("source_ids", new ArrayList<>(command.getSourceIds()))
                 .build();
     }
 }

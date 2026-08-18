@@ -460,6 +460,44 @@ class TypeValidateFunctionTest {
         });
     }
 
+    /**
+     * The command is a write to a topic, so its lineage is DERIVED like the reset
+     * marker's and the dead-letter's — not inherited from the gap event. Inheriting
+     * looks fine (both fields hold well-formed values) but reuses an id that is
+     * already carried inside the dead-letter envelope, and points one hop too far
+     * back, so the request cannot be traced to the event that caused it.
+     */
+    @Test
+    @DisplayName("control-plane: a snapshot_request derives its lineage from the triggering event")
+    void snapshotRequestHasItsOwnLineage() throws Exception {
+        send(from(delta(6, 1, "snapshot", 10L, 1L), "job1-base"));
+        send(from(delta(6, 1, "update", 20L, 1L), "job1-gap")); // gap -> request
+
+        assertThat(controlCommands()).singleElement().satisfies(cmd -> {
+            assertThat(cmd.getSourceIds()).containsExactly("job1-gap");
+            assertThat(cmd.getId()).isNotBlank().isNotEqualTo("job1-gap");
+        });
+    }
+
+    /**
+     * Without this, a gap in simulated data would ask NiFi for a real snapshot from
+     * a real exchange — and the e2e suite feeds nothing but {@code simulation: 1}.
+     */
+    @Test
+    @DisplayName("control-plane: a snapshot_request carries the gap event's simulation flag")
+    void snapshotRequestCarriesSimulationFlag() throws Exception {
+        RawOrderBookEvent seed = delta(6, 1, "snapshot", 10L, 1L);
+        seed.setSimulation(1);
+        send(seed);
+
+        RawOrderBookEvent gap = delta(6, 1, "update", 15L, 1L); // gap -> request
+        gap.setSimulation(1);
+        send(gap);
+
+        assertThat(controlCommands()).singleElement()
+                .extracting(ControlCommand::getSimulation).isEqualTo(1);
+    }
+
     @Test
     @DisplayName("control-plane: repeated rejects for the same unresolved gap request only ONE snapshot")
     void repeatedGapRejectsRequestSnapshotOnce() throws Exception {

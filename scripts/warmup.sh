@@ -11,12 +11,14 @@ AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT="${AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT:-ag
 RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-event}"
 ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
 REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
+CONTROL_COMMAND_SCHEMA_SUBJECT="${CONTROL_COMMAND_SCHEMA_SUBJECT:-control-command}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGGREGATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/aggregated_order_book_event.avsc"
 RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
 ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
 REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
+CONTROL_COMMAND_SCHEMA_FILE="$SCRIPT_DIR/../schemas/control_command.avsc"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required but not installed."; exit 1; }
@@ -54,6 +56,7 @@ register_schema "$AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$AGGREGATED_ORDE
 register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
 register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$CONTROL_COMMAND_SCHEMA_SUBJECT" "AVRO" "$CONTROL_COMMAND_SCHEMA_FILE"
 
 # --- Kafka Topics ---
 

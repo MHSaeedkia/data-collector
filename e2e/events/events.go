@@ -103,27 +103,35 @@ type AggregatedLevel struct {
 // view.
 // ControlCommand is one record on the shared `control-plane` topic — job 2
 // asking NiFi to re-send a snapshot for a market whose stream it can no longer
-// trust. It is the one topic in the pipeline that is NOT Avro: plain JSON, no
-// Schema Registry, because NiFi consumes it with a JSON processor.
+// trust. Avro on subject `control-command`, like every other topic; it was plain
+// JSON with the ids nested under a `payload` object until 2026-08-18, so a
+// scenario written before then that still nests them is reading a dead shape.
 //
-// The wire shape nests the ids under a payload object:
+// Simulation is declared and compared literally, exactly as it is on a snapshot:
+// the flag is carried from the event whose gap triggered the request, and a
+// command that lost it would have NiFi call a real exchange on the strength of
+// simulated data. Every scenario in the suite feeds `simulation: 1`, so that is
+// what a declared command says.
 //
-//	{"action": "snapshot_request", "payload": {"pair_id": 1, "exchange_id": 6}}
-//
-// They are flattened here the way consumer unwraps epoch millis and Avro union
-// branches elsewhere: this package holds the harness's normalized view, and a
-// two-field payload object buys a scenario nothing but an extra nesting level.
+// ID and SourceIDs are the usual lineage pair, minted at run time and therefore
+// never declared — checked structurally and then cleared before the literal
+// comparison, the way OrderbookSnapshot's are. SourceIDs names the one update
+// that hit `no_baseline` or `sequence_gap`; the harness can only check its shape,
+// since the id belongs to a raw event the harness never reads back.
 //
 // Key is the record's Kafka key, `{exchange_id}|{pair_id}`, which job 2 sets so
-// commands for one market stay ordered if the topic is ever repartitioned. Like
-// the lineage ids it is checked structurally and then cleared before the literal
-// comparison — it is derived from the payload, so a scenario declaring it would
-// only be restating ExchangeID and PairID. swaggerignore for the same reason.
+// commands for one market stay ordered if the topic is ever repartitioned. It is
+// checked structurally and cleared for the same reason — it is derived from the
+// ids, so a scenario declaring it would only be restating ExchangeID and PairID.
 type ControlCommand struct {
 	Action     string `json:"action"` // "snapshot_request"
 	ExchangeID int64  `json:"exchange_id"`
 	PairID     int64  `json:"pair_id"`
-	Key        string `json:"key" swaggerignore:"true"`
+	Simulation int64  `json:"simulation"`
+
+	ID        string   `json:"id" swaggerignore:"true"`
+	SourceIDs []string `json:"source_ids" swaggerignore:"true"`
+	Key       string   `json:"key" swaggerignore:"true"`
 }
 
 type PipelineTimings struct {

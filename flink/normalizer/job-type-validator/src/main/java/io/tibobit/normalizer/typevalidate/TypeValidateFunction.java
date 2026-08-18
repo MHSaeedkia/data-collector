@@ -205,13 +205,18 @@ public class TypeValidateFunction
             return;
         }
         snapshotRequested.update(true);
+        // Lineage is DERIVED, not inherited — same rule as emitReset and reject below. This is a
+        // write to a topic, so it mints its own id and names the event that triggered it as its
+        // parent; inheriting would duplicate the raw event's id (which is already carried inside
+        // the dead-letter envelope) and point one hop too far back. simulation IS carried: a gap
+        // in simulated data must not make NiFi call a real exchange.
         ctx.output(CONTROL, new ControlCommand(
-                ControlCommand.SNAPSHOT_REQUEST, 
-                event.getExchangeId(), 
-                event.getPairId(), 
+                ControlCommand.SNAPSHOT_REQUEST,
+                event.getExchangeId(),
+                event.getPairId(),
                 event.getSimulation(),
-                event.getId(), 
-                event.getSourceIds()));
+                Lineage.newId(),
+                List.of(event.getId())));
     }
 
     /**

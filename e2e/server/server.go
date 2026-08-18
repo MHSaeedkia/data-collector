@@ -126,7 +126,7 @@ func specJSON() string {
 //	@Summary		Run one scenario
 //	@Description	Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected, control-plane and aggregated topics back and compares them to the `want_*` streams.
 //	@Description
-//	@Description	`want_control_commands` is the control plane: the `snapshot_request` commands job 2 put on the shared `control-plane` topic asking NiFi to re-send a book it can no longer trust. Omitting it asserts that NONE were sent, which is what a healthy feed must produce — it is not a skip. One command is sent per EPISODE, not per rejected event: job 2 asks once when the stream first goes untrustworthy (`no_baseline` or `sequence_gap`) and stays silent until a snapshot re-syncs the book, so three updates held as `awaiting_snapshot` still expect exactly one command.
+//	@Description	`want_control_commands` is the control plane: the `snapshot_request` commands job 2 put on the shared `control-plane` topic asking NiFi to re-send a book it can no longer trust. Omitting it asserts that NONE were sent, which is what a healthy feed must produce — it is not a skip. Declare `action`, `exchange_id`, `pair_id` and `simulation` (always 1 here — the flag is carried from the event whose gap triggered the request, so a real exchange is never called on the strength of simulated data). The command's `id`/`source_ids` and its Kafka key are derived per run and checked structurally, so they are never declared. One command is sent per EPISODE, not per rejected event: job 2 asks once when the stream first goes untrustworthy (`no_baseline` or `sequence_gap`) and stays silent until a snapshot re-syncs the book, so three updates held as `awaiting_snapshot` still expect exactly one command.
 //	@Description
 //	@Description	Job 6 is always asserted: `want_aggregated` is the book the pair's `p{pair_id}-asks` / `p{pair_id}-bids` topics must END on, and every level carries the `exchange_id` it came from because the aggregator unions across exchanges instead of summing them. Only the final record on each side is read, not the whole stream. Omitting `want_aggregated` does NOT skip the check — the expectation is then derived from the last `want_snapshots` entry with the scenario's exchange stamped on every level, which is exact only because a scenario feeds ONE exchange. Send it explicitly to say what you mean.
 //	@Description
@@ -222,6 +222,13 @@ func validate(s scenario.Scenario) error {
 		if command.ExchangeID != s.ExchangeID || command.PairID != s.PairID {
 			return fmt.Errorf("want_control_commands[%d]: names exchange %d pair %d, but the scenario feeds exchange %d pair %d",
 				i, command.ExchangeID, command.PairID, s.ExchangeID, s.PairID)
+		}
+		// simulation is carried from the event that triggered the request, so a
+		// declared command has to match the flag the sources carry — otherwise the
+		// run fails minutes later on a one-field diff.
+		if command.Simulation != 1 {
+			return fmt.Errorf("want_control_commands[%d]: simulation is %d; the harness feeds simulated data, so a command it triggers carries 1",
+				i, command.Simulation)
 		}
 	}
 	return nil

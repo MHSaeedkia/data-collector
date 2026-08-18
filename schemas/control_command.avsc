@@ -1,13 +1,41 @@
 {
-  "type": "record",
-  "name": "ControlCommand",
-  "namespace": "io.tibobit.normalizer.avro",
-  "fields": [
-    {"name": "action", "type": "string"},
-    {"name": "exchange_id", "type": "int"},
-    {"name": "pair_id", "type": "int"},
-    {"name": "simulation_id", "type": "int"},
-    {"name": "id", "type": "string"},
-    {"name": "source_ids", "type": {"type": "array", "items": "string"}, "default": []}
-  ]
+	"type": "record",
+	"name": "ControlCommand",
+	"namespace": "io.tibobit.normalizer.avro",
+	"doc": "A control-plane command from job 2 back to the collector, on the shared `control-plane` topic. The only record that travels against the data flow: everything else moves NiFi -> jobs -> web, this moves job -> NiFi.",
+	"fields": [
+		{
+			"name": "action",
+			"type": "string",
+			"doc": "What NiFi is being asked to do. Only `snapshot_request` exists today: re-send a full snapshot for this market, because job 2 can no longer trust the book it is building."
+		},
+		{
+			"name": "exchange_id",
+			"type": "int",
+			"doc": "The market to re-snapshot, together with pair_id. Also half of the Kafka key, `{exchange_id}|{pair_id}`."
+		},
+		{
+			"name": "pair_id",
+			"type": "int",
+			"doc": "The market to re-snapshot, together with exchange_id."
+		},
+		{
+			"name": "simulation",
+			"type": "int",
+			"default": 0,
+			"doc": "Carried from the event whose gap triggered the request. 0 = live, 1 = simulation. A request raised by simulated data must not make NiFi call a real exchange."
+		},
+		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "UUID minted for this command — a write to a topic, so it gets an id of its own like every other emitted record."
+		},
+		{
+			"name": "source_ids",
+			"type": { "type": "array", "items": "string" },
+			"default": [],
+			"doc": "The id of the event that triggered the request — the update that hit `no_baseline` or `sequence_gap`. Immediate parent only. That one event is simultaneously the parent of the dead-letter record and of the synthetic reset marker."
+		}
+	]
 }
