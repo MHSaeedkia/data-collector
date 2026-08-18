@@ -1,5 +1,6 @@
 package io.tibobit.normalizer.typevalidate;
 
+import io.tibobit.normalizer.model.ControlCommand;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -19,9 +20,12 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests {@link TypeValidateFunction} against its documented sequence rules, driven through Flink's
- * {@link KeyedOneInputStreamOperatorTestHarness} keyed exactly as the job — {@code (exchange_id,
- * pair_id)} — so real keyed ValueState and the {@code open(OpenContext)} lifecycle run, not a mock.
+ * Tests {@link TypeValidateFunction} against its documented sequence rules,
+ * driven through Flink's
+ * {@link KeyedOneInputStreamOperatorTestHarness} keyed exactly as the job —
+ * {@code (exchange_id,
+ * pair_id)} — so real keyed ValueState and the {@code open(OpenContext)}
+ * lifecycle run, not a mock.
  */
 class TypeValidateFunctionTest {
 
@@ -29,10 +33,9 @@ class TypeValidateFunctionTest {
 
     @BeforeEach
     void openHarness() throws Exception {
-        KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator =
-                new KeyedProcessOperator<>(new TypeValidateFunction());
-        KeySelector<RawOrderBookEvent, String> byKey =
-                e -> e.getExchangeId() + "|" + e.getPairId();
+        KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator = new KeyedProcessOperator<>(
+                new TypeValidateFunction());
+        KeySelector<RawOrderBookEvent, String> byKey = e -> e.getExchangeId() + "|" + e.getPairId();
         harness = new KeyedOneInputStreamOperatorTestHarness<>(
                 operator, byKey, TypeInformation.of(String.class));
         harness.open();
@@ -54,14 +57,17 @@ class TypeValidateFunctionTest {
     }
 
     /**
-     * Null-seq snapshot (ex3 wallex / ex1 nobitex REST) with an explicit event time — the field the
+     * Null-seq snapshot (ex3 wallex / ex1 nobitex REST) with an explicit event time
+     * — the field the
      * out-of-order guard orders these by, since they carry no sequence id.
      */
     private static RawOrderBookEvent nullSeqSnapshot(int ex, int pair, long eventTime) {
         return new RawOrderBookEvent(ex, pair, "snapshot", null, 0L, eventTime, List.of(), List.of());
     }
 
-    /** Delta-feed message (snapshot or update) with a nonzero jump (ex6=1, ex8=300). */
+    /**
+     * Delta-feed message (snapshot or update) with a nonzero jump (ex6=1, ex8=300).
+     */
     private static RawOrderBookEvent delta(int ex, int pair, String type, long seq, long jump) {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
     }
@@ -74,7 +80,10 @@ class TypeValidateFunctionTest {
         return harness.extractOutputValues();
     }
 
-    /** Main-output events excluding the synthetic reset markers a gap now emits (Part A). */
+    /**
+     * Main-output events excluding the synthetic reset markers a gap now emits
+     * (Part A).
+     */
     private List<RawOrderBookEvent> validBusiness() {
         return valid().stream()
                 .filter(e -> !TypeValidateFunction.RESET.equals(e.getType()))
@@ -82,8 +91,14 @@ class TypeValidateFunctionTest {
     }
 
     private List<RejectedOrderBookEvent> rejects() {
-        ConcurrentLinkedQueue<StreamRecord<RejectedOrderBookEvent>> q =
-                harness.getSideOutput(TypeValidateFunction.REJECTED);
+        ConcurrentLinkedQueue<StreamRecord<RejectedOrderBookEvent>> q = harness
+                .getSideOutput(TypeValidateFunction.REJECTED);
+        return q == null ? List.of()
+                : q.stream().map(StreamRecord::getValue).collect(Collectors.toList());
+    }
+
+    private List<ControlCommand> controlCommands() {
+        ConcurrentLinkedQueue<StreamRecord<ControlCommand>> q = harness.getSideOutput(TypeValidateFunction.CONTROL);
         return q == null ? List.of()
                 : q.stream().map(StreamRecord::getValue).collect(Collectors.toList());
     }
@@ -112,7 +127,7 @@ class TypeValidateFunctionTest {
     void staleSnapshotRejected() throws Exception {
         send(snapshotFeed(1, 1, 100L));
         send(snapshotFeed(1, 1, 100L)); // duplicate
-        send(snapshotFeed(1, 1, 99L));  // out of order
+        send(snapshotFeed(1, 1, 99L)); // out of order
         assertThat(valid()).hasSize(1);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
@@ -176,7 +191,7 @@ class TypeValidateFunctionTest {
         send(delta(6, 1, "snapshot", 10L, 1L));
         send(delta(6, 1, "update", 11L, 1L));
         send(delta(6, 1, "update", 11L, 1L)); // duplicate
-        send(delta(6, 1, "update", 8L, 1L));  // older
+        send(delta(6, 1, "update", 8L, 1L)); // older
         assertThat(valid()).hasSize(2);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
@@ -187,11 +202,11 @@ class TypeValidateFunctionTest {
     @DisplayName("delta feed: a gap rejects sequence_gap then holds every update as awaiting_snapshot until a snapshot re-syncs")
     void gapThenAwaitingSnapshotUntilResync() throws Exception {
         send(delta(6, 1, "snapshot", 10L, 1L));
-        send(delta(6, 1, "update", 11L, 1L));   // ok
-        send(delta(6, 1, "update", 15L, 1L));   // gap (expected 12) -> sequence_gap
-        send(delta(6, 1, "update", 16L, 1L));   // still awaiting -> awaiting_snapshot
+        send(delta(6, 1, "update", 11L, 1L)); // ok
+        send(delta(6, 1, "update", 15L, 1L)); // gap (expected 12) -> sequence_gap
+        send(delta(6, 1, "update", 16L, 1L)); // still awaiting -> awaiting_snapshot
         send(delta(6, 1, "snapshot", 20L, 1L)); // re-sync -> accepted, clears awaiting
-        send(delta(6, 1, "update", 21L, 1L));   // contiguous again -> ok
+        send(delta(6, 1, "update", 21L, 1L)); // contiguous again -> ok
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(10L, 11L, 20L, 21L);
@@ -222,13 +237,15 @@ class TypeValidateFunctionTest {
         assertThat(reset.getEventTime()).isEqualTo(15L); // event_time from the gap event
         assertThat(reset.getPipelineTimings().getTypeValidateOut()).isNotNull();
 
-        // the offending update is still dead-lettered; the held update is a plain awaiting reject
+        // the offending update is still dead-lettered; the held update is a plain
+        // awaiting reject
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
                         TypeValidateFunction.AWAITING_SNAPSHOT);
     }
 
-    // ---- simulation flag ---------------------------------------------------------
+    // ---- simulation flag
+    // ---------------------------------------------------------
 
     @Test
     @DisplayName("a passed-through event keeps its simulation flag")
@@ -253,7 +270,8 @@ class TypeValidateFunctionTest {
         gap.setSimulation(1);
         send(gap);
 
-        // The marker is built fresh rather than forwarded, so without this the reset that empties a
+        // The marker is built fresh rather than forwarded, so without this the reset
+        // that empties a
         // simulated exchange's book would come out flagged as live data.
         RawOrderBookEvent reset = valid().stream()
                 .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
@@ -262,12 +280,13 @@ class TypeValidateFunctionTest {
         assertThat(reset.getSimulation()).isEqualTo(1);
     }
 
-    // ---- ex1 nobitex: null-seq REST snapshot resyncs the WS delta stream ---------
+    // ---- ex1 nobitex: null-seq REST snapshot resyncs the WS delta stream
+    // ---------
 
     @Test
     @DisplayName("ex1: the first update after a null-seq REST snapshot adopts its offset as the baseline, then gaps are enforced")
     void restSnapshotResyncsThenGapChecks() throws Exception {
-        send(nullSeqSnapshot(1, 1, 499L));      // REST snapshot: no offset, flags a resync
+        send(nullSeqSnapshot(1, 1, 499L)); // REST snapshot: no offset, flags a resync
         send(delta(1, 1, "update", 500L, 1L)); // first WS delta -> adopts 500 as baseline
         send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok
         send(delta(1, 1, "update", 505L, 1L)); // gap (expected 502) -> sequence_gap
@@ -281,11 +300,11 @@ class TypeValidateFunctionTest {
     @Test
     @DisplayName("ex1: a later REST snapshot re-anchors the baseline unconditionally, recovering from awaiting_snapshot")
     void laterRestSnapshotReanchors() throws Exception {
-        send(nullSeqSnapshot(1, 1, 499L));      // resync
+        send(nullSeqSnapshot(1, 1, 499L)); // resync
         send(delta(1, 1, "update", 500L, 1L)); // baseline 500
         send(delta(1, 1, "update", 505L, 1L)); // gap -> sequence_gap, awaiting
         send(delta(1, 1, "update", 506L, 1L)); // still awaiting -> awaiting_snapshot
-        send(nullSeqSnapshot(1, 1, 899L));      // REST re-snapshot (newer) -> clears awaiting, flags resync
+        send(nullSeqSnapshot(1, 1, 899L)); // REST re-snapshot (newer) -> clears awaiting, flags resync
         send(delta(1, 1, "update", 900L, 1L)); // adopts 900 unconditionally
         send(delta(1, 1, "update", 901L, 1L)); // contiguous -> ok
 
@@ -308,10 +327,10 @@ class TypeValidateFunctionTest {
     @Test
     @DisplayName("ex1: an OLD REST snapshot replayed after newer WS deltas is rejected out_of_order and does NOT re-arm the resync")
     void staleRestSnapshotAfterUpdatesRejected() throws Exception {
-        send(nullSeqSnapshot(1, 1, 499L));      // resync, event time 499
+        send(nullSeqSnapshot(1, 1, 499L)); // resync, event time 499
         send(delta(1, 1, "update", 500L, 1L)); // adopts 500 as baseline (event time 500)
         send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok (event time 501)
-        send(nullSeqSnapshot(1, 1, 499L));      // OLD snapshot replayed: 499 < 501 -> out_of_order
+        send(nullSeqSnapshot(1, 1, 499L)); // OLD snapshot replayed: 499 < 501 -> out_of_order
         send(delta(1, 1, "update", 600L, 1L)); // if the stale snapshot had wrongly re-armed the
                                                // resync this would be ADOPTED; instead it is a gap
 
@@ -341,7 +360,7 @@ class TypeValidateFunctionTest {
     @DisplayName("timings: valid events get type_validate_in and _out; rejects get _in only")
     void timingsStamped() throws Exception {
         send(snapshotFeed(1, 1, 100L)); // valid
-        send(snapshotFeed(1, 1, 99L));  // rejected
+        send(snapshotFeed(1, 1, 99L)); // rejected
 
         RawOrderBookEvent ok = valid().get(0);
         assertThat(ok.getPipelineTimings().getTypeValidateIn()).isNotNull();
@@ -371,8 +390,10 @@ class TypeValidateFunctionTest {
     }
 
     /**
-     * The dead-letter record is a record of its own, so it gets its own id and names the rejected
-     * event as its parent. The nested event keeps the id it came in with — it is being reported on,
+     * The dead-letter record is a record of its own, so it gets its own id and
+     * names the rejected
+     * event as its parent. The nested event keeps the id it came in with — it is
+     * being reported on,
      * not forwarded, and that id is the link back to the raw stream.
      */
     @Test
@@ -388,8 +409,10 @@ class TypeValidateFunctionTest {
     }
 
     /**
-     * On a gap the one event produces TWO records — a reset marker on the main stream and a
-     * dead-letter record — and both name it as their parent while carrying distinct ids of their
+     * On a gap the one event produces TWO records — a reset marker on the main
+     * stream and a
+     * dead-letter record — and both name it as their parent while carrying distinct
+     * ids of their
      * own. A fan-out of lineage, not a fan-in.
      */
     @Test
@@ -407,5 +430,124 @@ class TypeValidateFunctionTest {
         assertThat(reset.getSourceIds()).containsExactly("job1-gap");
         assertThat(rejection.getSourceIds()).containsExactly("job1-gap");
         assertThat(reset.getId()).isNotBlank().isNotEqualTo(rejection.getId());
+    }
+
+    // ---- control-plane: snapshot_request commands
+    // --------------------------------
+
+    @Test
+    @DisplayName("control-plane: an update with no baseline requests a snapshot for its (exchange, pair)")
+    void noBaselineRequestsSnapshot() throws Exception {
+        send(delta(6, 1, "update", 5L, 1L));
+
+        assertThat(controlCommands()).singleElement().satisfies(cmd -> {
+            assertThat(cmd.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+            assertThat(cmd.getExchangeId()).isEqualTo(6);
+            assertThat(cmd.getPairId()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    @DisplayName("control-plane: a sequence gap requests a snapshot for its (exchange, pair)")
+    void sequenceGapRequestsSnapshot() throws Exception {
+        send(delta(6, 1, "snapshot", 10L, 1L));
+        send(delta(6, 1, "update", 15L, 1L)); // gap
+
+        assertThat(controlCommands()).singleElement().satisfies(cmd -> {
+            assertThat(cmd.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+            assertThat(cmd.getExchangeId()).isEqualTo(6);
+            assertThat(cmd.getPairId()).isEqualTo(1);
+        });
+    }
+
+    /**
+     * The command is a write to a topic, so its lineage is DERIVED like the reset
+     * marker's and the dead-letter's — not inherited from the gap event. Inheriting
+     * looks fine (both fields hold well-formed values) but reuses an id that is
+     * already carried inside the dead-letter envelope, and points one hop too far
+     * back, so the request cannot be traced to the event that caused it.
+     */
+    @Test
+    @DisplayName("control-plane: a snapshot_request derives its lineage from the triggering event")
+    void snapshotRequestHasItsOwnLineage() throws Exception {
+        send(from(delta(6, 1, "snapshot", 10L, 1L), "job1-base"));
+        send(from(delta(6, 1, "update", 20L, 1L), "job1-gap")); // gap -> request
+
+        assertThat(controlCommands()).singleElement().satisfies(cmd -> {
+            assertThat(cmd.getSourceIds()).containsExactly("job1-gap");
+            assertThat(cmd.getId()).isNotBlank().isNotEqualTo("job1-gap");
+        });
+    }
+
+    /**
+     * Without this, a gap in simulated data would ask NiFi for a real snapshot from
+     * a real exchange — and the e2e suite feeds nothing but {@code simulation: 1}.
+     */
+    @Test
+    @DisplayName("control-plane: a snapshot_request carries the gap event's simulation flag")
+    void snapshotRequestCarriesSimulationFlag() throws Exception {
+        RawOrderBookEvent seed = delta(6, 1, "snapshot", 10L, 1L);
+        seed.setSimulation(1);
+        send(seed);
+
+        RawOrderBookEvent gap = delta(6, 1, "update", 15L, 1L); // gap -> request
+        gap.setSimulation(1);
+        send(gap);
+
+        assertThat(controlCommands()).singleElement()
+                .extracting(ControlCommand::getSimulation).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("control-plane: repeated rejects for the same unresolved gap request only ONE snapshot")
+    void repeatedGapRejectsRequestSnapshotOnce() throws Exception {
+        send(delta(6, 1, "snapshot", 10L, 1L));
+        send(delta(6, 1, "update", 15L, 1L)); // gap -> request #1
+        send(delta(6, 1, "update", 16L, 1L)); // still awaiting -> no second request
+        send(delta(6, 1, "update", 17L, 1L)); // still awaiting -> no third request
+
+        assertThat(controlCommands()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("control-plane: repeated updates with no baseline request only ONE snapshot")
+    void repeatedNoBaselineRequestsSnapshotOnce() throws Exception {
+        send(delta(6, 1, "update", 5L, 1L)); // no baseline -> request #1
+        send(delta(6, 1, "update", 6L, 1L)); // still no baseline -> no second request
+
+        assertThat(controlCommands()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("control-plane: after a snapshot resolves a gap, a NEW gap requests a snapshot again")
+    void newGapAfterResyncRequestsSnapshotAgain() throws Exception {
+        send(delta(6, 1, "snapshot", 10L, 1L));
+        send(delta(6, 1, "update", 15L, 1L)); // gap -> request #1
+        send(delta(6, 1, "snapshot", 20L, 1L)); // resync -> clears the "already requested" flag
+        send(delta(6, 1, "update", 25L, 1L)); // a fresh gap -> request #2
+
+        assertThat(controlCommands()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("control-plane: a null-seq snapshot resolving a no-baseline condition clears the request flag too")
+    void nullSeqBaselineClearsRequestFlag() throws Exception {
+        send(delta(1, 1, "update", 500L, 1L)); // no baseline (ex1 before its REST snapshot) -> request #1
+        send(nullSeqSnapshot(1, 1, 499L)); // REST snapshot arrives, flags a resync
+        send(delta(1, 1, "update", 900L, 1L)); // adopts baseline unconditionally, clears request flag
+        send(delta(1, 1, "update", 950L, 1L)); // a fresh gap -> request #2
+
+        assertThat(controlCommands()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("control-plane: state is per (exchange_id, pair_id) — a request for one key doesn't affect another")
+    void controlRequestsIsolatedPerKey() throws Exception {
+        send(delta(6, 1, "update", 5L, 1L)); // no baseline on ex6/p1 -> request
+        send(delta(6, 2, "update", 5L, 1L)); // no baseline on ex6/p2 -> separate request
+
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).extracting(ControlCommand::getPairId)
+                .containsExactlyInAnyOrder(1, 2);
     }
 }

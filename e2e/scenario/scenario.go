@@ -16,6 +16,7 @@ import (
 	"orderbook-e2e/events"
 	"orderbook-e2e/producer"
 	"orderbook-e2e/schemaregistry"
+	"orderbook-e2e/topics"
 	"orderbook-e2e/warmup"
 )
 
@@ -30,6 +31,10 @@ const (
 	// behind the book builder, so its output is already written by the time the
 	// snapshot topic has settled.
 	aggregateWait = 10 * time.Second
+	// controlWait is short for the same reason as rejectWait: a control command
+	// is written by job 2, upstream of the book builder, so anything the run was
+	// going to request is already on the topic once the snapshots have settled.
+	controlWait = 10 * time.Second
 )
 
 // Scenario is one run: which pipeline to feed, the exchange payloads to put on
@@ -56,6 +61,20 @@ type Scenario struct {
 	// per snapshot, so asserting the whole stream would restate WantSnapshots
 	// twice over.
 	WantAggregated *AggregatedBook `json:"want_aggregated"`
+
+	// WantControlCommands is every snapshot_request job 2 must have put on the
+	// shared `control-plane` topic, in order — the control plane's half of a gap,
+	// where WantRejects is the data plane's.
+	//
+	// Empty is a real expectation, not a skip: a scenario that leaves this out
+	// asserts that the pipeline asked NiFi for NOTHING, which is what makes a
+	// spurious request on a healthy feed a failure rather than something nobody
+	// looks at. A command is expected once per episode, not once per rejected
+	// event — job 2 sends one when the stream first goes untrustworthy
+	// (`no_baseline` or `sequence_gap`) and does not send another until a
+	// snapshot has re-synced the book, so a run holding three updates as
+	// `awaiting_snapshot` still wants exactly one command.
+	WantControlCommands []events.ControlCommand `json:"want_control_commands"`
 
 	// IgnoreEventTime blanks EventTime on both sides before comparing. Only ex3
 	// wallex needs it: its wire carries no timestamp at all, so job 1 stamps
@@ -157,9 +176,98 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 
-	slog.Debug("matched", "snapshots", len(snapshots), "rejections", len(rejects))
+	commands, err := consumer.ReadControlCommands(ctx, cfg.SchemaRegistryURL, cfg.KafkaBroker,
+		topics.ControlTopic, controlWait)
+	if err != nil {
+		return err
+	}
+	if err := checkControlKeys(topics.ControlTopic, commands); err != nil {
+		return err
+	}
+	if err := checkControlLineage(topics.ControlTopic, commands); err != nil {
+		return err
+	}
+	stripControlLineage(commands)
+	if err := compare(topics.ControlTopic, commands, s.wantControlCommands()); err != nil {
+		return err
+	}
+
+	slog.Debug("matched", "snapshots", len(snapshots), "rejections", len(rejects),
+		"control_commands", len(commands))
 
 	return s.verifyAggregated(ctx, cfg, withLineage)
+}
+
+// wantControlCommands normalizes a nil WantControlCommands to an empty stream,
+// so "no commands declared" compares as "no commands wanted" rather than
+// skipping the topic.
+func (s Scenario) wantControlCommands() []events.ControlCommand {
+	if s.WantControlCommands == nil {
+		return []events.ControlCommand{}
+	}
+	return s.WantControlCommands
+}
+
+// checkControlKeys checks each command's Kafka key against its own payload. Job
+// 2 keys the record `{exchange_id}|{pair_id}` so a market's commands stay
+// ordered if the topic is ever repartitioned; a key built from the wrong ids
+// would still deliver, just to the wrong partition, and nothing in the record
+// body would show it. Derived, so it is checked here rather than declared.
+func checkControlKeys(topic string, commands []events.ControlCommand) error {
+	for i, command := range commands {
+		want := fmt.Sprintf("%d|%d", command.ExchangeID, command.PairID)
+		if command.Key != want {
+			return fmt.Errorf("%s record %d: key %q, want %q", topic, i, command.Key, want)
+		}
+	}
+	return nil
+}
+
+// checkControlLineage checks each command's own lineage. A command is a write to
+// a topic, so it mints an id of its own and names the update that triggered it as
+// its parent — inheriting the triggering event's pair instead looks identical
+// field-by-field but reuses an id the dead-letter record already carries, and
+// points one hop too far back to say which event caused the request.
+//
+// Only the shape is assertable: the parent is a raw event, which the harness
+// never reads back, so there is no id here to match it against.
+func checkControlLineage(topic string, commands []events.ControlCommand) error {
+	seen := map[string]int{}
+	for i, command := range commands {
+		if err := validID(command.ID); err != nil {
+			return fmt.Errorf("%s record %d: id: %w", topic, i, err)
+		}
+		if first, dup := seen[command.ID]; dup {
+			return fmt.Errorf("%s record %d: id %s already used by record %d",
+				topic, i, command.ID, first)
+		}
+		seen[command.ID] = i
+
+		if len(command.SourceIDs) != 1 {
+			return fmt.Errorf("%s record %d: source_ids has %d entries, want exactly 1 — "+
+				"a command has one parent, the update that hit no_baseline or sequence_gap",
+				topic, i, len(command.SourceIDs))
+		}
+		if err := validID(command.SourceIDs[0]); err != nil {
+			return fmt.Errorf("%s record %d: source_ids[0]: %w", topic, i, err)
+		}
+		if command.SourceIDs[0] == command.ID {
+			return fmt.Errorf("%s record %d: source_ids[0] is the command's own id %s — "+
+				"lineage is derived, not inherited", topic, i, command.ID)
+		}
+	}
+	return nil
+}
+
+// stripControlLineage clears the derived fields so what remains compares
+// literally against what a scenario declared: the ids are minted per run, and
+// the key only restates the ids the scenario already spells out.
+func stripControlLineage(commands []events.ControlCommand) {
+	for i := range commands {
+		commands[i].Key = ""
+		commands[i].ID = ""
+		commands[i].SourceIDs = nil
+	}
 }
 
 // verifyAggregated checks the last record on each of the pair's two aggregated

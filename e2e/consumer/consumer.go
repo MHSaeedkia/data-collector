@@ -81,6 +81,31 @@ func ReadAggregated(ctx context.Context, broker, registryURL, topic string, wait
 	return sides, nil
 }
 
+// ReadControlCommands returns every control-plane command on topic, in the order
+// job 2 emitted them.
+//
+// The Kafka key is read as well — it is part of what job 2 writes, and nothing
+// else in the record would catch it being built from the wrong pair.
+func ReadControlCommands(ctx context.Context, registryURL, broker, topic string,
+	wait time.Duration) ([]events.ControlCommand, error) {
+
+	records, err := readRecords(ctx, broker, topic, wait)
+	if err != nil {
+		return nil, err
+	}
+
+	commands := make([]events.ControlCommand, 0, len(records))
+	for i, r := range records {
+		command, err := decodeControlCommand(registryURL, r.Value)
+		if err != nil {
+			return nil, fmt.Errorf("record %d: %w", i, err)
+		}
+		command.Key = string(r.Key)
+		commands = append(commands, command)
+	}
+	return commands, nil
+}
+
 // readRecords returns every record on topic, in offset order. The topics are
 // recreated empty by the warmup, so reading from the start reads only this run's
 // records. It waits up to wait for the first one — the pipeline has six jobs to
@@ -188,6 +213,23 @@ func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, 
 		EventTime: time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
 		Levels:    wire.Levels,
 	}, nil
+}
+
+// decodeControlCommand decodes one control-plane command. Confluent-framed Avro
+// on subject `control-command`, like every other topic — it was plain JSON with
+// the ids nested under a `payload` object until 2026-08-18, and the registry is
+// now what catches a field renamed on the producing side.
+func decodeControlCommand(registryURL string, value []byte) (events.ControlCommand, error) {
+	text, err := textual(registryURL, value)
+	if err != nil {
+		return events.ControlCommand{}, fmt.Errorf("decode control command: %w", err)
+	}
+
+	var command events.ControlCommand
+	if err := json.Unmarshal(text, &command); err != nil {
+		return events.ControlCommand{}, fmt.Errorf("decode control command: %w", err)
+	}
+	return command, nil
 }
 
 func decodeRejection(registryURL string, value []byte) (string, error) {
