@@ -66,6 +66,82 @@ sequence is a duplicate, not a hole — the book is intact) and not `out_of_orde
 snapshot arriving late; the newer book is already correct). Asking for a snapshot only makes
 sense when the book is actually untrustworthy.
 
+## The resync deadlock — a rejected snapshot silenced the key forever (fixed 2026-08-19)
+
+**Symptom the user reported: "when we have a gap it does not get a snapshot, and sometimes no
+command is sent at all."** Both halves had one cause.
+
+The gap branch sets `awaitingSnapshot` and `snapshotRequested` together, and **neither ordering
+guard cleared them on rejection** — both `reject(...); return;` before touching state. So if the
+snapshot that came back to resolve the episode was rejected, the key wedged:
+
+- every later update returned at the `awaitingSnapshot` reject;
+- `requestSnapshotOnce` is gated *only* on `snapshotRequested`, still true → **no further command,
+  ever**;
+- worst of all, `lastEventTime` is written in exactly ONE place, inside `emit()`. A rejected event
+  never reaches `emit()`, so the comparison the null-seq guard uses **can never advance** — every
+  subsequent REST snapshot failed the identical stale check. Self-reinforcing: the guard that
+  rejected the resync was the guard that could never afterwards be satisfied.
+
+The market stayed dark until the job restarted, and no alert fired because everything looked
+"normal" — a dead-letter topic filling with `awaiting_snapshot` is what a *working* held stream
+looks like too.
+
+**Why ex1/ex2 hit it hardest:** their resync snapshot is the null-seq REST one, whose `event_time`
+comes from a different clock than the WS Centrifugo deltas that set `lastEventTime` (the same
+field that already carries two different wire *types* within ex2 — see [[pair-extractor]]). Any
+skew where REST trails the newest delta trips it. ex6/ex8 hit the same wall via `seq <= lastSeq`.
+
+**Fix — the guards are suspended while a request is outstanding.** `resyncOutstanding()` returns
+`snapshotRequested`, and both guards are `!resyncOutstanding() && <old condition>`. Rationale: the
+guards exist to stop an OLD snapshot overwriting a GOOD book, and while a request is outstanding
+there is no good book — the gap already emitted a `RESET` that emptied it downstream. **Accepting
+a stale resync snapshot is strictly better than deadlocking**: an old book beats no book, and the
+next update either re-anchors the baseline or gaps again and asks again. Gating on
+`snapshotRequested` rather than `awaitingSnapshot` is deliberate — it also covers the `no_baseline`
+episode, where a request is outstanding but `awaitingSnapshot` was never set.
+
+**A "clear the flag on rejection" backstop was considered and deliberately NOT written.** Every
+path that clears `awaitingSnapshot` also clears `snapshotRequested`, so once the exemption is in,
+a snapshot can only be rejected when no request is outstanding — the clear would be provably
+unreachable. Dead code, so it was dropped.
+
+3 regression tests, each verified to FAIL with the fix neutralised (the 31 pre-existing tests all
+passed against the bug — they only ever covered a snapshot that was ACCEPTED, never one rejected
+while a request was outstanding, which is exactly the hole).
+
+## The retry timer — "the snapshot never came" (added 2026-08-19)
+
+The exemption above fixes *the snapshot came back and was thrown away*. It does nothing for **the
+snapshot that never came**, which is the commoner case today because nothing consumes
+`control-plane` at all. One command per episode + an episode that only ends on an ACCEPTED
+snapshot = a market that stays dark until the job restarts.
+
+**Where the suppression actually happens is NOT where it looks.** `requestSnapshotOnce` opens with
+an `if (snapshotRequested) return;`, and the obvious reading is that this is what stops a second
+gap from asking. It isn't: a second gap never reaches that call, because the `awaitingSnapshot`
+check ten lines earlier rejects the update and returns first (verified — the second gap comes back
+labelled `awaiting_snapshot`, not `sequence_gap`). **In the gap path that inner guard is dead
+weight; it only earns its keep on the `no_baseline` path**, where `lastSeq == null` persists and
+every update really does reach the call. Worth knowing before anyone "fixes" the wrong guard.
+
+`onTimer` re-emits while `snapshotRequested` is still set, every `SNAPSHOT_RETRY_MS` (env,
+default 5 min), unbounded. Notes:
+
+- **No state tracks or cancels timers.** A timer left over from a resolved episode finds
+  `snapshotRequested == false` and no-ops. Cancelling would need a `ValueState<Long>` and a
+  delete on all three resolution branches, to save one wasted callback per episode.
+- **`onTimer` is handed no event**, so `pendingSimulation` / `pendingSourceId` carry what the
+  command needs, and exchange/pair come from parsing the key. That parse couples the function to
+  `ExchangePairKey`'s `{exchange_id}|{pair_id}` format — pinned by
+  `retryCommandTargetsTheSameMarket` so changing the key selector fails a test rather than
+  silently requesting snapshots for the wrong market.
+- **Each retry mints its own id but keeps the ORIGINAL gap event as its parent.** The timer is the
+  trigger; that event is still the cause.
+
+4 tests, 2 verified to fail with the timer neutralised (the other 2 are negative controls: a
+resolved episode and a healthy market must never retry).
+
 ## Open, NOT resolved here
 
 - **The NiFi side does not exist in this repo** (`nifi/` is a Dockerfile). Nothing consumes

@@ -120,6 +120,15 @@ resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extrac
 never emit a reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
 verified live yet.**
 
+## The ordering guards are suspended during a resync (2026-08-19)
+
+`out_of_order` (null-seq) and `stale_or_duplicate` (sequenced) both now sit behind
+`!resyncOutstanding()`. They only protect a book that is worth protecting, and once a gap has
+emitted its `RESET` there isn't one. Leaving them armed deadlocked the key permanently — the full
+mechanism, and why `lastEventTime` made it unrecoverable, is in [[project_control_plane]]. **If you
+ever tighten these guards again, the invariant to preserve is: a key with an outstanding
+`snapshot_request` must always have SOME path back to an accepted snapshot.**
+
 ## Gotchas (all cost real debugging time 2026-07-15)
 
 - **`rejected-order-book-event` registry subject was STALE (v1, no `pipeline_timings`)** → the

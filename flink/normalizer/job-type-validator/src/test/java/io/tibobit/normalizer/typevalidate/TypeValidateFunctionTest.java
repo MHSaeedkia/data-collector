@@ -550,4 +550,140 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands()).extracting(ControlCommand::getPairId)
                 .containsExactlyInAnyOrder(1, 2);
     }
+
+    // ---- control-plane: escaping a stuck resync (regression, 2026-08-19) -------
+
+    @Test
+    @DisplayName("control-plane: a resync snapshot older than the last delta is ACCEPTED, not deadlocked (ex1/ex2)")
+    void resyncSnapshotWithLaggingClockIsAccepted() throws Exception {
+        // ex1 shape: REST snapshot seeds the resync, first WS delta adopts the baseline.
+        send(nullSeqSnapshot(1, 1, 1_000L));
+        send(delta(1, 1, "update", 10L, 1L));   // adopts baseline, lastEventTime = 10
+        send(delta(1, 1, "update", 11L, 1L));   // contiguous, lastEventTime = 11
+        send(delta(1, 1, "update", 99L, 1L));   // GAP -> one command, book emptied by the reset
+        assertThat(controlCommands()).hasSize(1);
+
+        // NiFi answers with a REST snapshot whose event_time trails the last accepted delta —
+        // different clock, not an old book. Before the fix this rejected out_of_order, and since
+        // lastEventTime only advances in emit() the key could never recover or re-ask.
+        send(nullSeqSnapshot(1, 1, 5L));
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+
+        // and the resync really resolved: the next gap opens a NEW episode and asks again.
+        send(delta(1, 1, "update", 200L, 1L));  // adopts the fresh baseline
+        send(delta(1, 1, "update", 500L, 1L));  // GAP #2
+        assertThat(controlCommands()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("control-plane: a resync snapshot at or below lastSeq is ACCEPTED, not deadlocked (ex6/ex8)")
+    void resyncSnapshotWithStaleSequenceIsAccepted() throws Exception {
+        send(delta(6, 1, "snapshot", 100L, 1L));
+        send(delta(6, 1, "update", 101L, 1L));
+        send(delta(6, 1, "update", 500L, 1L));  // GAP
+        assertThat(controlCommands()).hasSize(1);
+
+        // The requested snapshot comes back with an ordering value behind the pre-gap baseline.
+        // There is no good book to protect — the reset already emptied it — so take it.
+        send(delta(6, 1, "snapshot", 50L, 1L));
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+
+        send(delta(6, 1, "update", 51L, 1L));   // contiguous on the new baseline
+        assertThat(validBusiness()).hasSize(4); // snapshot, update, resync snapshot, update
+    }
+
+    @Test
+    @DisplayName("control-plane: the ordering guards still reject when NO request is outstanding")
+    void guardsStillApplyWithoutAnOutstandingRequest() throws Exception {
+        // Same two rejections as before the exemption — it must only suspend the guards while a
+        // snapshot has actually been asked for, never in steady state.
+        send(nullSeqSnapshot(1, 1, 1_000L));
+        send(nullSeqSnapshot(1, 1, 900L));      // older REST replay -> still out_of_order
+        send(delta(6, 1, "snapshot", 100L, 1L));
+        send(delta(6, 1, "snapshot", 100L, 1L)); // duplicate -> still stale_or_duplicate
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.OUT_OF_ORDER,
+                        TypeValidateFunction.STALE_OR_DUPLICATE);
+        assertThat(controlCommands()).isEmpty();
+    }
+
+    // ---- control-plane: retrying a request nothing answered (2026-08-19) --------
+
+    /** Reopens the harness with a short retry interval so timers can be driven by hand. */
+    private void withRetryInterval(long ms) throws Exception {
+        harness.close();
+        KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator =
+                new KeyedProcessOperator<>(new TypeValidateFunction(ms));
+        KeySelector<RawOrderBookEvent, String> byKey = e -> e.getExchangeId() + "|" + e.getPairId();
+        harness = new KeyedOneInputStreamOperatorTestHarness<>(
+                operator, byKey, TypeInformation.of(String.class));
+        harness.open();
+        harness.setProcessingTime(0L);
+    }
+
+    @Test
+    @DisplayName("control-plane: an unanswered request is re-asked on the retry interval")
+    void unansweredRequestIsRetried() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 1300L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP — nothing will answer it
+        assertThat(controlCommands()).hasSize(1);
+
+        harness.setProcessingTime(60_000L);
+        assertThat(controlCommands()).hasSize(2);
+        harness.setProcessingTime(120_000L);
+        assertThat(controlCommands()).hasSize(3);
+
+        // every retry is its own record but names the same triggering update as its parent
+        assertThat(controlCommands()).extracting(ControlCommand::getId).doesNotHaveDuplicates();
+        assertThat(controlCommands()).extracting(ControlCommand::getSourceIds)
+                .containsOnly(controlCommands().get(0).getSourceIds());
+    }
+
+    @Test
+    @DisplayName("control-plane: retrying stops once a snapshot resolves the episode")
+    void retryStopsAfterResolution() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP
+        assertThat(controlCommands()).hasSize(1);
+
+        send(delta(8, 1, "snapshot", 99300L, 300L)); // the answer arrives
+        harness.setProcessingTime(600_000L);        // long past several retry deadlines
+        assertThat(controlCommands()).hasSize(1);   // the leftover timer is a no-op
+    }
+
+    @Test
+    @DisplayName("control-plane: a retry targets the same market and carries its simulation flag")
+    void retryCommandTargetsTheSameMarket() throws Exception {
+        withRetryInterval(60_000L);
+        RawOrderBookEvent snapshot = delta(6, 4, "snapshot", 10L, 1L);
+        snapshot.setSimulation(1);
+        RawOrderBookEvent gap = delta(6, 4, "update", 900L, 1L);
+        gap.setSimulation(1);
+        send(snapshot);
+        send(gap);
+        harness.setProcessingTime(60_000L);
+
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).allSatisfy(c -> {
+            assertThat(c.getExchangeId()).isEqualTo(6);
+            assertThat(c.getPairId()).isEqualTo(4);
+            assertThat(c.getSimulation()).isEqualTo(1);
+            assertThat(c.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+        });
+    }
+
+    @Test
+    @DisplayName("control-plane: a healthy market never registers a retry")
+    void healthyMarketNeverRetries() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 1300L, 300L));
+        harness.setProcessingTime(600_000L);
+        assertThat(controlCommands()).isEmpty();
+    }
 }
