@@ -20,7 +20,15 @@ const (
 	rawRetentionMS      = "604800000" // 7 days
 	outputRetentionMS   = "21600000"  // 6 hours
 	rejectedRetentionMS = "604800000" // 7 days — dead-letter is an audit point, read by hand long after the fact
+	controlRetentionMS  = "3600000"   // 1 hour — a stale command has no value once the gap it addressed is resolved
 )
+
+// ControlTopic is the shared control-plane topic job 2 writes snapshot requests
+// to. Unlike every other topic here it is not per exchange or per pair: one
+// topic carries the commands for every market, and the target is in the record.
+// The harness still recreates it per run, so what a scenario reads back is its
+// own commands and not the previous scenario's.
+const ControlTopic = "control-plane"
 
 // normalizerStages are the raw pipeline's intermediate stages, one per job output.
 var normalizerStages = []string{
@@ -125,13 +133,18 @@ func waitGone(ctx context.Context, adm *kadm.Client, names []string) error {
 func plan(exchangeID, pairID int64) []topic {
 	prefix := fmt.Sprintf("ex%d-p%d", exchangeID, pairID)
 
-	plan := make([]topic, 0, len(normalizerStages)+4)
+	plan := make([]topic, 0, len(normalizerStages)+5)
 	for _, stage := range normalizerStages {
 		plan = append(plan, topic{prefix + "-" + stage, inputRetentionMS})
 	}
 	return append(plan,
 		// Shared dead-letter for jobs 2 and 3.
 		topic{prefix + "-rejected-flink", rejectedRetentionMS},
+		// Control plane — job 2's snapshot requests to NiFi. Shared across every
+		// market rather than per pair, and created here rather than left to the
+		// broker's auto-create so it carries warmup.sh's retention and so the
+		// previous run's commands are gone before this one starts.
+		topic{ControlTopic, controlRetentionMS},
 		// Raw topic for the exchange (NiFi publishes verbatim exchange payloads here).
 		topic{fmt.Sprintf("ex%d-raw", exchangeID), rawRetentionMS},
 		// Output topics, one per side (Flink aggregation writes the aggregated book here).

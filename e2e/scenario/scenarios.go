@@ -61,4 +61,9 @@ var Scenarios = []struct {
 	{"39-ex8-stale-duplicate", Ex8StaleDuplicate},
 	{"40-ex8-precision-dust", Ex8PrecisionDust},
 	{"41-ex8-noise-frames", Ex8NoiseFrames},
+
+	// Control plane — the snapshot requests job 2 sends NiFi. Grouped by feature
+	// rather than by exchange; see data_control.go.
+	{"42-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
+	{"43-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
 }

@@ -11,7 +11,7 @@
     "paths": {
         "/scenarios/run": {
             "post": {
-                "description": "Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected and aggregated topics back and compares them to the `want_*` streams.\n\nJob 6 is always asserted: `want_aggregated` is the book the pair's `p{pair_id}-asks` / `p{pair_id}-bids` topics must END on, and every level carries the `exchange_id` it came from because the aggregator unions across exchanges instead of summing them. Only the final record on each side is read, not the whole stream. Omitting `want_aggregated` does NOT skip the check — the expectation is then derived from the last `want_snapshots` entry with the scenario's exchange stamped on every level, which is exact only because a scenario feeds ONE exchange. Send it explicitly to say what you mean.\n\nA scenario that does not match is **200 with `\"status\":\"failed\"`**, not a 5xx: the run itself worked, the pipeline disagreed. A non-200 always means the scenario never ran.\n\nRuns are serialized — each one cancels the Flink jobs and recreates the exchange's topics, so a request arriving while another is in flight gets 409 instead of being queued. Expect a successful call to take minutes.\n\n\"Try it out\" is prefilled with the real `ex1-precision-dust` case — a nobitex REST snapshot plus a WS delta on ex1/pair 1, where two bid prices merge once truncated to the market's 2 places and a dust quantity truncates to zero and deletes its level. Send it as-is and it should come back `\"status\":\"ok\"`.",
+                "description": "Warms the pipeline up for the scenario's exchange/pair, produces every `sources` entry to `ex{exchange_id}-raw`, then reads the snapshot, rejected, control-plane and aggregated topics back and compares them to the `want_*` streams.\n\n`want_control_commands` is the control plane: the `snapshot_request` commands job 2 put on the shared `control-plane` topic asking NiFi to re-send a book it can no longer trust. Omitting it asserts that NONE were sent, which is what a healthy feed must produce — it is not a skip. Declare `action`, `exchange_id`, `pair_id` and `simulation` (always 1 here — the flag is carried from the event whose gap triggered the request, so a real exchange is never called on the strength of simulated data). The command's `id`/`source_ids` and its Kafka key are derived per run and checked structurally, so they are never declared. One command is sent per EPISODE, not per rejected event: job 2 asks once when the stream first goes untrustworthy (`no_baseline` or `sequence_gap`) and stays silent until a snapshot re-syncs the book, so three updates held as `awaiting_snapshot` still expect exactly one command.\n\nJob 6 is always asserted: `want_aggregated` is the book the pair's `p{pair_id}-asks` / `p{pair_id}-bids` topics must END on, and every level carries the `exchange_id` it came from because the aggregator unions across exchanges instead of summing them. Only the final record on each side is read, not the whole stream. Omitting `want_aggregated` does NOT skip the check — the expectation is then derived from the last `want_snapshots` entry with the scenario's exchange stamped on every level, which is exact only because a scenario feeds ONE exchange. Send it explicitly to say what you mean.\n\nA scenario that does not match is **200 with `\"status\":\"failed\"`**, not a 5xx: the run itself worked, the pipeline disagreed. A non-200 always means the scenario never ran.\n\nRuns are serialized — each one cancels the Flink jobs and recreates the exchange's topics, so a request arriving while another is in flight gets 409 instead of being queued. Expect a successful call to take minutes.\n\n\"Try it out\" is prefilled with the real `ex1-precision-dust` case — a nobitex REST snapshot plus a WS delta on ex1/pair 1, where two bid prices merge once truncated to the market's 2 places and a dust quantity truncates to zero and deletes its level. Send it as-is and it should come back `\"status\":\"ok\"`.",
                 "consumes": [
                     "application/json"
                 ],
@@ -68,6 +68,24 @@
                 },
                 "quantity": {
                     "type": "string"
+                },
+                "simulation": {
+                    "type": "integer"
+                }
+            }
+        },
+        "events.ControlCommand": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "\"snapshot_request\"",
+                    "type": "string"
+                },
+                "exchange_id": {
+                    "type": "integer"
+                },
+                "pair_id": {
+                    "type": "integer"
                 },
                 "simulation": {
                     "type": "integer"
@@ -165,6 +183,13 @@
                             "$ref": "#/definitions/scenario.AggregatedBook"
                         }
                     ]
+                },
+                "want_control_commands": {
+                    "description": "WantControlCommands is every snapshot_request job 2 must have put on the\nshared `control-plane` topic, in order — the control plane's half of a gap,\nwhere WantRejects is the data plane's.\n\nEmpty is a real expectation, not a skip: a scenario that leaves this out\nasserts that the pipeline asked NiFi for NOTHING, which is what makes a\nspurious request on a healthy feed a failure rather than something nobody\nlooks at. A command is expected once per episode, not once per rejected\nevent — job 2 sends one when the stream first goes untrustworthy\n(`no_baseline` or `sequence_gap`) and does not send another until a\nsnapshot has re-synced the book, so a run holding three updates as\n`awaiting_snapshot` still wants exactly one command.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/events.ControlCommand"
+                    }
                 },
                 "want_rejects": {
                     "description": "reject_reason of each dead-letter, e.g. \"sequence_gap\"",

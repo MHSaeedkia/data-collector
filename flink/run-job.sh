@@ -5,55 +5,15 @@ set -euo pipefail
 # Usage: ./run-job.sh <job>     e.g. ./run-job.sh job-aggregator
 #                               e.g. ./run-job.sh merger
 #
-# A "job" is any Maven project/module whose pom declares a shade <mainClass>; that is also what
-# makes the jar submittable, so the same check both discovers jobs and rejects non-jobs
-# (normalizer's `common` is a module but not a job). The jar's manifest Main-Class is the entry
-# point, so there is no per-job class mapping here.
-#
-# Layout it understands, without a hardcoded table:
-#   flink/merger/pom.xml                    single-module project  -> job "merger"
-#   flink/normalizer/pom.xml (packaging pom) aggregator            -> jobs are its <module>s
+# Which jobs exist and where they live is job-discovery.sh's business. The jar's manifest
+# Main-Class is the entry point, so there is no per-job class mapping here either.
 #
 # All projects deploy to the same cluster and the same image (flink/normalizer/Dockerfile).
+# To run a job in-process instead, with no cluster at all, see run-local.sh.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/job-discovery.sh"
+
 FLINK_API="${FLINK_API:-http://localhost:7070}"
-
-is_job() { [[ -f "$1/pom.xml" ]] && grep -q '<mainClass>' "$1/pom.xml"; }
-
-# Prints "<project-dir> <module-or-empty>" for a job name, nothing if unknown.
-resolve_job() {
-    local want="$1" project
-    # Guard: empty would make "$project/$want" collapse back to the project itself.
-    [[ -n "$want" ]] || return
-    for project in "$SCRIPT_DIR"/*/; do
-        project="${project%/}"
-        [[ -f "$project/pom.xml" ]] || continue
-        if [[ "$(basename "$project")" == "$want" ]] && is_job "$project"; then
-            echo "$project "
-            return
-        fi
-        if is_job "$project/$want"; then
-            echo "$project $want"
-            return
-        fi
-    done
-}
-
-list_jobs() {
-    local project module
-    for project in "$SCRIPT_DIR"/*/; do
-        project="${project%/}"
-        [[ -f "$project/pom.xml" ]] || continue
-        if is_job "$project"; then
-            echo "  $(basename "$project")"
-            continue
-        fi
-        for module in "$project"/*/; do
-            is_job "${module%/}" && echo "  $(basename "${module%/}")"
-        done
-    done
-}
 
 JOB="${1:-}"
 read -r PROJECT MODULE <<< "$(resolve_job "$JOB")"

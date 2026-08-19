@@ -11,7 +11,7 @@ services:
         command: jobmanager
         ports:
             - "7070:8081"
-            - "9249:9249" 
+            - "9249:9249"
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
@@ -134,6 +134,12 @@ services:
             KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_URL: http://schema-registry:8082
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: aggregated-order-book-event
+            KAFKA_CLUSTERS_0_SERDE_1_NAME: ControlCommandAvro
+            KAFKA_CLUSTERS_0_SERDE_1_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
+            KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^control-plane$
+            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_URL: http://schema-registry:8082
+            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_SCHEMANAMETEMPLATE: control-command
+
         networks:
             - data-collector-net
 
