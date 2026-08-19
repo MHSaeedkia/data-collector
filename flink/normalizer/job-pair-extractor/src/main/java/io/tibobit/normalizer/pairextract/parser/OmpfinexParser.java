@@ -63,6 +63,7 @@ public class OmpfinexParser implements RawExchangeParser {
                 Levels.fromStringPairs(data.get("asks")),
                 Levels.fromStringPairs(data.get("bids")));
         event.setSimulation(Json.simulation(root));
+        event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));
     }
 
@@ -84,6 +85,7 @@ public class OmpfinexParser implements RawExchangeParser {
                 Levels.fromStringPairs(data.get("a")),
                 Levels.fromStringPairs(data.get("b")));
         event.setSimulation(Json.simulation(root));
+        event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));
     }
 }
