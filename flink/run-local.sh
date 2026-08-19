@@ -21,6 +21,9 @@ set -euo pipefail
 #     whatever the upstream produced in the gap — the downstream-first rule from the root Makefile
 #     still applies when you run several by hand.
 #   - MiniCluster state is in-memory only: Ctrl-C loses the keyed state of the stateful jobs.
+#
+# Debugging: prefer the "flink: <job>" launch configs in .vscode/launch.json (F5, no script). This
+# script also takes DEBUG=1 (port 5005, DEBUG_PORT to change) for the "attach to run-local.sh" config.
 
 source "$(dirname "${BASH_SOURCE[0]}")/job-discovery.sh"
 
@@ -62,6 +65,17 @@ if ! grep -q 'flink-clients' "$CP_FILE"; then
     exit 1
 fi
 
+# Java debugging: DEBUG=1 (or DEBUG_PORT=5006) makes the JVM wait for a debugger before main()
+# runs. Prefer the "flink: <job>" F5 configs in .vscode/launch.json; this is the fallback for
+# debugging the script's own Maven-resolved classpath. The flags go on THIS java call only:
+# JAVA_TOOL_OPTIONS would also be inherited by the mvn build above, which then hangs on suspend=y.
+DEBUG_OPTS=""
+if [[ -n "${DEBUG:-}${DEBUG_PORT:-}" ]]; then
+    DEBUG_PORT="${DEBUG_PORT:-5005}"
+    DEBUG_OPTS="-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:$DEBUG_PORT"
+    echo "==> Debug: JVM will pause until a debugger attaches on port $DEBUG_PORT"
+fi
+
 echo "==> Running $MAIN on a local MiniCluster (Ctrl-C to stop)"
 echo "    kafka=$KAFKA_BOOTSTRAP_SERVERS registry=$SCHEMA_REGISTRY_URL postgres=$POSTGRES_URL"
-exec java -cp "$CP" "$MAIN"
+exec java $DEBUG_OPTS -cp "$CP" "$MAIN"

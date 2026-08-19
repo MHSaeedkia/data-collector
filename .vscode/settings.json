@@ -1,5 +1,8 @@
 {
-	"java.configuration.updateBuildConfiguration": "interactive",
+	// "automatic": a pom edit re-resolves the classpath on save. With "interactive" (the previous
+	// value) JDT waits for a prompt that is easy to miss, so a scope change silently does not
+	// reach the F5 launch configs in launch.json.
+	"java.configuration.updateBuildConfiguration": "automatic",
 	"java.compile.nullAnalysis.mode": "automatic",
 	"cSpell.words": [
 		"bitpin",

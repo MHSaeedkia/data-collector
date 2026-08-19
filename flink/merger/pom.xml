@@ -117,15 +117,16 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Not used by any test: it is what lets run-local.sh start this job on an in-process
-             MiniCluster (env.execute() looks up LocalExecutorFactory, which lives here). Test
-             scope keeps it out of the shaded jar, where the cluster's /opt/flink/lib supplies it.
-             The normalizer modules get it for free, transitively via flink-test-utils. -->
+        <!-- Not used by any test: it is what lets run-local.sh and an IDE launch start this job on
+             an in-process MiniCluster (env.execute() looks up LocalExecutorFactory, which lives
+             here). `provided` says what is true — the cluster's /opt/flink/lib supplies it — and is
+             as invisible to shade as `test` was, but unlike `test` it is on the classpath the IDE
+             hands a src/main class, which is what an F5 launch runs on. -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-clients</artifactId>
             <version>${flink.version}</version>
-            <scope>test</scope>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

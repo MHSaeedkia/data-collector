@@ -115,3 +115,78 @@ cluster*" and has nothing to do with `run-local.sh`. Renaming was out of scope (
 **JDK caveat:** this machine has only Temurin 26; poms target 21 and Flink 2.2 is not tested above
 21. MiniCluster works today (only `sun.misc.Unsafe` deprecation warnings from Pekko) — see
 [[tdd-workflow]] for the matching JaCoCo-on-JDK26 noise.
+
+---
+
+# Debugging a job in the IDE — `DEBUG=1 ./run-local.sh <job>` (2026-08-19, user request)
+
+`run-local.sh` now takes `DEBUG=1` (port override: `DEBUG_PORT=5006`) and prefixes the launch with
+`-agentlib:jdwp=…,server=y,suspend=y`, so the JVM waits for the debugger before `main()` runs and
+breakpoints are armed from the first record. `.vscode/launch.json` gained a matching **"Attach to
+run-local.sh"** attach config on 5005.
+
+Why a flag on the script rather than the obvious alternatives:
+
+- **`JAVA_TOOL_OPTIONS=…` needs no script change, but the `mvn` build inside the script inherits it
+  too** — with `suspend=y` the *build* stops waiting for a debugger and looks like a hang. The flag
+  is attached to the final `java` call only, so the build is untouched. (`JAVA_TOOL_OPTIONS` with
+  `suspend=n` does work if you have already built; it is the fallback, not the recommendation.)
+- **Launching from the IDE directly (the existing `PairExtractorJob` launch config) is not the same
+  classpath.** The whole reason `run-local.sh` exists is that every Flink dep is `provided` and
+  `flink-clients` is `test` — vscode-java-debug resolves a *runtime* classpath for a main class in
+  `src/main`, so `env.execute()` there is liable to fail with "No ExecutorFactory found". Attaching
+  reuses the classpath the script already computed, which is the verified one.
+
+Bash note: `DEBUG_OPTS` is a plain string expanded unquoted, not an array — an empty `"${arr[@]}"`
+trips `set -u` on older bashes, and the flags contain no spaces.
+
+**Verified 2026-08-19:** `DEBUG=1 ./run-local.sh job-pair-extractor` prints "Listening for transport
+dt_socket at address: 5005" and `lsof` confirms the JVM holding 5005 in LISTEN, suspended before
+`main()`. **Not verified:** no debugger was actually attached and no breakpoint was hit — the IDE
+side of the round trip is untested.
+
+## The real fix: F5 with no script at all (2026-08-19, user request)
+
+Pressing F5 on the IDE's own launch config reproduced the predicted `No ExecutorFactory found` — the
+command line gives it away: `server=n` (the IDE launched the JVM; nothing to attach to) and an
+`@…argfile`, which is vscode-java-debug's **runtime** classpath. The user asked for a native VS Code
+debug, no bash. It now works, and the fix is a one-word pom change rather than launch-config tricks:
+
+**`flink-clients` moved from `test` to `provided` scope** in `flink/normalizer/pom.xml` and
+`flink/merger/pom.xml`. That is what the surrounding comments already claimed was true ("the
+cluster's `/opt/flink/lib` supplies it") — `test` was simply the wrong word for it. The two scopes
+are identical as far as shade is concerned, so **nothing about the deployed artifact changes**, but
+only `provided` lands on the classpath the IDE hands a `src/main` class. `run-local.sh` is unaffected
+(`-Dmdep.includeScope=test` resolves provided too, and its `flink-clients` guard still passes).
+
+Rejected alternative: `"classPaths": ["$Test"]` in the launch config. It probably works, but it
+pushes a build fact into editor config, has to be repeated on every job, and could not be verified
+from outside the IDE — where the scope fix could.
+
+`.vscode/launch.json` now carries **one `flink: <job>` config per job** (all 7, generated from the
+poms' shade `<mainClass>`) plus the attach config kept as a fallback. Env comes from
+`.vscode/flink-local.env` via `envFile` — one file instead of an `"env"` block duplicated 7 times.
+**Keep it in step with `run-local.sh`'s exports**; both exist because the in-code fallbacks are
+docker-internal names (`kafka:29092`) that do not resolve from the host.
+
+**Verified 2026-08-19:** the job was run on a classpath built with `-Dmdep.includeScope=compile`
+(compile + provided, no test — a *subset* of what the IDE gives a launch), pointed at deliberately
+dead endpoints: no `No ExecutorFactory`, the MiniCluster started and scheduled the job, and the only
+failure is `PSQLException: Connection to localhost:1 refused`, i.e. the deliberate one. Shaded jar
+still has **zero** `org/apache/flink/` entries and the right `Main-Class`; both suites green (normalizer
+111, merger 16). **Not verified:** F5 was not pressed inside VS Code, and breakpoints were not hit —
+the JDT project metadata says the modules are imported (`jdt_ws/.metadata/…/.projects/` lists all 7),
+which is what `projectName` resolves against.
+
+**Two traps found while getting F5 to work (2026-08-19), both invisible in the code:**
+
+- **`java.configuration.updateBuildConfiguration` was `"interactive"`** in `.vscode/settings.json`,
+  so JDT does *not* re-resolve a changed pom — it waits for a prompt that is easy to miss. The scope
+  fix therefore had no effect on the next F5, which failed identically. Now `"automatic"`. Tell-tale
+  that the classpath never changed: vscode-java-debug reused the *same* `cp_<hash>.argfile` name
+  across both failures.
+- **The whole `flink/` working tree was reverted to HEAD mid-session** (source unknown — no git
+  command was run from the agent side), taking the pom change and the user's in-progress ompfinex
+  edits with it. Recovered from VS Code Local History
+  (`~/Library/Application Support/Code/User/History/`), which is the fallback worth remembering: it
+  snapshots on save and survives a `git checkout`, unlike anything in git.
