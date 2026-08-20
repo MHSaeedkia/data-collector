@@ -108,6 +108,21 @@ broker restart, and partition count / retention config / registry subjects all s
 - **It matches the LIVE topic list against a regex, it does NOT re-derive from postgres** like
   warmup does. Deliberate: that way it also catches topics for markets that have since been
   unsubscribed, which are exactly the ones sitting on stale data nothing will ever clean up.
+
+Three bugs the first version shipped with, all worth not repeating (2026-08-19):
+
+- **One `docker exec` per topic is unusable.** Each starts a JVM in the container, so on a full
+  market list the script sat silent for minutes and read as a hang — which is how the user found
+  it. Every broker query is now ONE bulk call (`kafka-get-offsets --topic-partitions '.*'`)
+  filtered locally, and every command is echoed with elapsed time so silence is never ambiguous.
+- **Logging to stdout from a function whose stdout is captured corrupts the data.** `kafka_run`
+  returns broker output via `$(...)`; its progress lines were being counted as topics (a 12-topic
+  broker reported 14). All diagnostics now go to stderr. This bites any `run()`-style helper.
+- **`kafka-delete-records` raises the START offset, it does NOT move the end offset.** A purged
+  topic reports the same large latest offset forever, so counting `latest` counts records deleted
+  long ago — the script claimed 40 736 records to delete on an already-empty broker. Readable
+  records are `latest - earliest`; the *delete* offset is still `latest`. Same trap applies to any
+  "how much is in this topic" check anywhere else.
 - `NORMALIZER_STAGES` is duplicated here too — a **third** copy after `warmup.sh` and the
   exporter's ([[staleness-exporter]]). A stage missing from this array is silently NOT purged.
 - **⚠ Purging Kafka does NOT reset Flink.** The jobs keep their keyed state — job 2's `lastSeq` /
