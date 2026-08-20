@@ -1,5 +1,11 @@
 # TODO
 
+## scripts
+
+- [x] `scripts/purge-topics.sh` (2026-08-19, user request) — empties every pipeline topic with `kafka-delete-records` (immediate low-watermark bump) while leaving topics, partition counts, retention config and registry subjects intact. The counterpart to `warmup.sh`, and a scalpel where `make refresh-normalizer` is a sledgehammer (`down -v` wipes the registry and postgres too). Matches the LIVE topic list rather than re-deriving from postgres, so it also catches unsubscribed markets' leftover topics. `--dry-run` / `--yes`. **Topic filter and JSON builder unit-verified against simulated input (13 matched, 6 decoys excluded, valid JSON); never run against a live broker — docker was down**
+- [ ] `purge-topics.sh` holds a THIRD copy of `NORMALIZER_STAGES` (after `warmup.sh` and the exporter) — a stage missing from any copy is silently skipped. Worth one shared source before the next stage is added
+- [ ] Consider a `make purge-topics` target, and whether it should chain `run-normalizer-jobs` automatically — purging Kafka leaves Flink's keyed state intact, so a purge alone does NOT give a clean run and it is easy to forget
+
 ## control plane
 
 - [x] e2e coverage for `control-plane` (2026-08-17, user request) — the topic is now created and deleted per run in `topics.plan()` instead of being left to the broker's auto-create, so a scenario reads its own commands and not the previous one's. `Scenario.WantControlCommands` is asserted on EVERY scenario: **nil means "nothing was requested", not "skip"**, which is what makes a spurious request on a healthy feed fail — 33 scenarios get that for free, and the 8 ending on `no_baseline`/`sequence_gap` declare the one command they produce. Two new feature-grouped scenarios in `data_control.go` (42 ex6 sequenced resync, 43 ex1 null-seq REST resync) each run two episodes to prove one-command-per-episode AND that a resync re-arms the next. The Kafka key is checked structurally then stripped, like the lineage ids; the decoder was the only one with no registered schema behind it, so it used `DisallowUnknownFields` (superseded 2026-08-18 when the topic moved to Avro). Go build/vet/gofmt clean, all Go tests green, `swag init` rerun. See [[project_control_plane]]

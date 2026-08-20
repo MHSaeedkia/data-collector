@@ -95,5 +95,26 @@ Two gotchas that cost debugging time, worth remembering:
 
 Verified live end-to-end (produced a real message via the serde, hand-decoded the Confluent wire bytes off Kafka, registry still at only the canonical subjects). kafka-ui API note for future debugging: the per-topic serde-listing endpoint is `/api/clusters/{cluster}/topic/{topic}/serdes` — **singular** `topic` (the plural form 404s silently through the SPA static-resource fallback).
 
+## Emptying topics without destroying the stack — `scripts/purge-topics.sh` (2026-08-19)
+
+The counterpart to `warmup.sh`: warmup CREATES the topics, purge EMPTIES them. Written because the
+only reset that existed was `make refresh-normalizer`, whose `docker compose down -v` takes the
+registry, the postgres volume and the Kafka data with it — far more than "clear the topics".
+
+Uses **`kafka-delete-records`**, which moves each partition's low watermark up to its high
+watermark. That is an immediate, real deletion — no `retention.ms=1` trick, no topic recreate, no
+broker restart, and partition count / retention config / registry subjects all survive.
+
+- **It matches the LIVE topic list against a regex, it does NOT re-derive from postgres** like
+  warmup does. Deliberate: that way it also catches topics for markets that have since been
+  unsubscribed, which are exactly the ones sitting on stale data nothing will ever clean up.
+- `NORMALIZER_STAGES` is duplicated here too — a **third** copy after `warmup.sh` and the
+  exporter's ([[staleness-exporter]]). A stage missing from this array is silently NOT purged.
+- **⚠ Purging Kafka does NOT reset Flink.** The jobs keep their keyed state — job 2's `lastSeq` /
+  `awaitingSnapshot` ([[type-validator]]), job 5's `MapState` books — so after a purge the
+  pipeline still believes everything it saw before, and a "clean" run is anything but. Resubmit
+  with `make run-normalizer-jobs` for a true reset. The script prints this on exit.
+- `--dry-run` reports the plan and record counts; the interactive prompt is skipped with `--yes`.
+
 **Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.
 **How to apply:** Use this structure for all Kafka topic definitions, NiFi routing logic, and Flink source configurations in this project.
