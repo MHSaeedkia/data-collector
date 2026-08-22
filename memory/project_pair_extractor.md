@@ -91,7 +91,8 @@ Fixtures: `ex2-snapshot.json` is now the REST payload; the old WS message moved 
   `ex{n}-raw` topic (warmup.sh is DB-driven, so new subscribed exchanges get topics).
 - **Offsets: `latest`** (consistent with the aggregator — live feed, no replay).
 - **event_time stamping per exchange** (job 2 and audits read this): ex1 `data.lastUpdate`,
-  ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts`, ex6 `cts`
+  ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts` (which is ALSO its
+  sequence id since 2026-08-22), ex6 `cts`
   (matching-engine time — chosen over outer `ts` as the analog of okx's data ts; revisit if
   the team prefers gateway time), ex8 `ts` (also the sequence id). **ex3 and ex4 have NO
   message-level timestamp → job-1 processing time** (`System.currentTimeMillis()`), flagged
@@ -187,3 +188,25 @@ fixture section in sample-raw-data.md; when changing event_time/ordering semanti
 job 2's expectations too.
 
 **2026-08-03 — `simulation` flag.** All 7 parsers lift it off the payload via `Json.simulation(carrier)`. ⚠ **ex3/wallex's envelope grew a THIRD element** — `["{market}@{side}", [levels…], {"simulation":N}]` — because its root is an array with no field to inject; the other six read it as a root field. `WallexParser` takes 2 or 3 elements, drops 4+. Cross-parser rule is tested once in `SimulationFlagTest`, not per parser. See [[simulation-flag]].
+
+**2026-08-22 — ex4/ramzinex re-verified against a SECOND live capture** (user-supplied,
+`orderbook:11`, `pub.offset` 10298388, 50+50 levels, rial-scale prices ~1.9M). Ran
+`RamzinexParser` on the raw frame: every documented assumption held — Centrifugo envelope,
+numeric channel id as the market key (`"11"`), `buys`→bids / `sells`→asks, 7-element
+JSON-number levels with only `[price, qty]` read, exact decimal literals preserved
+(`1398.2677`, `450`, no scientific notation), `seq = pub.offset` with jump 0, type
+`snapshot`, event time = processing time. **BOTH sides price-descending re-confirmed** (best
+bid FIRST `1910670`, best ask LAST `1910700`, spread +30) — the single riskiest ex4
+assumption, now corroborated by two independent captures a month apart.
+Two things the second capture changed:
+- **Element 6 range is wider than sample-raw-data.md records** (5–221 here vs the documented
+  "10–74"), and it tracks quantity magnitude (`0.23`→5, `1398.2677`→111, `10043.5`→221) —
+  so it is a UI depth-bar scale, NOT an order count. Still ignored; the doc's guess at its
+  meaning is the only thing stale.
+- **Market `"11"` has no `exchange_markets` row in the local seed** (ramzinex's local rows are
+  `12/2/13/3/643/…`, no `11`), so this frame drops on `dropped-unknown-market` locally. Consistent
+  with the known local-seed-vs-server drift in [[db-schema]] — verify the server row exists AND
+  that its `price_amount_rebase` is `-1` if pair 11 is IRT-quoted: a 1.9M price is rial-scale,
+  and a missing `-1` would publish prices 10× too high.
+The raw frame as supplied carries no NiFi `id`/`simulation`, so it parses but `PairExtractFunction`
+drops it on `dropped-no-id` — expected for a pre-NiFi capture, not a defect.

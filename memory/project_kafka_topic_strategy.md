@@ -95,5 +95,41 @@ Two gotchas that cost debugging time, worth remembering:
 
 Verified live end-to-end (produced a real message via the serde, hand-decoded the Confluent wire bytes off Kafka, registry still at only the canonical subjects). kafka-ui API note for future debugging: the per-topic serde-listing endpoint is `/api/clusters/{cluster}/topic/{topic}/serdes` — **singular** `topic` (the plural form 404s silently through the SPA static-resource fallback).
 
+## Emptying topics without destroying the stack — `scripts/purge-topics.sh` (2026-08-19)
+
+The counterpart to `warmup.sh`: warmup CREATES the topics, purge EMPTIES them. Written because the
+only reset that existed was `make refresh-normalizer`, whose `docker compose down -v` takes the
+registry, the postgres volume and the Kafka data with it — far more than "clear the topics".
+
+Uses **`kafka-delete-records`**, which moves each partition's low watermark up to its high
+watermark. That is an immediate, real deletion — no `retention.ms=1` trick, no topic recreate, no
+broker restart, and partition count / retention config / registry subjects all survive.
+
+- **It matches the LIVE topic list against a regex, it does NOT re-derive from postgres** like
+  warmup does. Deliberate: that way it also catches topics for markets that have since been
+  unsubscribed, which are exactly the ones sitting on stale data nothing will ever clean up.
+
+Three bugs the first version shipped with, all worth not repeating (2026-08-19):
+
+- **One `docker exec` per topic is unusable.** Each starts a JVM in the container, so on a full
+  market list the script sat silent for minutes and read as a hang — which is how the user found
+  it. Every broker query is now ONE bulk call (`kafka-get-offsets --topic-partitions '.*'`)
+  filtered locally, and every command is echoed with elapsed time so silence is never ambiguous.
+- **Logging to stdout from a function whose stdout is captured corrupts the data.** `kafka_run`
+  returns broker output via `$(...)`; its progress lines were being counted as topics (a 12-topic
+  broker reported 14). All diagnostics now go to stderr. This bites any `run()`-style helper.
+- **`kafka-delete-records` raises the START offset, it does NOT move the end offset.** A purged
+  topic reports the same large latest offset forever, so counting `latest` counts records deleted
+  long ago — the script claimed 40 736 records to delete on an already-empty broker. Readable
+  records are `latest - earliest`; the *delete* offset is still `latest`. Same trap applies to any
+  "how much is in this topic" check anywhere else.
+- `NORMALIZER_STAGES` is duplicated here too — a **third** copy after `warmup.sh` and the
+  exporter's ([[staleness-exporter]]). A stage missing from this array is silently NOT purged.
+- **⚠ Purging Kafka does NOT reset Flink.** The jobs keep their keyed state — job 2's `lastSeq` /
+  `awaitingSnapshot` ([[type-validator]]), job 5's `MapState` books — so after a purge the
+  pipeline still believes everything it saw before, and a "clean" run is anything but. Resubmit
+  with `make run-normalizer-jobs` for a true reset. The script prints this on exit.
+- `--dry-run` reports the plan and record counts; the interactive prompt is skipped with `--yes`.
+
 **Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.
 **How to apply:** Use this structure for all Kafka topic definitions, NiFi routing logic, and Flink source configurations in this project.

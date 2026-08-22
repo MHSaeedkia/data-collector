@@ -432,7 +432,7 @@ var Ex6SequenceGap = Scenario{
 	// One command for the episode, not one per rejected event: the second update
 	// rejects on the same unresolved gap, and job 2 does not re-ask.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
 	// The reset already emptied the book once; what the web app finally reads is the re-synced
 	// one, so a gap costs bybit its place in the union only until the next snapshot.
@@ -542,7 +542,7 @@ var Ex6NoBaseline = Scenario{
 	// not: a replayed `u` is a duplicate, not a hole, and the book it would have
 	// applied to is intact — so there is nothing for NiFi to re-send.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "no_baseline", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{

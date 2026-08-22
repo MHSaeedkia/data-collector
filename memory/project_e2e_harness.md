@@ -340,14 +340,28 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   takes job 2's snapshot branch and CAN dead-letter `stale_or_duplicate` — ex3's "no reachable
   dead-letter" property does not carry over.
 - **Snapshot feeds with a sequence have no gap rule, and that is asserted deliberately**
-  (2026-08-01). ex4 and ex5 both set `sequence_jump = 0`, but job 2's snapshot branch never reads
-  the jump at all — it only checks `seq <= lastSeq`. `Ex4StaleOffset` and `Ex5StaleSeq` each end on
-  a huge forward jump that must be ACCEPTED. If someone later "fixes" jump 0 into a contiguity
-  rule, those two fail rather than silently starving the book.
+  (2026-08-01). ex4 sets `sequence_jump = 0`, but job 2's snapshot branch never reads the jump at
+  all — it only checks `seq <= lastSeq`. `Ex4StaleOffset` ends on a huge forward jump that must be
+  ACCEPTED. If someone later "fixes" jump 0 into a contiguity rule, it fails rather than silently
+  starving the book. **⚠ ex5 left this pairing 2026-08-22** — it is a delta feed now, so
+  `Ex5StaleSeq` is GONE (its `seq` is off the wire) and the ex5 block was rewritten and renumbered;
+  ex4 is the last member.
+- **ex5 scenarios rewritten + the whole list RENUMBERED 2026-08-22** — the ex5 block grew from 5
+  to 6, so everything after it shifted by one: bybit is now 31–36, okx 37–42, and the control-plane
+  four are **43–46** (the deadlock pair that memory called "44/45" is now **45/46**). The ex5 six
+  are `25-snapshot-then-updates`, `26-update-before-snapshot`, `27-jump-tolerance`,
+  `28-multi-book-frame`, `29-noise-frames`, `30-precision-dust`. Two are new capabilities ex5 could
+  not have as a snapshot-only feed: it has a cold start (`no_baseline` + a control command) and it
+  can gap. `27-ex5-jump-tolerance` is the ONLY scenario anywhere that exercises
+  `sequence_jump_tolerance`: both window edges (+590, +610) accepted, +611 a real gap.
+- **`Ex5NoiseFrames` lost two cases and that is the point** — `action: "update"` is a legitimate
+  frame now, and `seq`/`pseq` are not read at all, so their wire types cannot reject anything. What
+  replaced them: an unknown action, and a book object carrying NEITHER side.
 - **ex5 is the only exchange whose one Kafka record can become several events** (2026-08-01).
   `BitgetParser` loops `data[]` and emits one event per element (okx's parser has the same shape but
   its captures only ever carry one). `Ex5MultiBookFrame` pins the fan-out — two book objects in one
-  record produce two snapshots with their own seq and event time. The same loop drops the WHOLE
+  record produce two snapshots with their own ts and event time (both elements are snapshots, which
+  job 2 orders by "must move forward" with no jump rule, so the ±10 window never applies there). The same loop drops the WHOLE
   record if any element is malformed, including elements already read, so a partial book is never
   emitted.
 - **ex6 is the only place the null-side rule can be proved on an UPDATE** (2026-08-01). "Null side

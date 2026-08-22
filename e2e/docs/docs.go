@@ -93,6 +93,10 @@ const docTemplate = `{
                 "pair_id": {
                     "type": "integer"
                 },
+                "reason": {
+                    "description": "\"no_baseline\" | \"sequence_gap\"",
+                    "type": "string"
+                },
                 "simulation": {
                     "type": "integer"
                 }

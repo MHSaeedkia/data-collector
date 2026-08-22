@@ -72,6 +72,17 @@ class TypeValidateFunctionTest {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
     }
 
+    /**
+     * ex5/bitget message: the sequence is a millisecond CLOCK on a nominal 600 ms cadence, so
+     * the event carries a jump tolerance and job 2 checks a window instead of an equality.
+     */
+    private static RawOrderBookEvent bitget(int pair, String type, long ts) {
+        RawOrderBookEvent event =
+                new RawOrderBookEvent(5, pair, type, ts, 600L, ts, List.of(), List.of());
+        event.setSequenceJumpTolerance(10L);
+        return event;
+    }
+
     private void send(RawOrderBookEvent e) throws Exception {
         harness.processElement(new StreamRecord<>(e));
     }
@@ -196,6 +207,78 @@ class TypeValidateFunctionTest {
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
                         TypeValidateFunction.STALE_OR_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("tolerant jump (ex5): both edges of the last+jump±tolerance window are contiguous")
+    void toleranceWindowEdgesAccepted() throws Exception {
+        long t0 = 1787404282000L;
+        send(bitget(1, "snapshot", t0));
+        send(bitget(1, "update", t0 + 590)); // low edge  -> ok
+        send(bitget(1, "update", t0 + 590 + 610)); // high edge -> ok
+        send(bitget(1, "update", t0 + 590 + 610 + 600)); // dead centre -> ok
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(t0, t0 + 590, t0 + 1200, t0 + 1800);
+        assertThat(rejects()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("tolerant jump (ex5): one millisecond outside the window is still a gap")
+    void toleranceWindowIsNotUnbounded() throws Exception {
+        long t0 = 1787404282000L;
+        send(bitget(1, "snapshot", t0));
+        send(bitget(1, "update", t0 + 611)); // 1 ms past the high edge -> gap
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(t0);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+    }
+
+    /**
+     * The consequence the user accepted when choosing to apply the window to EVERY transition
+     * (2026-08-22): bitget's own capture has the first update only 22 ms behind the snapshot,
+     * which is nowhere near 600, so it is dead-lettered and the book is reset. Pinned as a test
+     * because it is the live feed's ordinary shape, not a corner case — see todo.md.
+     */
+    @Test
+    @DisplayName("tolerant jump (ex5): the captured snapshot->update burst (+22ms) is rejected as a gap")
+    void capturedBurstAfterSnapshotIsAGap() throws Exception {
+        send(bitget(1, "snapshot", 1787404282388L));
+        send(bitget(1, "update", 1787404282410L)); // the real capture: +22 ms
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(1787404282388L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+    }
+
+    @Test
+    @DisplayName("tolerant jump (ex5): a backwards ts is stale_or_duplicate, not a gap")
+    void toleranceWindowStillRejectsStale() throws Exception {
+        long t0 = 1787404282000L;
+        send(bitget(1, "snapshot", t0));
+        send(bitget(1, "update", t0 + 600)); // ok
+        send(bitget(1, "update", t0 + 600)); // duplicate ts
+        send(bitget(1, "update", t0 + 100)); // older
+
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
+                        TypeValidateFunction.STALE_OR_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("tolerance 0 (every other exchange) keeps the exact seq == last + jump check")
+    void zeroToleranceIsTheExactCheck() throws Exception {
+        send(delta(6, 1, "snapshot", 10L, 1L));
+        send(delta(6, 1, "update", 11L, 1L)); // exact -> ok
+        send(delta(6, 1, "update", 13L, 1L)); // +2 with tolerance 0 -> gap, not accepted
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(10L, 11L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
     }
 
     @Test
@@ -442,6 +525,7 @@ class TypeValidateFunctionTest {
 
         assertThat(controlCommands()).singleElement().satisfies(cmd -> {
             assertThat(cmd.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+            assertThat(cmd.getReason()).isEqualTo(TypeValidateFunction.NO_BASELINE);
             assertThat(cmd.getExchangeId()).isEqualTo(6);
             assertThat(cmd.getPairId()).isEqualTo(1);
         });
@@ -455,9 +539,29 @@ class TypeValidateFunctionTest {
 
         assertThat(controlCommands()).singleElement().satisfies(cmd -> {
             assertThat(cmd.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+            assertThat(cmd.getReason()).isEqualTo(TypeValidateFunction.SEQUENCE_GAP);
             assertThat(cmd.getExchangeId()).isEqualTo(6);
             assertThat(cmd.getPairId()).isEqualTo(1);
         });
+    }
+
+    /**
+     * The two triggers have to be told apart on the topic, not just in the
+     * dead-letter stream: a market that has never had a baseline needs a first
+     * snapshot, one whose book a gap invalidated needs a replacement, and the
+     * collector may well answer them differently (a cold start asks for every
+     * subscribed market at once — see the class javadoc).
+     */
+    @Test
+    @DisplayName("control-plane: the reason distinguishes the two triggers on one key")
+    void reasonDistinguishesTheTwoTriggers() throws Exception {
+        send(delta(6, 1, "update", 5L, 1L));      // no baseline -> command 1
+        send(delta(6, 1, "snapshot", 10L, 1L));   // resolves it
+        send(delta(6, 1, "update", 15L, 1L));     // gap -> command 2
+
+        assertThat(controlCommands()).extracting(ControlCommand::getReason)
+                .containsExactly(TypeValidateFunction.NO_BASELINE,
+                        TypeValidateFunction.SEQUENCE_GAP);
     }
 
     /**
@@ -549,5 +653,263 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands()).hasSize(2);
         assertThat(controlCommands()).extracting(ControlCommand::getPairId)
                 .containsExactlyInAnyOrder(1, 2);
+    }
+
+    // ---- control-plane: escaping a stuck resync (regression, 2026-08-19) -------
+
+    @Test
+    @DisplayName("control-plane: a resync snapshot older than the last delta is ACCEPTED, not deadlocked (ex1/ex2)")
+    void resyncSnapshotWithLaggingClockIsAccepted() throws Exception {
+        // ex1 shape: REST snapshot seeds the resync, first WS delta adopts the baseline.
+        send(nullSeqSnapshot(1, 1, 1_000L));
+        send(delta(1, 1, "update", 10L, 1L));   // adopts baseline, lastEventTime = 10
+        send(delta(1, 1, "update", 11L, 1L));   // contiguous, lastEventTime = 11
+        send(delta(1, 1, "update", 99L, 1L));   // GAP -> one command, book emptied by the reset
+        assertThat(controlCommands()).hasSize(1);
+
+        // NiFi answers with a REST snapshot whose event_time trails the last accepted delta —
+        // different clock, not an old book. Before the fix this rejected out_of_order, and since
+        // lastEventTime only advances in emit() the key could never recover or re-ask.
+        send(nullSeqSnapshot(1, 1, 5L));
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+
+        // and the resync really resolved: the next gap opens a NEW episode and asks again.
+        send(delta(1, 1, "update", 200L, 1L));  // adopts the fresh baseline
+        send(delta(1, 1, "update", 500L, 1L));  // GAP #2
+        assertThat(controlCommands()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("control-plane: a resync snapshot at or below lastSeq is ACCEPTED, not deadlocked (ex6/ex8)")
+    void resyncSnapshotWithStaleSequenceIsAccepted() throws Exception {
+        send(delta(6, 1, "snapshot", 100L, 1L));
+        send(delta(6, 1, "update", 101L, 1L));
+        send(delta(6, 1, "update", 500L, 1L));  // GAP
+        assertThat(controlCommands()).hasSize(1);
+
+        // The requested snapshot comes back with an ordering value behind the pre-gap baseline.
+        // There is no good book to protect — the reset already emptied it — so take it.
+        send(delta(6, 1, "snapshot", 50L, 1L));
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+
+        send(delta(6, 1, "update", 51L, 1L));   // contiguous on the new baseline
+        assertThat(validBusiness()).hasSize(4); // snapshot, update, resync snapshot, update
+    }
+
+    @Test
+    @DisplayName("control-plane: the ordering guards still reject when NO request is outstanding")
+    void guardsStillApplyWithoutAnOutstandingRequest() throws Exception {
+        // Same two rejections as before the exemption — it must only suspend the guards while a
+        // snapshot has actually been asked for, never in steady state.
+        send(nullSeqSnapshot(1, 1, 1_000L));
+        send(nullSeqSnapshot(1, 1, 900L));      // older REST replay -> still out_of_order
+        send(delta(6, 1, "snapshot", 100L, 1L));
+        send(delta(6, 1, "snapshot", 100L, 1L)); // duplicate -> still stale_or_duplicate
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.OUT_OF_ORDER,
+                        TypeValidateFunction.STALE_OR_DUPLICATE);
+        assertThat(controlCommands()).isEmpty();
+    }
+
+    // ---- control-plane: re-asking for a request nothing answered ---------------
+    //
+    // The retry is driven by REJECTED EVENTS, not by a timer: every event the two
+    // untrustworthy branches turn away also asks, and the ask is suppressed unless
+    // snapshotRetryMs has passed since the last one. So a retry needs BOTH the clock
+    // to move and an event to arrive, and these tests drive both by hand.
+
+    /** Reopens the harness with a short retry interval, clock at zero. */
+    private void withRetryInterval(long ms) throws Exception {
+        harness.close();
+        KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator =
+                new KeyedProcessOperator<>(new TypeValidateFunction(ms));
+        KeySelector<RawOrderBookEvent, String> byKey = e -> e.getExchangeId() + "|" + e.getPairId();
+        harness = new KeyedOneInputStreamOperatorTestHarness<>(
+                operator, byKey, TypeInformation.of(String.class));
+        harness.open();
+        harness.setProcessingTime(0L);
+    }
+
+    @Test
+    @DisplayName("control-plane: an unanswered request is re-asked once the interval has passed")
+    void unansweredRequestIsRetried() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 1300L, 300L));
+        send(from(delta(8, 1, "update", 99000L, 300L), "job1-gap")); // GAP — unanswered
+        assertThat(controlCommands()).hasSize(1);
+
+        // The feed keeps talking, as a feed does after a gap. Every one of these is held
+        // as awaiting_snapshot, and each one is a chance to re-ask.
+        harness.setProcessingTime(60_000L);
+        send(from(delta(8, 1, "update", 99300L, 300L), "job1-held-1"));
+        assertThat(controlCommands()).hasSize(2);
+
+        harness.setProcessingTime(120_000L);
+        send(from(delta(8, 1, "update", 99600L, 300L), "job1-held-2"));
+        assertThat(controlCommands()).hasSize(3);
+
+        // Each retry is its own record, and names the update it was sent alongside rather
+        // than re-naming the original gap — so every command points at a record that is
+        // really on the dead-letter topic, and the three are distinguishable.
+        assertThat(controlCommands()).extracting(ControlCommand::getId).doesNotHaveDuplicates();
+        assertThat(controlCommands()).flatExtracting(ControlCommand::getSourceIds)
+                .containsExactly("job1-gap", "job1-held-1", "job1-held-2");
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
+                        TypeValidateFunction.AWAITING_SNAPSHOT,
+                        TypeValidateFunction.AWAITING_SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("control-plane: rejected events inside the interval do NOT re-ask")
+    void rejectionsInsideTheIntervalDoNotReAsk() throws Exception {
+        // The flood check, and the reason the ask is time-based rather than per-event: a
+        // busy feed can reject hundreds of updates between two retries and must still
+        // produce exactly one command.
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP -> one command at t=0
+        for (long i = 1; i <= 20; i++) {
+            harness.setProcessingTime(i * 1_000L); // 20s of traffic, well inside the interval
+            send(delta(8, 1, "update", 99000L + i * 300L, 300L));
+        }
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(rejects()).hasSize(21);
+    }
+
+    @Test
+    @DisplayName("control-plane: re-asking stops once a snapshot resolves the episode")
+    void retryStopsAfterResolution() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP
+        assertThat(controlCommands()).hasSize(1);
+
+        send(delta(8, 1, "snapshot", 99300L, 300L)); // the answer arrives
+        // Long past several intervals, with the feed healthy again: nothing more is asked.
+        harness.setProcessingTime(600_000L);
+        send(delta(8, 1, "update", 99600L, 300L));
+        harness.setProcessingTime(1_200_000L);
+        send(delta(8, 1, "update", 99900L, 300L));
+        assertThat(controlCommands()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("control-plane: a no_baseline episode re-asks too, not just a gap")
+    void noBaselineEpisodeIsRetried() throws Exception {
+        // The cold-start case, and the one a job restart produces on every delta key at
+        // once. lastSeq stays null, so every update rejects no_baseline and the episode
+        // can only end when a snapshot finally lands.
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "update", 1000L, 300L)); // no baseline -> one command at t=0
+        assertThat(controlCommands()).hasSize(1);
+
+        harness.setProcessingTime(60_000L);
+        send(delta(8, 1, "update", 1300L, 300L));
+        assertThat(controlCommands()).hasSize(2);
+
+        send(delta(8, 1, "snapshot", 1600L, 300L)); // baseline at last
+        harness.setProcessingTime(600_000L);
+        send(delta(8, 1, "update", 1900L, 300L));
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).extracting(ControlCommand::getReason)
+                .containsOnly(TypeValidateFunction.NO_BASELINE);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.NO_BASELINE,
+                        TypeValidateFunction.NO_BASELINE);
+    }
+
+    @Test
+    @DisplayName("control-plane: overlapping episodes do not multiply the ask rate")
+    void overlappingEpisodesDoNotMultiplyTheAskRate() throws Exception {
+        // The defect the timer version had: it registered a chain per episode and
+        // cancelled none, so two episodes inside one interval left two live chains and
+        // the command rate doubled permanently. With one timestamp per key there is
+        // nothing to stack — a second episode overwrites the first's clock.
+        withRetryInterval(60_000L);
+        send(delta(6, 1, "snapshot", 100L, 1L));
+        send(delta(6, 1, "update", 500L, 1L));   // GAP #1 at t=0 -> command 1
+
+        harness.setProcessingTime(10_000L);
+        send(delta(6, 1, "snapshot", 600L, 1L)); // resolved, well inside the interval
+        send(delta(6, 1, "update", 601L, 1L));
+
+        harness.setProcessingTime(20_000L);
+        send(delta(6, 1, "update", 900L, 1L));   // GAP #2 -> command 2, clock restarts here
+        assertThat(controlCommands()).hasSize(2);
+
+        // From here the ask rate must be ONE per interval, not one per episode ever
+        // opened. t=70k is 50s after the second ask, so it is still suppressed.
+        harness.setProcessingTime(70_000L);
+        send(delta(6, 1, "update", 901L, 1L));
+        assertThat(controlCommands()).hasSize(2);
+
+        harness.setProcessingTime(80_000L); // now 60s after the ask at t=20k
+        send(delta(6, 1, "update", 902L, 1L));
+        assertThat(controlCommands()).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("control-plane: a re-ask targets the same market and carries its simulation flag")
+    void retryCommandTargetsTheSameMarket() throws Exception {
+        withRetryInterval(60_000L);
+        RawOrderBookEvent snapshot = delta(6, 4, "snapshot", 10L, 1L);
+        snapshot.setSimulation(1);
+        RawOrderBookEvent gap = delta(6, 4, "update", 900L, 1L);
+        gap.setSimulation(1);
+        RawOrderBookEvent held = delta(6, 4, "update", 901L, 1L);
+        held.setSimulation(1);
+        send(snapshot);
+        send(gap);
+        harness.setProcessingTime(60_000L);
+        send(held);
+
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).allSatisfy(c -> {
+            assertThat(c.getExchangeId()).isEqualTo(6);
+            assertThat(c.getPairId()).isEqualTo(4);
+            assertThat(c.getSimulation()).isEqualTo(1);
+            assertThat(c.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+        });
+    }
+
+    /**
+     * A retry is triggered by an update that is dead-lettered {@code
+     * awaiting_snapshot}, but that is bookkeeping about a request we already sent
+     * — it is not a reason to want a snapshot. The command has to keep naming the
+     * condition the collector is being asked to fix, which is the one that opened
+     * the episode.
+     */
+    @Test
+    @DisplayName("control-plane: a re-ask keeps the reason that OPENED the episode")
+    void retryKeepsTheEpisodeReason() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP -> command at t=0
+        harness.setProcessingTime(60_000L);
+        send(delta(8, 1, "update", 99300L, 300L)); // awaiting_snapshot -> re-ask
+
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).extracting(ControlCommand::getReason)
+                .containsOnly(TypeValidateFunction.SEQUENCE_GAP);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
+                        TypeValidateFunction.AWAITING_SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("control-plane: a healthy market never asks, however long it runs")
+    void healthyMarketNeverRetries() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 1300L, 300L));
+        harness.setProcessingTime(600_000L);
+        send(delta(8, 1, "update", 1600L, 300L));
+        harness.setProcessingTime(1_200_000L);
+        send(delta(8, 1, "update", 1900L, 300L));
+        assertThat(controlCommands()).isEmpty();
     }
 }

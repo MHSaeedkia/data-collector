@@ -116,9 +116,19 @@ confirm that exchange drops out of `p{id}-{side}` on the gap and returns on the 
 **ex2 bitpin joined this list 2026-07-25** — it was re-classified from snapshot-only to
 REST-snapshot + WS-delta exactly like ex1, and needed NO job-2 code change (the `baselinePending`
 resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extractor]].
-(Remaining snapshot-only feeds ex4/ex5 and the no-ordering ex3 never hit the gap branch, so they
-never emit a reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+(The remaining snapshot-only feed ex4 and the no-ordering ex3 never hit the gap branch, so they
+never emit a reset. **ex5 bitget LEFT this list 2026-08-22** — it became a snapshot/update delta
+feed and now does hit it; see the jump-tolerance note below.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
 verified live yet.**
+
+## The ordering guards are suspended during a resync (2026-08-19)
+
+`out_of_order` (null-seq) and `stale_or_duplicate` (sequenced) both now sit behind
+`!resyncOutstanding()`. They only protect a book that is worth protecting, and once a gap has
+emitted its `RESET` there isn't one. Leaving them armed deadlocked the key permanently — the full
+mechanism, and why `lastEventTime` made it unrecoverable, is in [[project_control_plane]]. **If you
+ever tighten these guards again, the invariant to preserve is: a key with an outstanding
+`snapshot_request` must always have SOME path back to an accepted snapshot.**
 
 ## Gotchas (all cost real debugging time 2026-07-15)
 
@@ -181,3 +191,27 @@ off `sequence_jump` stamped by job 1's parsers — if an exchange's jump changes
 parser (job 1), not here; job 2 is exchange-agnostic.
 
 **2026-08-03 — `simulation` pass-through.** Valid events forward the same object, so the flag rides for free; but `emitReset` builds a FRESH event, so it explicitly copies the gap event's flag — otherwise emptying a simulated exchange's book would emit a record claiming to be live. See [[simulation-flag]].
+
+**2026-08-22 — the contiguity check became a WINDOW, for ex5/bitget.** bitget's new `depth`-channel
+sample dropped `seq` from the wire entirely (the `checksum` that replaced it is a CRC integrity
+value, not a sequence), so its ordering field is now the inner millisecond `ts`. A clock never
+lands on an exact multiple of a cadence, so `seq == last + jump` could not work: the rule is now
+`last + jump - tol <= seq <= last + jump + tol`, with `tol` from the new
+`sequence_jump_tolerance` schema field (`default: 0`, so a BACKWARD-compatible evolution).
+**ex5 stamps jump 600 / tolerance 10; every other exchange stamps 0, which collapses the window
+back to the exact check** — ex6's jump 1 and ex8's jump 300 are unchanged, and that is pinned by
+`zeroToleranceIsTheExactCheck`. Job 2 stays exchange-agnostic: it reads the tolerance off the
+event, it does not know which exchange sent it. ⚠ **re-register `raw-order-book-event` AND
+`rejected-order-book-event`, then resubmit** — same serializer-caches-the-write-schema trap as
+`pipeline_timings` / `simulation` / `reason`.
+
+**⚠ The window guards EVERY transition, snapshot→update included — a deliberate user decision
+(2026-08-22) taken over a flagged objection.** The consequence is real and visible in bitget's own
+capture: its first update follows the snapshot by **22 ms**, nowhere near 600, so on the live feed
+that burst is dead-lettered `sequence_gap`, empties the book via the reset, and asks the control
+plane for a fresh snapshot. If the resync snapshot is itself followed by a close-behind update, ex5
+can loop reset → request → snapshot → gap. The alternative offered and declined was to exempt the
+snapshot→update transition by reusing the existing `baselinePending` bootstrap (what ex1/ex2 do).
+Pinned as an EXPECTED result in `TypeValidateFunctionTest.capturedBurstAfterSnapshotIsAGap` so the
+behaviour is documented rather than surprising; open risk in todo.md, to settle against the live
+feed's real cadence.
