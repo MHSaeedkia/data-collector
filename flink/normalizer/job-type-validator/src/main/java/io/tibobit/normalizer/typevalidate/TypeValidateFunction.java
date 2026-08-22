@@ -48,8 +48,9 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * <b>The control plane.</b> While the stream is untrusted the book downstream
  * is empty — the gap emitted a {@link #RESET} — and only the collector can fix
  * that, by re-sending a snapshot. So the two untrustworthy branches also put a
- * {@code snapshot_request} on the {@link #CONTROL} side output, repeated on an
- * interval until something resolves the condition. That whole feature is one
+ * {@code snapshot_request} on the {@link #CONTROL} side output, tagged with the
+ * {@code reason} that made the stream untrustworthy and repeated on an interval
+ * until something resolves the condition. That whole feature is one
  * piece of state, {@link #resyncRequestedAt}, and one method,
  * {@link #askForSnapshot}; there is no timer and no second flag. Job 2 is the
  * only producer of those commands.
@@ -269,6 +270,26 @@ public class TypeValidateFunction
     }
 
     /**
+     * Why this market needs a snapshot, for the {@code reason} field on the
+     * command: {@link #NO_BASELINE} if no baseline has ever been adopted,
+     * {@link #SEQUENCE_GAP} otherwise. Same discriminator the reject reasons
+     * use one line apart — {@code lastSeq} alone — so like everything else in
+     * the control plane it needs no state of its own.
+     *
+     * <p>
+     * It is stable for the whole episode, which is what makes a RETRY carry the
+     * same reason as the first ask: {@code lastSeq} only moves inside {@link
+     * #emit}, and while a resync is pending every event is rejected instead. So
+     * a retry says {@code sequence_gap} rather than the {@code
+     * awaiting_snapshot} its own trigger event was dead-lettered with — the
+     * reason describes what the collector is being asked to fix, not the
+     * bookkeeping state of the update that reminded us to ask.
+     */
+    private String resyncReason() throws Exception {
+        return lastSeq.value() == null ? NO_BASELINE : SEQUENCE_GAP;
+    }
+
+    /**
      * Asks the collector to re-send a snapshot for this market, unless we
      * already asked within {@code snapshotRetryMs}. Called from BOTH
      * untrustworthy branches on EVERY event they reject, which is what makes
@@ -296,6 +317,13 @@ public class TypeValidateFunction
      * updates, so the feed is by definition alive when an episode opens.
      *
      * <p>
+     * The command carries a {@code reason} saying why the snapshot is wanted,
+     * taken from {@link #resyncReason()} — so the collector can tell a market
+     * that has never had a baseline (nothing to apply updates to) from one
+     * whose book a gap invalidated, and can rate-limit or prioritise them
+     * differently if it ever needs to.
+     *
+     * <p>
      * Lineage is DERIVED, not inherited — same rule as {@link #emitReset} and
      * {@link #reject}. This is a write to a topic, so it mints its own id and
      * names the event that triggered it as its parent; inheriting would
@@ -315,6 +343,7 @@ public class TypeValidateFunction
         resyncRequestedAt.update(now);
         ctx.output(CONTROL, new ControlCommand(
                 ControlCommand.SNAPSHOT_REQUEST,
+                resyncReason(),
                 trigger.getExchangeId(),
                 trigger.getPairId(),
                 trigger.getSimulation(),

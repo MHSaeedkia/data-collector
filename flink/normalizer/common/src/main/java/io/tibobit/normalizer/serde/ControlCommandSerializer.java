@@ -43,6 +43,7 @@ public class ControlCommandSerializer implements SerializationSchema<ControlComm
     static GenericRecord toGenericRecord(ControlCommand command, Schema schema) {
         return new GenericRecordBuilder(schema)
                 .set("action", command.getAction())
+                .set("reason", command.getReason())
                 .set("exchange_id", command.getExchangeId())
                 .set("pair_id", command.getPairId())
                 .set("simulation", command.getSimulation())

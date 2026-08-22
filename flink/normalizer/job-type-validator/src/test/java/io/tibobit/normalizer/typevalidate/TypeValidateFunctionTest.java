@@ -442,6 +442,7 @@ class TypeValidateFunctionTest {
 
         assertThat(controlCommands()).singleElement().satisfies(cmd -> {
             assertThat(cmd.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+            assertThat(cmd.getReason()).isEqualTo(TypeValidateFunction.NO_BASELINE);
             assertThat(cmd.getExchangeId()).isEqualTo(6);
             assertThat(cmd.getPairId()).isEqualTo(1);
         });
@@ -455,9 +456,29 @@ class TypeValidateFunctionTest {
 
         assertThat(controlCommands()).singleElement().satisfies(cmd -> {
             assertThat(cmd.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+            assertThat(cmd.getReason()).isEqualTo(TypeValidateFunction.SEQUENCE_GAP);
             assertThat(cmd.getExchangeId()).isEqualTo(6);
             assertThat(cmd.getPairId()).isEqualTo(1);
         });
+    }
+
+    /**
+     * The two triggers have to be told apart on the topic, not just in the
+     * dead-letter stream: a market that has never had a baseline needs a first
+     * snapshot, one whose book a gap invalidated needs a replacement, and the
+     * collector may well answer them differently (a cold start asks for every
+     * subscribed market at once — see the class javadoc).
+     */
+    @Test
+    @DisplayName("control-plane: the reason distinguishes the two triggers on one key")
+    void reasonDistinguishesTheTwoTriggers() throws Exception {
+        send(delta(6, 1, "update", 5L, 1L));      // no baseline -> command 1
+        send(delta(6, 1, "snapshot", 10L, 1L));   // resolves it
+        send(delta(6, 1, "update", 15L, 1L));     // gap -> command 2
+
+        assertThat(controlCommands()).extracting(ControlCommand::getReason)
+                .containsExactly(TypeValidateFunction.NO_BASELINE,
+                        TypeValidateFunction.SEQUENCE_GAP);
     }
 
     /**
@@ -711,6 +732,8 @@ class TypeValidateFunctionTest {
         harness.setProcessingTime(600_000L);
         send(delta(8, 1, "update", 1900L, 300L));
         assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).extracting(ControlCommand::getReason)
+                .containsOnly(TypeValidateFunction.NO_BASELINE);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.NO_BASELINE,
                         TypeValidateFunction.NO_BASELINE);
@@ -768,6 +791,30 @@ class TypeValidateFunctionTest {
             assertThat(c.getSimulation()).isEqualTo(1);
             assertThat(c.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
         });
+    }
+
+    /**
+     * A retry is triggered by an update that is dead-lettered {@code
+     * awaiting_snapshot}, but that is bookkeeping about a request we already sent
+     * — it is not a reason to want a snapshot. The command has to keep naming the
+     * condition the collector is being asked to fix, which is the one that opened
+     * the episode.
+     */
+    @Test
+    @DisplayName("control-plane: a re-ask keeps the reason that OPENED the episode")
+    void retryKeepsTheEpisodeReason() throws Exception {
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP -> command at t=0
+        harness.setProcessingTime(60_000L);
+        send(delta(8, 1, "update", 99300L, 300L)); // awaiting_snapshot -> re-ask
+
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(controlCommands()).extracting(ControlCommand::getReason)
+                .containsOnly(TypeValidateFunction.SEQUENCE_GAP);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
+                        TypeValidateFunction.AWAITING_SNAPSHOT);
     }
 
     @Test

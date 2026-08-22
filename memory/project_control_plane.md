@@ -153,6 +153,51 @@ we put on the topic, and the moment it speaks its first update is rejected and a
 are themselves updates, so the feed is alive by definition when an episode opens. If the collector
 ever needs the silent case, a timer can be added ON TOP — but it must then cancel.
 
+## `reason` on the command (2026-08-22, user request)
+
+The command now says WHY, not just what: `reason` is `no_baseline` or `sequence_gap`, the same
+vocabulary as `reject_reason` on the dead-letter topic. Avro field added with `default: ""`, so
+registering it is a BACKWARD-compatible evolution — checked against the live registry before
+registering (`/compatibility/subjects/control-command/versions/latest` → `is_compatible: true`,
+then v2 = schema id 7).
+
+**It costs no state either, for the same reason the rest of the feature does not.** `resyncReason()`
+is `lastSeq == null ? NO_BASELINE : SEQUENCE_GAP` — the identical discriminator the reject reasons
+already use one line apart. `lastSeq` only moves inside `emit()`, and while a resync is pending
+every event is rejected instead, so it is FROZEN for the whole episode. That is what makes the
+value stable across retries without storing it.
+
+**A retry carries the reason that OPENED the episode, not `awaiting_snapshot`.** The update that
+prompts a re-ask is dead-lettered `awaiting_snapshot`, but that is bookkeeping about a request we
+already sent — it is not a reason to want a snapshot. The reason describes what the collector is
+being asked to fix. Consequence for anyone reading a scenario: a declared reason lines up with the
+FIRST reject of each episode in `WantRejects`, never with the holds after it, and
+`awaiting_snapshot` can never appear on the topic (the e2e `validate` now 400s a scenario that
+declares it).
+
+Two mutations, each killing a different set of the 43 unit tests: reason hardcoded to
+`sequence_gap` kills 3 (`noBaselineRequestsSnapshot`, `reasonDistinguishesTheTwoTriggers`,
+`noBaselineEpisodeIsRetried`); a retry reporting its trigger's own reject reason kills 3
+(`retryKeepsTheEpisodeReason`, `sequenceGapRequestsSnapshot`, `reasonDistinguishesTheTwoTriggers`).
+The second mutation catching `sequenceGapRequestsSnapshot` is not a mistake in the test — inside
+`askForSnapshot` the timestamp is written BEFORE the command is built, so `resyncPending()` is
+already true even on the first ask of an episode. Worth knowing before adding anything else that
+reads state in there.
+
+e2e: `Reason` is DECLARED and compared literally, like `simulation` and unlike the lineage. It is
+the first field that distinguishes two commands a scenario could otherwise not tell apart — 43's
+two wanted commands were byte-identical before it. Verified live 2026-08-22 on 02, 03, 10, 11, 30
+(negative control), 32, 33, 36, 38, 42, 43, 44, 45, and mutation-checked live by declaring 43's
+second command `no_baseline`, which failed on `control-plane record 1`. The topic was also read
+directly rather than only through the assertions — `{"action":"snapshot_request","reason":
+"sequence_gap","exchange_id":8,...}` — since a defaulted `""` and a carried value both compare
+equal when the fixture agrees.
+
+**Deploying it needs the schema re-registered AND job 2 resubmitted, in that order.**
+`ControlCommandSerializer` fetches the write schema lazily on first use and holds it, so a
+long-running job 2 keeps v1 and `GenericRecordBuilder.set("reason", …)` throws on a field its
+schema lacks. `scripts/warmup.sh` needs no edit — it registers from the file.
+
 ## One field, not three — the state collapse (2026-08-22)
 
 `awaitingSnapshot` and `snapshotRequested` were never independent. Every branch that set one set

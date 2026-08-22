@@ -278,8 +278,8 @@ var ControlEx6GapResyncGap = Scenario{
 	// Four dead letters, two commands. The count is the whole point: one per
 	// episode, and the second only because a snapshot re-synced in between.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
@@ -559,8 +559,8 @@ var ControlEx1NoBaselineThenGap = Scenario{
 	// One for the cold start, one for the gap. The REST snapshot at 02 and the
 	// delta at 03 that adopted its offset are what let the second one be sent.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "no_baseline", ExchangeID: 1, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
@@ -817,8 +817,8 @@ var ControlEx6StaleResyncAccepted = Scenario{
 	// Two episodes, two commands. The second one only exists if the stale resync
 	// at 05 was accepted AND cleared the flag.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
-		{Action: "snapshot_request", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62891", Quantity: "1"}},
@@ -1154,8 +1154,8 @@ var ControlEx1LaggingRestResync = Scenario{
 	// Two episodes, two commands. The second one only exists if the lagging REST
 	// snapshot at 06 was accepted AND cleared the flag.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
-		{Action: "snapshot_request", ExchangeID: 1, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
