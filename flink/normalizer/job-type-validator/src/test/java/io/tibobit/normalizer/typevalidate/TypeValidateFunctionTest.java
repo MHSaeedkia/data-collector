@@ -72,6 +72,17 @@ class TypeValidateFunctionTest {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
     }
 
+    /**
+     * ex5/bitget message: the sequence is a millisecond CLOCK on a nominal 600 ms cadence, so
+     * the event carries a jump tolerance and job 2 checks a window instead of an equality.
+     */
+    private static RawOrderBookEvent bitget(int pair, String type, long ts) {
+        RawOrderBookEvent event =
+                new RawOrderBookEvent(5, pair, type, ts, 600L, ts, List.of(), List.of());
+        event.setSequenceJumpTolerance(10L);
+        return event;
+    }
+
     private void send(RawOrderBookEvent e) throws Exception {
         harness.processElement(new StreamRecord<>(e));
     }
@@ -196,6 +207,78 @@ class TypeValidateFunctionTest {
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
                         TypeValidateFunction.STALE_OR_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("tolerant jump (ex5): both edges of the last+jump±tolerance window are contiguous")
+    void toleranceWindowEdgesAccepted() throws Exception {
+        long t0 = 1787404282000L;
+        send(bitget(1, "snapshot", t0));
+        send(bitget(1, "update", t0 + 590)); // low edge  -> ok
+        send(bitget(1, "update", t0 + 590 + 610)); // high edge -> ok
+        send(bitget(1, "update", t0 + 590 + 610 + 600)); // dead centre -> ok
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(t0, t0 + 590, t0 + 1200, t0 + 1800);
+        assertThat(rejects()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("tolerant jump (ex5): one millisecond outside the window is still a gap")
+    void toleranceWindowIsNotUnbounded() throws Exception {
+        long t0 = 1787404282000L;
+        send(bitget(1, "snapshot", t0));
+        send(bitget(1, "update", t0 + 611)); // 1 ms past the high edge -> gap
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(t0);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+    }
+
+    /**
+     * The consequence the user accepted when choosing to apply the window to EVERY transition
+     * (2026-08-22): bitget's own capture has the first update only 22 ms behind the snapshot,
+     * which is nowhere near 600, so it is dead-lettered and the book is reset. Pinned as a test
+     * because it is the live feed's ordinary shape, not a corner case — see todo.md.
+     */
+    @Test
+    @DisplayName("tolerant jump (ex5): the captured snapshot->update burst (+22ms) is rejected as a gap")
+    void capturedBurstAfterSnapshotIsAGap() throws Exception {
+        send(bitget(1, "snapshot", 1787404282388L));
+        send(bitget(1, "update", 1787404282410L)); // the real capture: +22 ms
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(1787404282388L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
+    }
+
+    @Test
+    @DisplayName("tolerant jump (ex5): a backwards ts is stale_or_duplicate, not a gap")
+    void toleranceWindowStillRejectsStale() throws Exception {
+        long t0 = 1787404282000L;
+        send(bitget(1, "snapshot", t0));
+        send(bitget(1, "update", t0 + 600)); // ok
+        send(bitget(1, "update", t0 + 600)); // duplicate ts
+        send(bitget(1, "update", t0 + 100)); // older
+
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
+                        TypeValidateFunction.STALE_OR_DUPLICATE);
+    }
+
+    @Test
+    @DisplayName("tolerance 0 (every other exchange) keeps the exact seq == last + jump check")
+    void zeroToleranceIsTheExactCheck() throws Exception {
+        send(delta(6, 1, "snapshot", 10L, 1L));
+        send(delta(6, 1, "update", 11L, 1L)); // exact -> ok
+        send(delta(6, 1, "update", 13L, 1L)); // +2 with tolerance 0 -> gap, not accepted
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(10L, 11L);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
     }
 
     @Test

@@ -21,7 +21,7 @@
 | `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
-| `ex5-raw` | bitget   | ✅ captured 2026-07-14 (snapshot; `seq` used for out-of-order check only) |
+| `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts` (jump 600 ± 10) |
 | `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture) |
 | `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
 | `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
@@ -329,66 +329,118 @@ Parsing notes (job 1):
 
 ## ex5-raw — bitget
 
-**Captured 2026-07-14** (supplied by team). Regime **re-confirmed: full snapshot on every
-message** (both sides present) — "bitget (ex5) is all snapshot" (user statement), and the
-message itself says so: `action: "snapshot"` — the FIRST exchange with an explicit
-snapshot/update discriminator on the wire.
+**⚠ REVISED 2026-08-22 — the "snapshot-only" assumption was WRONG, and the ordering field is
+GONE.** The feed moved off the `books50` channel onto the price-**grouped** `depth` channel
+(`arg.params.scale`), which changes three things at once:
 
-Sample (pretty-printed; level arrays trimmed — the real message carried **50 levels per side**,
-matching the `books50` channel name):
+1. **`action` now has TWO values**, `"snapshot"` and `"update"` — bitget is a true delta feed,
+   the fourth in scope after ex1/ex2 (REST+WS), ex6 and ex8. Qty `"0"` = level delete,
+   **confirmed on the wire** (see the update sample).
+2. **`seq` and `pseq` no longer exist.** The `checksum` that replaced them is a CRC
+   book-integrity value — **not monotonic, not a sequence, unusable by job 2.**
+3. `arg` gained `params.scale` and `instType` changed `"SPOT"` → `"sp"`; `arg.channel` is now
+   `depth`, so depth is no longer encoded in the channel name the way `books50` did.
+
+Because `seq` is gone the sequence id is the inner **`ts`** (STRING epoch millis), which is also
+the event time — the same double duty ex8/okx gives its `ts`. But where okx publishes on an exact
+300 ms cadence, bitget's is only **nominally 600 ms**, so ex5 is the ONE exchange with a nonzero
+`sequence_jump_tolerance`: **jump 600 ± 10**, and job 2 checks a window
+(`last + 590 ≤ ts ≤ last + 610`) instead of an equality. See memory/project_type_validator.md.
+
+**Snapshot sample** (level arrays trimmed — the real message carried **~160 asks and ~160 bids**;
+depth is no longer fixed by the channel name):
 
 ```json
 {
-  "id": "38f7b4d6-9c25-4e10-a83b-6d0f2c94e175",
-  "simulation": 1,
   "action": "snapshot",
   "arg": {
-    "instType": "SPOT",
-    "channel": "books50",
-    "instId": "BTCUSDT"
+    "instType": "sp",
+    "channel": "depth",
+    "instId": "BTCUSDT",
+    "params": { "scale": "0.01" }
   },
   "data": [
     {
       "asks": [
-        ["62815", "0.021591"],
-        ["62815.9", "0.001"],
-        ["62817.32", "0.015919"]
+        ["77208.71", "0.755945"],
+        ["77209.31", "0.140000"],
+        ["77209.32", "0.259388"]
       ],
       "bids": [
-        ["62814.99", "6.180672"],
-        ["62814.77", "0.1612"],
-        ["62814.23", "0.910845"]
+        ["77208.70", "0.141942"],
+        ["77208.54", "0.005000"],
+        ["77206.03", "0.000019"]
       ],
-      "ts": "1784026071995",
-      "seq": 655666926391,
-      "pseq": 0
+      "checksum": 0,
+      "ts": "1787404282388"
     }
   ],
-  "ts": 1784026072003
+  "ts": 1787404282388
 }
 ```
+
+**Update sample** (level arrays trimmed; note the qty-`"0"` deletes and the brand-new levels):
+
+```json
+{
+  "action": "update",
+  "arg": {
+    "instType": "sp",
+    "channel": "depth",
+    "instId": "BTCUSDT",
+    "params": { "scale": "0.01" }
+  },
+  "data": [
+    {
+      "asks": [
+        ["77208.71", "0"],
+        ["77209.31", "0"],
+        ["77209.34", "0.005000"],
+        ["77213.59", "0.005970"]
+      ],
+      "bids": [
+        ["77209.33", "1.636034"],
+        ["77208.71", "0.423759"],
+        ["77201.53", "0"]
+      ],
+      "checksum": -1105358608,
+      "ts": "1787404282410"
+    }
+  ],
+  "ts": 1787404282410
+}
+```
+
+**⚠ The two samples above are 22 ms apart** (`…388` → `…410`), nowhere near 600. The user decided
+2026-08-22 that the ± 10 window applies to **every** transition, snapshot→update included, so on
+the live feed a burst like this one is dead-lettered `sequence_gap`, resets the book and asks the
+control plane for a fresh snapshot. Pinned as an expected result in
+`TypeValidateFunctionTest.capturedBurstAfterSnapshotIsAGap`; open risk in todo.md.
 
 Parsing notes (job 1):
 
 - **Envelope**: NOT Centrifugo — bitget's own WS shape: top-level `action` / `arg` / `data` /
-  `ts`. Market key is `arg.instId` (`BTCUSDT`, must match `exchange_markets.market`); `arg.channel`
-  is `books50` (depth encoded in the channel name), `arg.instType` is `SPOT`.
-- **`data` is an ARRAY** containing the book object (one element in this sample) — the parser
-  must unwrap the array, not treat `data` as an object.
-- **`action: "snapshot"` is an explicit discriminator** — unlike ex1–ex4, no need to infer the
-  regime from the feed. Snapshot-only per the user, so other `action` values are not expected
-  on the book channel (any unrecognized frame is discarded per the message-types rule above).
+  `ts`, the same family as ex8/okx. Market key is `arg.instId` (`BTCUSDT`, must match
+  `exchange_markets.market`).
+- **`data` is an ARRAY** containing the book object (one element in both samples) — the parser
+  must unwrap the array, not treat `data` as an object. It emits one event per element, so one
+  Kafka record can fan out into several events.
+- **`action` is the regime discriminator**, now `"snapshot" | "update"`. Any other value is noise
+  and is discarded per the message-types rule above.
 - **Levels**: `asks`/`bids` are `[price, qty]` **string** pairs ✅ (BigDecimal-from-string, no
-  numeric-literal hazard). Asks price-ascending, bids price-descending (best-first both sides,
-  unlike ramzinex). Prices may lack decimals (`"62815"`, `"62800"`).
-- **`seq`: ordering field for the job-2 out-of-order check** (REVISED 2026-07-14, user:
-  snapshot feeds still need out-of-order detection — no gap/jump rule, but drop any message
-  whose `seq` is not greater than the last seen). Note the discarded capture showed
-  non-monotonic `seq` in the topic — under the revised rule that is no longer a reason to
-  distrust the field: it is exactly the out-of-order arrival the check exists to drop.
-  Inner `ts` (string epoch-millis) is a fallback candidate. `pseq` stays metadata.
-- **Two timestamps**: inner `ts` is a **string** epoch-millis (`"1784026071995"`), top-level
-  `ts` a JSON **number** (1784026072003, slightly later — likely send time). Metadata.
+  numeric-literal hazard). Asks price-ascending, bids price-descending (best-first both sides) on
+  BOTH frames. Prices may lack decimals.
+- **A side may be absent on an update** — the parser nulls the missing side rather than dropping
+  the frame (job 5 reads null as "leave this side alone"), matching ex8/okx. Both captured frames
+  happen to carry both sides.
+- **Sequence**: inner `ts` (parse the string to long), **jump 600, tolerance 10**. It is the ONLY
+  ordering signal on the wire. `checksum` is metadata — bitget intends it for CRC verification of
+  the top of the book, which this pipeline does not implement (todo.md).
+- **Two timestamps**: inner `ts` is a **string** epoch-millis (`"1787404282388"`), top-level `ts`
+  a JSON **number**. In both captures they are equal, unlike the old `books50` frames where the
+  outer one was slightly later. Only the inner one is read.
+- **`scale` is a price-GROUPING bucket** (`"0.01"` here), like okx's `grouping` — it explains the
+  level spacing, it is not a wire rule and job 1 ignores it.
 
 ## ex6-raw — bybit
 
@@ -460,7 +512,7 @@ Parsing notes (job 1):
   `cts`. Fifth distinct envelope shape in the set.
 - **Market key**: `data.s` (`BTCUSDT` → `exchange_markets.market`); also embedded in the
   `topic` string (`orderbook.{depth}.{symbol}` — depth 50 encoded there, like bitget's
-  `books50`).
+  old `books50`; bitget's current `depth` channel no longer encodes it).
 - **`type` is the regime discriminator**: `"snapshot"` (full book, 50 levels/side) or
   `"delta"` (only changed levels — a delta may touch one side only, or replace/insert/delete
   levels). This is what job 2's snapshot/update classification reads.
@@ -581,9 +633,11 @@ qty-`"0"` delete at ask `62773` and the brand-new ask level `62931`):
 Parsing notes (job 1):
 
 - **NOT Centrifugo — same envelope family as bitget (ex5)**: `arg` / `action` / `data`-ARRAY.
-  Differences from bitget: no top-level `ts`, no `instType`, `arg` carries a `grouping`
-  field, and `action` has TWO values (`snapshot`/`update`) instead of snapshot-only. Not a
-  new envelope shape — a variant of ex5's.
+  Differences from bitget: no top-level `ts`, no `instType`, and the price-grouping bucket is
+  spelled `grouping` rather than `params.scale`. Not a new envelope shape — a variant of ex5's.
+  Since ex5's 2026-08-22 revision the two are closer still: both are `snapshot`/`update` delta
+  feeds keyed on a string `ts`. The one rule that differs is the cadence — okx's 300 ms is
+  exact, bitget's 600 ms needs a ± 10 window.
 - **Market key**: `arg.instId` (`BTC-USDT` → `exchange_markets.market`) — note the DASH,
   unlike every other exchange's `BTCUSDT`. Channel identity is `arg.channel`
   (`books-grouped`) + `arg.grouping` (`"1"`): a price-GROUPED book with bucket size 1 —
@@ -591,7 +645,8 @@ Parsing notes (job 1):
 - **`action` is the regime discriminator**: `"snapshot"` (full book) or `"update"` (only
   changed levels — may include deletes and brand-new prices). This is what job 2's
   snapshot/update classification reads. (Third exchange with an explicit discriminator,
-  after bitget's `action` and bybit's `type`.)
+  after bitget's `action` and bybit's `type` — and since 2026-08-22 bitget's `action` carries
+  both values too, so this is no longer the only `action`-based delta feed.)
 - **`data` is an ARRAY** wrapping a single book object (like bitget) — parser must unwrap.
   Whether >1 element can occur is unverified.
 - **Sides are `asks` / `bids`**, `[price, qty]` **string** pairs ✅ (no JSON-number
