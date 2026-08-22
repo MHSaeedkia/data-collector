@@ -609,9 +609,14 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands()).isEmpty();
     }
 
-    // ---- control-plane: retrying a request nothing answered (2026-08-19) --------
+    // ---- control-plane: re-asking for a request nothing answered ---------------
+    //
+    // The retry is driven by REJECTED EVENTS, not by a timer: every event the two
+    // untrustworthy branches turn away also asks, and the ask is suppressed unless
+    // snapshotRetryMs has passed since the last one. So a retry needs BOTH the clock
+    // to move and an event to arrive, and these tests drive both by hand.
 
-    /** Reopens the harness with a short retry interval so timers can be driven by hand. */
+    /** Reopens the harness with a short retry interval, clock at zero. */
     private void withRetryInterval(long ms) throws Exception {
         harness.close();
         KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator =
@@ -624,27 +629,55 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("control-plane: an unanswered request is re-asked on the retry interval")
+    @DisplayName("control-plane: an unanswered request is re-asked once the interval has passed")
     void unansweredRequestIsRetried() throws Exception {
         withRetryInterval(60_000L);
         send(delta(8, 1, "snapshot", 1000L, 300L));
         send(delta(8, 1, "update", 1300L, 300L));
-        send(delta(8, 1, "update", 99000L, 300L)); // GAP — nothing will answer it
+        send(from(delta(8, 1, "update", 99000L, 300L), "job1-gap")); // GAP — unanswered
         assertThat(controlCommands()).hasSize(1);
 
+        // The feed keeps talking, as a feed does after a gap. Every one of these is held
+        // as awaiting_snapshot, and each one is a chance to re-ask.
         harness.setProcessingTime(60_000L);
+        send(from(delta(8, 1, "update", 99300L, 300L), "job1-held-1"));
         assertThat(controlCommands()).hasSize(2);
+
         harness.setProcessingTime(120_000L);
+        send(from(delta(8, 1, "update", 99600L, 300L), "job1-held-2"));
         assertThat(controlCommands()).hasSize(3);
 
-        // every retry is its own record but names the same triggering update as its parent
+        // Each retry is its own record, and names the update it was sent alongside rather
+        // than re-naming the original gap — so every command points at a record that is
+        // really on the dead-letter topic, and the three are distinguishable.
         assertThat(controlCommands()).extracting(ControlCommand::getId).doesNotHaveDuplicates();
-        assertThat(controlCommands()).extracting(ControlCommand::getSourceIds)
-                .containsOnly(controlCommands().get(0).getSourceIds());
+        assertThat(controlCommands()).flatExtracting(ControlCommand::getSourceIds)
+                .containsExactly("job1-gap", "job1-held-1", "job1-held-2");
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP,
+                        TypeValidateFunction.AWAITING_SNAPSHOT,
+                        TypeValidateFunction.AWAITING_SNAPSHOT);
     }
 
     @Test
-    @DisplayName("control-plane: retrying stops once a snapshot resolves the episode")
+    @DisplayName("control-plane: rejected events inside the interval do NOT re-ask")
+    void rejectionsInsideTheIntervalDoNotReAsk() throws Exception {
+        // The flood check, and the reason the ask is time-based rather than per-event: a
+        // busy feed can reject hundreds of updates between two retries and must still
+        // produce exactly one command.
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        send(delta(8, 1, "update", 99000L, 300L)); // GAP -> one command at t=0
+        for (long i = 1; i <= 20; i++) {
+            harness.setProcessingTime(i * 1_000L); // 20s of traffic, well inside the interval
+            send(delta(8, 1, "update", 99000L + i * 300L, 300L));
+        }
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(rejects()).hasSize(21);
+    }
+
+    @Test
+    @DisplayName("control-plane: re-asking stops once a snapshot resolves the episode")
     void retryStopsAfterResolution() throws Exception {
         withRetryInterval(60_000L);
         send(delta(8, 1, "snapshot", 1000L, 300L));
@@ -652,21 +685,81 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands()).hasSize(1);
 
         send(delta(8, 1, "snapshot", 99300L, 300L)); // the answer arrives
-        harness.setProcessingTime(600_000L);        // long past several retry deadlines
-        assertThat(controlCommands()).hasSize(1);   // the leftover timer is a no-op
+        // Long past several intervals, with the feed healthy again: nothing more is asked.
+        harness.setProcessingTime(600_000L);
+        send(delta(8, 1, "update", 99600L, 300L));
+        harness.setProcessingTime(1_200_000L);
+        send(delta(8, 1, "update", 99900L, 300L));
+        assertThat(controlCommands()).hasSize(1);
     }
 
     @Test
-    @DisplayName("control-plane: a retry targets the same market and carries its simulation flag")
+    @DisplayName("control-plane: a no_baseline episode re-asks too, not just a gap")
+    void noBaselineEpisodeIsRetried() throws Exception {
+        // The cold-start case, and the one a job restart produces on every delta key at
+        // once. lastSeq stays null, so every update rejects no_baseline and the episode
+        // can only end when a snapshot finally lands.
+        withRetryInterval(60_000L);
+        send(delta(8, 1, "update", 1000L, 300L)); // no baseline -> one command at t=0
+        assertThat(controlCommands()).hasSize(1);
+
+        harness.setProcessingTime(60_000L);
+        send(delta(8, 1, "update", 1300L, 300L));
+        assertThat(controlCommands()).hasSize(2);
+
+        send(delta(8, 1, "snapshot", 1600L, 300L)); // baseline at last
+        harness.setProcessingTime(600_000L);
+        send(delta(8, 1, "update", 1900L, 300L));
+        assertThat(controlCommands()).hasSize(2);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.NO_BASELINE,
+                        TypeValidateFunction.NO_BASELINE);
+    }
+
+    @Test
+    @DisplayName("control-plane: overlapping episodes do not multiply the ask rate")
+    void overlappingEpisodesDoNotMultiplyTheAskRate() throws Exception {
+        // The defect the timer version had: it registered a chain per episode and
+        // cancelled none, so two episodes inside one interval left two live chains and
+        // the command rate doubled permanently. With one timestamp per key there is
+        // nothing to stack — a second episode overwrites the first's clock.
+        withRetryInterval(60_000L);
+        send(delta(6, 1, "snapshot", 100L, 1L));
+        send(delta(6, 1, "update", 500L, 1L));   // GAP #1 at t=0 -> command 1
+
+        harness.setProcessingTime(10_000L);
+        send(delta(6, 1, "snapshot", 600L, 1L)); // resolved, well inside the interval
+        send(delta(6, 1, "update", 601L, 1L));
+
+        harness.setProcessingTime(20_000L);
+        send(delta(6, 1, "update", 900L, 1L));   // GAP #2 -> command 2, clock restarts here
+        assertThat(controlCommands()).hasSize(2);
+
+        // From here the ask rate must be ONE per interval, not one per episode ever
+        // opened. t=70k is 50s after the second ask, so it is still suppressed.
+        harness.setProcessingTime(70_000L);
+        send(delta(6, 1, "update", 901L, 1L));
+        assertThat(controlCommands()).hasSize(2);
+
+        harness.setProcessingTime(80_000L); // now 60s after the ask at t=20k
+        send(delta(6, 1, "update", 902L, 1L));
+        assertThat(controlCommands()).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("control-plane: a re-ask targets the same market and carries its simulation flag")
     void retryCommandTargetsTheSameMarket() throws Exception {
         withRetryInterval(60_000L);
         RawOrderBookEvent snapshot = delta(6, 4, "snapshot", 10L, 1L);
         snapshot.setSimulation(1);
         RawOrderBookEvent gap = delta(6, 4, "update", 900L, 1L);
         gap.setSimulation(1);
+        RawOrderBookEvent held = delta(6, 4, "update", 901L, 1L);
+        held.setSimulation(1);
         send(snapshot);
         send(gap);
         harness.setProcessingTime(60_000L);
+        send(held);
 
         assertThat(controlCommands()).hasSize(2);
         assertThat(controlCommands()).allSatisfy(c -> {
@@ -678,12 +771,15 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("control-plane: a healthy market never registers a retry")
+    @DisplayName("control-plane: a healthy market never asks, however long it runs")
     void healthyMarketNeverRetries() throws Exception {
         withRetryInterval(60_000L);
         send(delta(8, 1, "snapshot", 1000L, 300L));
         send(delta(8, 1, "update", 1300L, 300L));
         harness.setProcessingTime(600_000L);
+        send(delta(8, 1, "update", 1600L, 300L));
+        harness.setProcessingTime(1_200_000L);
+        send(delta(8, 1, "update", 1900L, 300L));
         assertThat(controlCommands()).isEmpty();
     }
 }

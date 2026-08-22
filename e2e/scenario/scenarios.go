@@ -66,4 +66,11 @@ var Scenarios = []struct {
 	// rather than by exchange; see data_control.go.
 	{"42-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
 	{"43-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
+
+	// Control plane — the resync the ordering guards used to throw away, which
+	// is the deadlock fixed on 2026-08-19. 44 is the sequenced guard, 45 the
+	// event-time one; both prove the resync was ACCEPTED and that the episode
+	// re-armed. See data_control.go.
+	{"44-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
+	{"45-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
 }

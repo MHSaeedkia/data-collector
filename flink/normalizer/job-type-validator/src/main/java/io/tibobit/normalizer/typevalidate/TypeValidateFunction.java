@@ -5,7 +5,6 @@ import java.util.List;
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.streaming.api.TimerService;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
@@ -35,20 +34,35 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * <li><b>Snapshot</b> ({@code type == "snapshot"}): a fresh baseline, but
  * out-of-order/duplicate dropped — reject {@code stale_or_duplicate} if
  * {@code sequence_id <= lastSeq}. Otherwise it re-syncs the book: store
- * {@code lastSeq}, clear {@code awaitingSnapshot}.</li>
+ * {@code lastSeq} and mark the stream trusted again.</li>
  * <li><b>Update</b> ({@code type == "update"}, delta feeds ex1/ex6/ex8): needs
  * a baseline and a contiguous sequence. No baseline yet → {@code no_baseline};
  * still waiting to re-sync after a gap → {@code awaiting_snapshot};
  * {@code sequence_id == lastSeq + sequence_jump} → valid;
  * {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
- * forward jump is a gap → {@code sequence_gap} + set {@code awaitingSnapshot}
- * (every update rejected until the next snapshot re-syncs).</li>
+ * forward jump is a gap → {@code sequence_gap}, and the stream is marked
+ * untrusted (every update rejected until the next snapshot re-syncs).</li>
  * </ul>
  *
- * State per key: {@code lastSeq} (last accepted sequence id) and
- * {@code awaitingSnapshot}. Topics are single-partition so per-key order holds;
- * no checkpointing configured (cold-start gap shared with the rest of the
- * platform — book is unvalidated until the first snapshot after a restart).
+ * <p>
+ * <b>The control plane.</b> While the stream is untrusted the book downstream
+ * is empty — the gap emitted a {@link #RESET} — and only the collector can fix
+ * that, by re-sending a snapshot. So the two untrustworthy branches also put a
+ * {@code snapshot_request} on the {@link #CONTROL} side output, repeated on an
+ * interval until something resolves the condition. That whole feature is one
+ * piece of state, {@link #resyncRequestedAt}, and one method,
+ * {@link #askForSnapshot}; there is no timer and no second flag. Job 2 is the
+ * only producer of those commands.
+ *
+ * <p>
+ * State per key: {@code lastSeq} (last accepted sequence id),
+ * {@code lastEventTime} (ordering for null-seq snapshots),
+ * {@code baselinePending} (the ex1 REST resync bootstrap) and
+ * {@code resyncRequestedAt}. Topics are single-partition so per-key order
+ * holds; no checkpointing configured (cold-start gap shared with the rest of
+ * the platform — book is unvalidated until the first snapshot after a restart,
+ * which on a delta feed means every key opens a {@code no_baseline} episode and
+ * asks at once).
  */
 public class TypeValidateFunction
         extends KeyedProcessFunction<String, RawOrderBookEvent, RawOrderBookEvent> {
@@ -60,7 +74,8 @@ public class TypeValidateFunction
     };
 
     /**
-     * Control-plane side output: snapshot_request commands routed to NiFi. NEW.
+     * Control-plane side output: snapshot_request commands routed to the
+     * collector.
      */
     public static final OutputTag<ControlCommand> CONTROL = new OutputTag<>("control") {
     };
@@ -80,22 +95,34 @@ public class TypeValidateFunction
     static final String RESET = "reset";
 
     private transient ValueState<Long> lastSeq;
-    private transient ValueState<Boolean> awaitingSnapshot;
     private transient ValueState<Boolean> baselinePending;
     private transient ValueState<Long> lastEventTime;
 
-    // NEW: guards against re-sending snapshot_request on every rejected event while
-    // we
-    // wait for the snapshot that resolves the gap/no-baseline condition.
-    private transient ValueState<Boolean> snapshotRequested;
-
-    // A snapshot_request that nothing answers used to strand the key forever: one command is sent
-    // per episode, and the episode only ends when a snapshot is ACCEPTED. If the command is lost,
-    // NiFi is down, or nothing is consuming control-plane, every later update rejects
-    // awaiting_snapshot and no further request is ever made. These two remember what the timer
-    // needs to rebuild the command — onTimer is handed no event.
-    private transient ValueState<Integer> pendingSimulation;
-    private transient ValueState<String> pendingSourceId;
+    /**
+     * Processing-time millis at which this key last asked for a snapshot, or
+     * {@code null} while the stream is trusted and nothing is outstanding. This
+     * ONE field is the whole control plane's state, and it does three jobs:
+     *
+     * <ul>
+     * <li><b>"the book is untrustworthy"</b> — it replaces the old
+     * {@code awaitingSnapshot} flag outright. The two were never independent:
+     * every branch that set one set the other, and they diverged only on the
+     * {@code no_baseline} path, which is already discriminated one line earlier
+     * by {@code lastSeq == null}. Keeping both was what made the resync
+     * deadlock so hard to see — a state machine with two flags for one
+     * condition has states that should not exist, and it reached one.</li>
+     * <li><b>"a request is outstanding"</b> — see {@link #resyncPending()}, the
+     * exemption that stops the ordering guards from throwing away the very
+     * snapshot they asked for.</li>
+     * <li><b>"and we asked at T"</b> — which is what makes re-asking a
+     * comparison rather than a timer. See {@link #askForSnapshot}.</li>
+     * </ul>
+     *
+     * <p>
+     * Non-null therefore means exactly: the book cannot be trusted, we have
+     * asked for a replacement, and here is when. Nothing else needs storing.
+     */
+    private transient ValueState<Long> resyncRequestedAt;
 
     /** Default re-ask interval; overridden per job by SNAPSHOT_RETRY_MS. */
     static final long DEFAULT_SNAPSHOT_RETRY_MS = 300_000L;
@@ -114,18 +141,12 @@ public class TypeValidateFunction
     public void open(OpenContext openContext) {
         lastSeq = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastSeq", Long.class));
-        awaitingSnapshot = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("awaitingSnapshot", Boolean.class));
         baselinePending = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("baselinePending", Boolean.class));
         lastEventTime = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastEventTime", Long.class));
-        snapshotRequested = getRuntimeContext().getState( // NEW
-                new ValueStateDescriptor<>("snapshotRequested", Boolean.class));
-        pendingSimulation = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("pendingSimulation", Integer.class));
-        pendingSourceId = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("pendingSourceId", String.class));
+        resyncRequestedAt = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("resyncRequestedAt", Long.class));
     }
 
     @Override
@@ -146,13 +167,12 @@ public class TypeValidateFunction
         // set but never consumed).
         if (event.getSequenceId() == null) {
             Long lastEt = lastEventTime.value();
-            if (!resyncOutstanding() && lastEt != null && event.getEventTime() < lastEt) {
+            if (!resyncPending() && lastEt != null && event.getEventTime() < lastEt) {
                 reject(event, OUT_OF_ORDER, ctx);
                 return;
             }
             baselinePending.update(true);
-            awaitingSnapshot.update(false);
-            snapshotRequested.update(false); // NEW: this resync satisfies any pending request
+            resyncTrusted(); // this resync answers any outstanding request
             emit(event, out);
             return;
         }
@@ -161,13 +181,12 @@ public class TypeValidateFunction
         Long last = lastSeq.value();
 
         if ("snapshot".equals(event.getType())) {
-            if (!resyncOutstanding() && last != null && seq <= last) {
+            if (!resyncPending() && last != null && seq <= last) {
                 reject(event, STALE_OR_DUPLICATE, ctx);
                 return;
             }
             lastSeq.update(seq);
-            awaitingSnapshot.update(false);
-            snapshotRequested.update(false); // NEW: the requested snapshot has arrived
+            resyncTrusted(); // the requested snapshot has arrived
             emit(event, out);
             return;
         }
@@ -179,16 +198,22 @@ public class TypeValidateFunction
             // baseline unconditionally, then resume contiguity checks from there.
             lastSeq.update(seq);
             baselinePending.update(false);
-            snapshotRequested.update(false); // NEW: baseline established, any request is moot
+            resyncTrusted(); // baseline established, any request is moot
             emit(event, out);
             return;
         }
+        // The two untrustworthy conditions. Both ask, and both keep asking on the retry
+        // interval for as long as the condition holds — see askForSnapshot. They are told
+        // apart by lastSeq alone: no baseline has ever been set (cold start, or a restart),
+        // versus a baseline that a gap invalidated. That is why the control plane needs no
+        // flag of its own to distinguish them.
         if (last == null) {
-            requestSnapshotOnce(event, ctx); // NEW
+            askForSnapshot(event, ctx);
             reject(event, NO_BASELINE, ctx);
             return;
         }
-        if (Boolean.TRUE.equals(awaitingSnapshot.value())) {
+        if (resyncPending()) {
+            askForSnapshot(event, ctx);
             reject(event, AWAITING_SNAPSHOT, ctx);
             return;
         }
@@ -198,8 +223,9 @@ public class TypeValidateFunction
         } else if (seq <= last) {
             reject(event, STALE_OR_DUPLICATE, ctx);
         } else {
-            awaitingSnapshot.update(true);
-            requestSnapshotOnce(event, ctx); // NEW
+            // Reached only when no resync is pending (the branch above returns otherwise),
+            // so the reset marker fires exactly once per episode, as it always has.
+            askForSnapshot(event, ctx);
             emitReset(event, out);
             reject(event, SEQUENCE_GAP, ctx);
         }
@@ -212,91 +238,88 @@ public class TypeValidateFunction
      * arrived yet.
      *
      * <p>
-     * The two ordering guards below — {@code out_of_order} on a null-seq
-     * snapshot and {@code stale_or_duplicate} on a sequenced one — exist to
-     * stop an OLD snapshot overwriting a GOOD book. While a resync is
-     * outstanding there is no good book to protect, so they do not apply and
-     * the resync snapshot is accepted whatever its clock says.
+     * The two ordering guards — {@code out_of_order} on a null-seq snapshot and
+     * {@code stale_or_duplicate} on a sequenced one — exist to stop an OLD
+     * snapshot overwriting a GOOD book. While a resync is pending there is no
+     * good book to protect, so they do not apply and the resync snapshot is
+     * accepted whatever its clock says.
      *
      * <p>
-     * Without this exemption the key deadlocks. The ex1/ex2 resync snapshot is
-     * the null-seq REST one, and its {@code event_time} comes from a different
-     * clock than the WS deltas that set {@code lastEventTime} — so it can
-     * easily look "old" and be rejected. {@code
-     * lastEventTime} only advances inside {@link #emit}, which a rejected event
-     * never reaches, so every subsequent snapshot is rejected on the same stale
-     * comparison while every update rejects {@code awaiting_snapshot}. Nothing
-     * clears {@code snapshotRequested}, so no further command is ever sent and
-     * the market stays dark until the job restarts.
+     * Without this exemption the key deadlocks, which is the bug this feature
+     * shipped with. The ex1/ex2 resync snapshot is the null-seq REST one, and
+     * its {@code event_time} comes from a different clock than the WS deltas
+     * that set {@code lastEventTime} — so it can easily look "old" and be
+     * rejected. {@code lastEventTime} only advances inside {@link #emit}, which
+     * a rejected event never reaches, so every subsequent snapshot fails the
+     * identical stale comparison: the guard that rejected the resync is the
+     * guard that can never afterwards be satisfied.
      *
      * <p>
      * Accepting an out-of-date snapshot here is strictly better than that: the
      * book was already emptied by the reset, so an old book beats no book, and
      * the next update re-anchors the baseline (or gaps again and asks again).
      */
-    private boolean resyncOutstanding() throws Exception {
-        return Boolean.TRUE.equals(snapshotRequested.value());
+    private boolean resyncPending() throws Exception {
+        return resyncRequestedAt.value() != null;
+    }
+
+    /** The book can be trusted again: whatever we asked for has arrived. */
+    private void resyncTrusted() throws Exception {
+        resyncRequestedAt.clear();
     }
 
     /**
-     * Emits a snapshot_request control command exactly once per gap/no-baseline
-     * episode — a second call before the flag is cleared is a no-op, so NiFi
-     * doesn't get flooded with duplicate requests while every subsequent update
-     * keeps rejecting on the same condition.
-     */
-    private void requestSnapshotOnce(RawOrderBookEvent event, Context ctx) throws Exception {
-        if (Boolean.TRUE.equals(snapshotRequested.value())) {
-            return;
-        }
-        snapshotRequested.update(true);
-        pendingSimulation.update(event.getSimulation());
-        pendingSourceId.update(event.getId());
-        // Lineage is DERIVED, not inherited — same rule as emitReset and reject below. This is a
-        // write to a topic, so it mints its own id and names the event that triggered it as its
-        // parent; inheriting would duplicate the raw event's id (which is already carried inside
-        // the dead-letter envelope) and point one hop too far back. simulation IS carried: a gap
-        // in simulated data must not make NiFi call a real exchange.
-        ctx.output(CONTROL, snapshotRequest(event.getExchangeId(), event.getPairId(),
-                event.getSimulation(), event.getId()));
-        scheduleRetry(ctx.timerService());
-    }
-
-    /**
-     * Re-asks while the episode is still unresolved. Fires only if {@code snapshotRequested} is
-     * still set — a timer left over from an episode that recovered is a no-op, which is why no
-     * state tracks or cancels them.
+     * Asks the collector to re-send a snapshot for this market, unless we
+     * already asked within {@code snapshotRetryMs}. Called from BOTH
+     * untrustworthy branches on EVERY event they reject, which is what makes
+     * the first ask and the hundredth retry the same line of code: the only
+     * question either time is "have we asked recently?".
      *
-     * <p>Each retry is its own record on the topic so it mints its own id, and its parent stays
-     * the update whose gap opened the episode: that event is still the cause, the timer is only
-     * the trigger.
+     * <p>
+     * <b>Why this is not a timer.</b> The request has to be repeated, because
+     * one command per episode plus an episode that only ends on an ACCEPTED
+     * snapshot means a single lost command leaves the market dark until the job
+     * restarts. The obvious mechanism is a processing-time timer, and it is the
+     * wrong one: {@code onTimer} is handed no event, so it needs the exchange,
+     * pair, simulation flag and parent id copied into state or parsed back out
+     * of the key; and timers are registered per episode but cancelled nowhere,
+     * so two episodes inside one retry interval leave two live timer chains,
+     * each re-arming the other forever. Rejections, meanwhile, arrive exactly
+     * when a retry is worth sending and carry all four fields already.
+     *
+     * <p>
+     * The one case a timer covers and this does not is a market that goes
+     * SILENT after the gap: no events, so no retries. That is deliberate. A
+     * feed sending nothing cannot be re-synced by anything we put on the topic
+     * — and the moment it speaks again, its first update is rejected and asks.
+     * Both triggers ({@code no_baseline}, {@code sequence_gap}) are themselves
+     * updates, so the feed is by definition alive when an episode opens.
+     *
+     * <p>
+     * Lineage is DERIVED, not inherited — same rule as {@link #emitReset} and
+     * {@link #reject}. This is a write to a topic, so it mints its own id and
+     * names the event that triggered it as its parent; inheriting would
+     * duplicate the raw event's id (already carried inside the dead-letter
+     * envelope) and point one hop too far back. Every command therefore names
+     * the update that was dead-lettered alongside it, retries included, so a
+     * request can always be tied to a record on the rejected topic. {@code
+     * simulation} IS carried: a gap in simulated data must not make the
+     * collector call a real exchange.
      */
-    @Override
-    public void onTimer(long timestamp, OnTimerContext ctx, Collector<RawOrderBookEvent> out)
-            throws Exception {
-        if (!Boolean.TRUE.equals(snapshotRequested.value())) {
+    private void askForSnapshot(RawOrderBookEvent trigger, Context ctx) throws Exception {
+        long now = ctx.timerService().currentProcessingTime();
+        Long askedAt = resyncRequestedAt.value();
+        if (askedAt != null && now - askedAt < snapshotRetryMs) {
             return;
         }
-        // The key is exactly ExchangePairKey's "{exchange_id}|{pair_id}" (see TypeValidatorJob);
-        // pinned by retryCommandTargetsTheSameMarket so a change to the key selector cannot
-        // silently send requests for the wrong market.
-        String[] key = ctx.getCurrentKey().split("\\|", 2);
-        Integer simulation = pendingSimulation.value();
-        String sourceId = pendingSourceId.value();
-        ctx.output(CONTROL, snapshotRequest(
-                Integer.parseInt(key[0]), Integer.parseInt(key[1]),
-                simulation == null ? 0 : simulation,
-                sourceId == null ? "" : sourceId));
-        scheduleRetry(ctx.timerService());
-    }
-
-    private static ControlCommand snapshotRequest(int exchangeId, int pairId, int simulation,
-            String sourceId) {
-        return new ControlCommand(ControlCommand.SNAPSHOT_REQUEST, exchangeId, pairId, simulation,
-                Lineage.newId(), List.of(sourceId));
-    }
-
-    private void scheduleRetry(TimerService timers) {
-        timers.registerProcessingTimeTimer(timers.currentProcessingTime() + snapshotRetryMs);
+        resyncRequestedAt.update(now);
+        ctx.output(CONTROL, new ControlCommand(
+                ControlCommand.SNAPSHOT_REQUEST,
+                trigger.getExchangeId(),
+                trigger.getPairId(),
+                trigger.getSimulation(),
+                Lineage.newId(),
+                List.of(trigger.getId())));
     }
 
     /**
@@ -304,7 +327,7 @@ public class TypeValidateFunction
      * gap event's identity and event time but no book (null sides, null
      * sequence). Reached only on the not-awaiting → awaiting transition, so it
      * fires exactly once per gap episode — subsequent updates return at the
-     * {@code awaitingSnapshot} reject above. A fresh {@link
+     * {@code awaiting_snapshot} reject above. A fresh {@link
      * io.tibobit.normalizer.model.PipelineTimings} (not the gap event's) is
      * used so stamping {@code type_validate_out} here does not leak onto the
      * event that is still being dead-lettered.

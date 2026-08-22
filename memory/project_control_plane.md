@@ -49,8 +49,9 @@ is subscribed. 1h retention: a command that old has been overtaken by whatever h
 **Keyed `{exchange_id}|{pair_id}`** even though the topic is single-partition, so ordering per
 market survives if it is ever repartitioned.
 
-**Once per EPISODE, not once per rejected event.** A `snapshotRequested` ValueState per key
-guards it. After a gap every subsequent update also rejects (`awaiting_snapshot`), and one
+**Once per EPISODE, not once per rejected event** (and then once per retry interval for as long
+as the episode lasts — see the redesign below). A `resyncRequestedAt` ValueState per key guards
+it. After a gap every subsequent update also rejects (`awaiting_snapshot`), and one
 request per rejected update would flood NiFi for as long as the feed keeps talking. The flag
 clears on the three branches that actually resolve the condition — a sequenced snapshot, a
 null-seq (ex1/ex2 REST) snapshot, and the first update that adopts a baseline after one — so the
@@ -106,41 +107,135 @@ path that clears `awaitingSnapshot` also clears `snapshotRequested`, so once the
 a snapshot can only be rejected when no request is outstanding — the clear would be provably
 unreachable. Dead code, so it was dropped.
 
-3 regression tests, each verified to FAIL with the fix neutralised (the 31 pre-existing tests all
-passed against the bug — they only ever covered a snapshot that was ACCEPTED, never one rejected
-while a request was outstanding, which is exactly the hole).
+3 regression tests. TWO of them fail with the fix neutralised (`resyncOutstanding()` forced to
+`false`); the third, `guardsStillApplyWithoutAnOutstandingRequest`, is a NEGATIVE control and
+passes either way by design — it exists to prove the exemption did not disable the guards in
+steady state. Re-checked 2026-08-22; the "each verified to FAIL" this note used to claim was
+wrong. The 31 pre-existing tests all passed against the bug — they only ever covered a snapshot
+that was ACCEPTED, never one rejected while a request was outstanding, which is exactly the hole.
 
-## The retry timer — "the snapshot never came" (added 2026-08-19)
+## Re-asking, and the REDESIGN that replaced the timer (2026-08-22)
 
-The exemption above fixes *the snapshot came back and was thrown away*. It does nothing for **the
-snapshot that never came**, which is the commoner case today because nothing consumes
-`control-plane` at all. One command per episode + an episode that only ends on an ACCEPTED
-snapshot = a market that stays dark until the job restarts.
+**The requirement:** one command per episode is not enough. If the command is lost, the collector
+is down, or nothing is consuming `control-plane`, an episode that only ends on an ACCEPTED
+snapshot means the market stays dark until the job restarts. The request has to repeat.
 
-**Where the suppression actually happens is NOT where it looks.** `requestSnapshotOnce` opens with
-an `if (snapshotRequested) return;`, and the obvious reading is that this is what stops a second
-gap from asking. It isn't: a second gap never reaches that call, because the `awaitingSnapshot`
-check ten lines earlier rejects the update and returns first (verified — the second gap comes back
-labelled `awaiting_snapshot`, not `sequence_gap`). **In the gap path that inner guard is dead
-weight; it only earns its keep on the `no_baseline` path**, where `lastSeq == null` persists and
-every update really does reach the call. Worth knowing before anyone "fixes" the wrong guard.
+**The first implementation was a processing-time timer, and it was the wrong mechanism.** Worth
+writing down WHY, because "re-ask periodically" reads like the textbook case for a timer:
 
-`onTimer` re-emits while `snapshotRequested` is still set, every `SNAPSHOT_RETRY_MS` (env,
-default 5 min), unbounded. Notes:
+- `onTimer` is handed no event, so everything the command needs had to be smuggled into state —
+  `pendingSimulation`, `pendingSourceId` — or parsed back out of the key string, which coupled the
+  function to `ExchangePairKey`'s format and made a wrong key selector a job crash inside a timer
+  callback rather than a rejected record.
+- Timers were registered per episode and cancelled nowhere. A stale timer only dies if it happens
+  to fire while nothing is outstanding, so **two episodes inside one retry interval left two live
+  chains, each re-arming forever** — measured at a steady 2 commands per interval instead of 1,
+  growing by one chain per overlapping episode. Flappy delta feeds (ex6/ex8) are exactly what
+  produces close-together episodes. It silently broke the once-per-episode invariant the whole
+  feature rests on.
+- The fallback `sourceId == null ? ""` put `source_ids: [""]` on the topic — an untraceable
+  command that passes every "is the field set" check.
 
-- **No state tracks or cancels timers.** A timer left over from a resolved episode finds
-  `snapshotRequested == false` and no-ops. Cancelling would need a `ValueState<Long>` and a
-  delete on all three resolution branches, to save one wasted callback per episode.
-- **`onTimer` is handed no event**, so `pendingSimulation` / `pendingSourceId` carry what the
-  command needs, and exchange/pair come from parsing the key. That parse couples the function to
-  `ExchangePairKey`'s `{exchange_id}|{pair_id}` format — pinned by
-  `retryCommandTargetsTheSameMarket` so changing the key selector fails a test rather than
-  silently requesting snapshots for the wrong market.
-- **Each retry mints its own id but keeps the ORIGINAL gap event as its parent.** The timer is the
-  trigger; that event is still the cause.
+**What replaced it: the ask is driven by the rejections themselves.** Both untrustworthy branches
+call `askForSnapshot(event, ctx)` on EVERY event they turn away, and the ask is suppressed unless
+`snapshotRetryMs` has elapsed since the last one. The first ask and the hundredth are the same line
+of code — the only question either time is "have we asked recently?".
 
-4 tests, 2 verified to fail with the timer neutralised (the other 2 are negative controls: a
-resolved episode and a healthy market must never retry).
+That deletes the timer, `onTimer`, `scheduleRetry`, `requestSnapshotOnce`, the key parse and both
+pending fields. A rejection arrives exactly when a retry is worth sending and carries the exchange,
+pair, simulation flag and parent id already. Each command now names the update dead-lettered
+alongside it (retries included) instead of re-naming the original gap, so every command points at
+a record that is really on the rejected topic.
+
+**The trade-off, taken deliberately:** a market that goes SILENT after the gap gets no retries,
+where a timer would keep asking. Accepted — a feed sending nothing cannot be re-synced by anything
+we put on the topic, and the moment it speaks its first update is rejected and asks. Both triggers
+are themselves updates, so the feed is alive by definition when an episode opens. If the collector
+ever needs the silent case, a timer can be added ON TOP — but it must then cancel.
+
+## One field, not three — the state collapse (2026-08-22)
+
+`awaitingSnapshot` and `snapshotRequested` were never independent. Every branch that set one set
+the other; they diverged only on the `no_baseline` path, and that path is already discriminated one
+line earlier by `lastSeq == null`. **Two flags for one condition is what made the deadlock
+invisible** — it created states that should not exist, and the code reached one.
+
+Both are now a single `ValueState<Long> resyncRequestedAt`, whose value is the processing time of
+the last ask and whose nullness is the condition:
+
+- `null` → the stream is trusted, nothing outstanding.
+- non-null → the book cannot be trusted, we have asked for a replacement, and here is when.
+
+The reject reason is derived, not stored: `lastSeq == null` → `no_baseline`, otherwise
+`awaiting_snapshot`.
+
+**The whole control plane therefore costs ZERO net state.** Field count is back to the four the
+function had before the feature existed (`51be8dc`) — `awaitingSnapshot` (Boolean) simply became
+`resyncRequestedAt` (Long) and absorbed the feature. 7 `ValueState` fields → 4, 25 methods → 19.
+
+**Mutation-checked three ways, each killing a different set:**
+
+- `resyncPending()` → `false` kills 6 tests, three of them pre-existing data-plane ones. That is
+  the collapse proving itself: the field is load-bearing for both planes now, so ordinary gap/reset
+  tests protect it too.
+- ask once per episode and never re-ask → kills exactly the 4 retry tests, and none of the three
+  negative controls.
+- ask on every rejection with no interval → kills the flood guards:
+  `rejectionsInsideTheIntervalDoNotReAsk`, `overlappingEpisodesDoNotMultiplyTheAskRate`, and the two
+  pre-existing once-per-episode tests.
+
+41 unit tests green. `overlappingEpisodesDoNotMultiplyTheAskRate` exists specifically to pin the
+timer defect closed: two episodes inside one interval, then the ask rate asserted at one per
+interval rather than one per episode ever opened.
+
+
+## e2e for the DEADLOCK, not just the happy loop (44/45, added and verified live 2026-08-22)
+
+42 and 43 both re-sync with a snapshot the ordering guards were always willing to accept — ex6's
+is ahead of the pre-gap offset, ex1's is newer than the last accepted delta. **So the suite that
+was written for this feature never once exercised a REJECTED resync, which is the entire bug
+fixed on 2026-08-19.** Two scenarios close that:
+
+- `44-control-ex6-stale-resync-accepted` — the sequenced guard. Resync arrives at `u = 250`,
+  below the pre-gap baseline of 301.
+- `45-control-ex1-lagging-rest-resync` — the event-time guard. The REST resync is stamped
+  08:00:00 while the last accepted delta was 08:00:02, so its snapshot's `event_time` goes
+  BACKWARDS relative to the reset before it. That backwards step is declared in `WantSnapshots`
+  and is the shape a real clock skew has.
+
+Each asserts both halves together: the resync came out as a SNAPSHOT rather than a rejection, and
+the episode actually closed — proven by a later gap opening a new one and asking again. Ending
+each on a clean recovery keeps `WantAggregated` meaningful.
+
+**Both verified non-vacuous by mutation against the LIVE stack**, which is the part worth
+repeating: with `resyncOutstanding()` forced to `false`, 44 reads 4 snapshots instead of 7 and 45
+reads 5 instead of 8 — the middle of the run vanishes into the dead-letter topic and the market
+only recovers at the final ahead-of-baseline snapshot. Reading `control-plane` directly during
+that mutant run showed **1 command instead of 2**: the second gap is rejected `awaiting_snapshot`
+rather than `sequence_gap`, so it never reaches `requestSnapshotOnce`. That is the user-reported
+symptom ("sometimes no command is sent at all") reproduced end to end.
+
+Live results 2026-08-22, all PASS: 42, 43, 44, 45, and `30-ex6-snapshot-then-deltas` re-run as the
+negative control. `Ex1StaleRestReplay` and `Ex8StaleDuplicate` remain the other half of the
+control — the same two guards with NO request outstanding, where a stale snapshot must still be
+rejected and no command may be sent.
+
+**Re-asking still has no e2e coverage**, for the same reason as before the redesign:
+`SNAPSHOT_RETRY_MS` is read from the JobManager's environment and is set NOWHERE in
+`docker-compose.yml`, so every run uses the 5-minute default, and a scenario finishes in ~20s
+against ~80s of read windows. That is also why the feature does not make the suite flaky. Covering
+it needs the env var wired into the jobmanager service AND a per-scenario override — a short
+global interval would make every scenario ending on an unresolved episode (02, 03, 10, 11, 33, 36,
+38 …) emit extra commands mid-verification. The unit tests carry it instead, and can, because
+`askForSnapshot` reads the clock through `timerService()` which the harness drives.
+
+**Full-suite result after the redesign (2026-08-22): all 45 scenarios PASS**, run in batches. One
+caveat worth knowing for the next session: a single 45-scenario pass in one process is NOT
+reliable on this machine — `12-ex2-noise-frames` failed once with 9 dead-letters where it wants 0
+(the shape of records leaking from the previous scenario on the same ex2/p1 topics), and from
+scenario 21 the JobManager crashed and every later scenario failed on `connection reset`. Disk was
+fine (48Gi). 12 then passed three times in a row, including immediately after 11. **Run the suite
+in batches of ~10 and treat a lone failure mid-run as suspect until it reproduces in isolation.**
 
 ## Open, NOT resolved here
 
