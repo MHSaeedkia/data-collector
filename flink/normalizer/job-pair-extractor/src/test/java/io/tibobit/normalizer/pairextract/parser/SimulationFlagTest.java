@@ -68,6 +68,7 @@ class SimulationFlagTest {
             "4, ex4-snapshot.json",
             "5, ex5-snapshot.json",
             "5, ex5-update.json",
+            "5, ex5-rest-snapshot.json",
             "6, ex6-snapshot.json",
             "6, ex6-delta.json",
             "8, ex8-snapshot.json",
@@ -87,6 +88,7 @@ class SimulationFlagTest {
             "4, ex4-snapshot.json",
             "5, ex5-snapshot.json",
             "5, ex5-update.json",
+            "5, ex5-rest-snapshot.json",
             "6, ex6-snapshot.json",
             "8, ex8-update.json",
     })

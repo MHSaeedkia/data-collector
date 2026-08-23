@@ -346,14 +346,27 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   starving the book. **⚠ ex5 left this pairing 2026-08-22** — it is a delta feed now, so
   `Ex5StaleSeq` is GONE (its `seq` is off the wire) and the ex5 block was rewritten and renumbered;
   ex4 is the last member.
-- **ex5 scenarios rewritten + the whole list RENUMBERED 2026-08-22** — the ex5 block grew from 5
-  to 6, so everything after it shifted by one: bybit is now 31–36, okx 37–42, and the control-plane
-  four are **43–46** (the deadlock pair that memory called "44/45" is now **45/46**). The ex5 six
-  are `25-snapshot-then-updates`, `26-update-before-snapshot`, `27-jump-tolerance`,
-  `28-multi-book-frame`, `29-noise-frames`, `30-precision-dust`. Two are new capabilities ex5 could
-  not have as a snapshot-only feed: it has a cold start (`no_baseline` + a control command) and it
-  can gap. `27-ex5-jump-tolerance` is the ONLY scenario anywhere that exercises
-  `sequence_jump_tolerance`: both window edges (+590, +610) accepted, +611 a real gap.
+- **ex5 scenarios rewritten + the whole list RENUMBERED 2026-08-22, then AGAIN 2026-08-23** — the
+  ex5 block grew 5 → 6 → 7, so everything after it has now shifted by two from its 2026-08-22
+  numbering. **Current state: bybit 32–37, okx 38–43, control plane 44–47** (the deadlock pair that
+  memory once called "44/45", then "45/46", is now **46/47** — stop quoting numbers for it and grep
+  `ControlEx6StaleResyncAccepted` / `ControlEx1LaggingRestResync` instead). The ex5 seven are
+  `25-snapshot-then-updates`, `26-update-before-snapshot`, `27-jump-tolerance`,
+  `28-multi-book-frame`, `29-noise-frames`, `30-precision-dust`, `31-rest-snapshot-resync`. Two
+  were new capabilities ex5 could not have as a snapshot-only feed: it has a cold start
+  (`no_baseline` + a control command) and it can gap. `27-ex5-jump-tolerance` is the ONLY scenario
+  anywhere that exercises `sequence_jump_tolerance`: both window edges (+590, +610) accepted, +611
+  a real gap.
+- **`31-ex5-rest-snapshot-resync` (2026-08-23)** — bitget's REST depth body, the second stream on
+  `ex5-raw` ([[project_pair_extractor]]). It is run where the REST body actually appears: a WS gap
+  empties the book and asks the control plane, and the REST snapshot is what answers, after which
+  a WS update at REST-ts + 600 continues the book. That last step is the point — it pins the user's
+  2026-08-23 decision that the REST snapshot is sequenced by its own `data.ts` (600 ± 10) rather
+  than bootstrapped null-seq, so **this is the scenario that fails first if that coupling bites in
+  production**. Verified live 2026-08-23 (PASS, ~21 s) and mutation-checked live against the real
+  stack: shifting ONLY the REST body's `data.ts` by −100 ms puts source 05 outside the window, and
+  the run fails with an EMPTY book at record 4 (the reset) instead of the restored one — so the
+  green run is not vacuous and the REST timestamp really is driving the window.
 - **`Ex5NoiseFrames` lost two cases and that is the point** — `action: "update"` is a legitimate
   frame now, and `seq`/`pseq` are not read at all, so their wire types cannot reject anything. What
   replaced them: an unknown action, and a book object carrying NEITHER side.

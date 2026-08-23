@@ -241,9 +241,10 @@ is ahead of the pre-gap offset, ex1's is newer than the last accepted delta. **S
 was written for this feature never once exercised a REJECTED resync, which is the entire bug
 fixed on 2026-08-19.** Two scenarios close that:
 
-- `44-control-ex6-stale-resync-accepted` — the sequenced guard. Resync arrives at `u = 250`,
+- `ControlEx6StaleResyncAccepted` (numbered `46-…` as of 2026-08-23; was `44-`, then `45-`
+  — the ex5 block has grown twice, so use the Go identifier, not the number) — the sequenced guard. Resync arrives at `u = 250`,
   below the pre-gap baseline of 301.
-- `45-control-ex1-lagging-rest-resync` — the event-time guard. The REST resync is stamped
+- `ControlEx1LaggingRestResync` (numbered `47-…` as of 2026-08-23) — the event-time guard. The REST resync is stamped
   08:00:00 while the last accepted delta was 08:00:02, so its snapshot's `event_time` goes
   BACKWARDS relative to the reset before it. That backwards step is declared in `WantSnapshots`
   and is the shape a real clock skew has.
@@ -356,3 +357,19 @@ The topic was also read directly rather than only through the assertions, since 
 and a carried one both compare equal to zero when the fixture happens to be zero. The two commands
 from run 42 carried `simulation: 1`, two distinct minted ids, and one distinct parent each — so
 the values are really on the wire, not defaults the harness agreed with.
+
+## 2026-08-23 — ex5's resync answer now has its own wire shape
+
+The snapshot NiFi is being asked for is, on ex5/bitget, the **REST depth body** — a different
+shape from the WS frames the same topic carries ([[project_pair_extractor]]). Nothing in job 2
+changed: job 1 hands it up as an ordinary sequenced snapshot, so `resyncPending()` exempts it from
+the `stale_or_duplicate` guard and it clears the episode exactly like any other.
+
+What IS worth knowing here: because the user chose to sequence that REST body by its own
+`data.ts` (jump 600 ± 10) rather than null-seq, **an ex5 resync only truly succeeds if the next WS
+update lands 590–610 ms after the REST book's timestamp**. If it does not, the update gaps
+immediately, the book is emptied again and a fresh command goes out — reset → request → snapshot →
+gap, the loop flagged in todo.md. The deadlock fix means the market will keep *asking* rather than
+going silently dark, so this degrades into a request loop rather than a black hole, but it is the
+ex5-specific failure mode to look for on the live feed. `31-ex5-rest-snapshot-resync` is the e2e
+scenario that covers the happy version of this path.

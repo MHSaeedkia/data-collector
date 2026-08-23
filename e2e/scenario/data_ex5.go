@@ -16,9 +16,13 @@
 //     multiple, so ex5 is the only exchange with a nonzero `sequence_jump_tolerance`: job 2
 //     accepts `last + 600 ± 10` instead of an exact `last + jump` (Ex5JumpTolerance).
 //
+//   - Since 2026-08-23 there is a SECOND stream on the topic: bitget's REST depth response, a
+//     wholly different shape carrying the same `action: "snapshot"` (Ex5RestSnapshotResync).
+//
 // ⚠ The window is applied to EVERY transition, snapshot→update included (user decision
-// 2026-08-22). bitget's own capture shows the first update only 22 ms behind the snapshot, so
-// on the live feed that burst is a `sequence_gap` — see todo.md.
+// 2026-08-22), and since 2026-08-23 that includes the REST snapshot, which is sequenced by its
+// own `data.ts` rather than bootstrapped null-seq. bitget's own capture shows the first update
+// only 22 ms behind the snapshot, so on the live feed that burst is a `sequence_gap` — todo.md.
 //
 // Every bitget market in the seed is a USDT market with rebase 0/0, so job 3 is the identity here
 // and there is nothing to assert about it — ex1 and ex4 are the only two exchanges that can.
@@ -654,5 +658,168 @@ var Ex5PrecisionDust = Scenario{
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{},
 		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "77598.5", Quantity: "0.4"}},
+	},
+}
+
+// Ex5RestSnapshotResync — the SECOND stream on `ex5-raw` (added 2026-08-23): bitget's REST depth
+// response, which NiFi tags `action: "snapshot"` and stamps with the market as a top-level
+// `pair`. It is the same exchange but a different shape on every axis that matters — `data` is a
+// single OBJECT rather than an array, the sides are `a`/`b` rather than `asks`/`bids`, and the
+// levels are JSON NUMBERS rather than string pairs — so `action` alone cannot tell the two
+// streams apart and the parser discriminates on the shape of `data` (same trap as ex1/ex2).
+//
+// The scenario runs it where it actually appears: a WS gap empties the book and asks the control
+// plane for a snapshot, and the REST body is what answers. That also pins the sequencing decision
+// (user, 2026-08-23) — the REST snapshot is sequenced like a WS one, `data.ts` with jump 600 ± 10,
+// NOT the null-seq `baselinePending` bootstrap ex1/ex2 give their REST bodies. So source 05 has to
+// land 590–610 ms after the REST book's own timestamp to be accepted, and it does; that coupling
+// is the open risk in todo.md, and this scenario is what will fail first if it bites.
+var Ex5RestSnapshotResync = Scenario{
+	ExchangeID: 5,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline
+		`{
+	"id": "b1d0a5c8-7e42-4f19-9c3a-6d51e0b4a772",
+	"simulation": 1,
+	"action": "snapshot",
+	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
+	"data": [
+		{
+			"asks": [["77300.00", "1"], ["77301.00", "2"]],
+			"bids": [["77299.00", "3"]],
+			"checksum": 111,
+			"ts": "1800000000000"
+		}
+	],
+	"ts": 1800000000000
+}`,
+		// 02 WS update at exactly +600 — accepted, re-sizes the best ask
+		`{
+	"id": "2f8c4b16-93ad-4e70-8b25-1c7fa9d6e084",
+	"simulation": 1,
+	"action": "update",
+	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
+	"data": [
+		{ "asks": [["77300.00", "1.25"]], "checksum": 222, "ts": "1800000000600" }
+	],
+	"ts": 1800000000600
+}`,
+		// 03 WS update at +1400 — far outside the window, so a gap: reset, dead-letter, and ask
+		`{
+	"id": "7a3e9d52-c018-4b6f-a94d-58e2b0f31c67",
+	"simulation": 1,
+	"action": "update",
+	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
+	"data": [
+		{ "asks": [["77302.00", "5"]], "checksum": 333, "ts": "1800000002000" }
+	],
+	"ts": 1800000002000
+}`,
+		// 04 REST snapshot — the resync answer, in the OTHER wire shape. Note `pair` instead of
+		// arg.instId, `data` an object, `a`/`b`, and numeric levels: 77311 is an integer literal
+		// and 77310.5 has one decimal place, so both prove BigDecimal-from-the-literal rather
+		// than a double round-trip or an invented trailing zero.
+		`{
+	"id": "c5091ef7-4b8a-4d63-9e21-0f7c3a8b5d94",
+	"simulation": 1,
+	"code": "00000",
+	"msg": "success",
+	"requestTime": 1800000002398,
+	"data": {
+		"a": [[77310.5, 0.5], [77311, 1.25]],
+		"b": [[77309.75, 2], [77308, 0.125]],
+		"ts": "1800000002400"
+	},
+	"pair": "BTCUSDT",
+	"action": "snapshot"
+}`,
+		// 05 WS update at REST ts +600 — the whole point of sequencing the REST body: the WS
+		// stream picks contiguity back up from `data.ts`, not from the last WS frame.
+		`{
+	"id": "e42b7c30-8d95-4a1e-b6f8-27d5019ac3be",
+	"simulation": 1,
+	"action": "update",
+	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
+	"data": [
+		{
+			"asks": [["77310.50", "0"]],
+			"bids": [["77307.00", "3"]],
+			"checksum": 444,
+			"ts": "1800000003000"
+		}
+	],
+	"ts": 1800000003000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77300", Quantity: "1"},
+				{Price: "77301", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{{Price: "77299", Quantity: "3"}},
+		},
+		{ // after 02 — +600 exactly, best ask re-sized
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77300", Quantity: "1.25"},
+				{Price: "77301", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{{Price: "77299", Quantity: "3"}},
+		},
+		{ // after 03 — the gap's reset empties the book
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks:       []events.PriceLevel{},
+			Bids:       []events.PriceLevel{},
+		},
+		{ // after 04 — the REST body restores it; the numeric levels land as plain decimals
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "77310.5", Quantity: "0.5"},
+				{Price: "77311", Quantity: "1.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77309.75", Quantity: "2"},
+				{Price: "77308", Quantity: "0.125"},
+			},
+		},
+		{ // after 05 — contiguous with the REST ts: 77310.5 deleted, 77307 inserted
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:03Z",
+			Asks:       []events.PriceLevel{{Price: "77311", Quantity: "1.25"}},
+			Bids: []events.PriceLevel{
+				{Price: "77309.75", Quantity: "2"},
+				{Price: "77308", Quantity: "0.125"},
+				{Price: "77307", Quantity: "3"},
+			},
+		},
+	},
+	WantRejects: []string{"sequence_gap"},
+	WantControlCommands: []events.ControlCommand{
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 5, PairID: 1, Simulation: 1},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "77311", Quantity: "1.25"}},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 5, Simulation: 1, Price: "77309.75", Quantity: "2"},
+			{ExchangeID: 5, Simulation: 1, Price: "77308", Quantity: "0.125"},
+			{ExchangeID: 5, Simulation: 1, Price: "77307", Quantity: "3"},
+		},
 	},
 }

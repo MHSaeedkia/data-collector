@@ -210,3 +210,37 @@ Two things the second capture changed:
   and a missing `-1` would publish prices 10× too high.
 The raw frame as supplied carries no NiFi `id`/`simulation`, so it parses but `PairExtractFunction`
 drops it on `dropped-no-id` — expected for a pre-NiFi capture, not a defect.
+
+**2026-08-23 — ex5/bitget gained a SECOND stream: the REST depth snapshot.** `ex5-raw` now
+carries the same REST+WS split ex1 and ex2 have. NiFi tags the REST body `"action":"snapshot"`
+and injects the market as a top-level `pair`, exactly as it does for those two — so, as with
+them, **`action` cannot be the discriminator**: it reads `"snapshot"` on both streams. The
+parser branches on the shape of `data` (object = REST, array = WS), which is the only field that
+differs unconditionally.
+
+It differs from the WS frame on every axis that matters, which is why it is a whole branch and
+not a few `path()` fallbacks: market key `pair` vs `arg.instId`; `data` a single OBJECT vs an
+array (so this stream can never fan one record into several events); sides spelled `a`/`b` vs
+`asks`/`bids`; and **levels are JSON NUMBERS**, so it reuses ex4's `Levels.fromNumericArrays`
+(BigDecimal from the literal, then `toPlainString` — `1.448` stays `"1.448"`). Both sides are
+required: it is always a full book, never a per-side snapshot.
+
+**Sequencing — the decision worth remembering.** The REST snapshot carries `data.ts` as its
+sequence id with jump 600 and tolerance 10, i.e. it is treated *identically to a WS snapshot*.
+This was the user's explicit choice on 2026-08-23, taken over the offered alternative of the
+null-seq `baselinePending` bootstrap that ex1/ex2 give their REST bodies. The consequence, and
+the reason it is written down: **the first WS update after a resync must land 590–610 ms after
+the REST book's own timestamp**, or job 2 dead-letters it `sequence_gap`. That is the
+snapshot→update risk already logged against the WS feed, now extended to the resync path — see
+[[project_type_validator]] and todo.md. `requestTime` is ignored (it is the API round trip, not
+the book), and `code`/`msg` are not inspected because an error body has no `data.a`/`data.b` and
+already fails the shape whitelist.
+
+**No job-2 change was needed** — a REST snapshot produces the same `RawOrderBookEvent` a WS one
+does, so every rule downstream was already written for it. The change is job 1 only, plus tests
+and docs: `BitgetParser` (split into `parseRestSnapshot` / `parseWsFrames`), the new fixture
+`ex5-rest-snapshot.json` (the real XRPUSDT capture, trimmed to 3 levels a side, `id`/`simulation`
+omitted like every other fixture), 2 new `BitgetParserTest` cases, the ex5 rows of
+`SimulationFlagTest`/`RecordIdTest`, e2e `Ex5RestSnapshotResync`, and `sample-raw-data.md § ex5`.
+All 231 normalizer tests green; both parser mutations bite (kill the `data`-shape discriminator,
+or read `requestTime` instead of `data.ts` → `parsesRestSnapshot` fails).

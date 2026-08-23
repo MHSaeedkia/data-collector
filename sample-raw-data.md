@@ -21,7 +21,7 @@
 | `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
-| `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts` (jump 600 ± 10) |
+| `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts` (jump 600 ± 10); **+ a REST snapshot stream captured 2026-08-23** (`data` object, `a`/`b`, NUMERIC levels, injected `pair`) |
 | `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture) |
 | `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
 | `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
@@ -441,6 +441,57 @@ Parsing notes (job 1):
   outer one was slightly later. Only the inner one is read.
 - **`scale` is a price-GROUPING bucket** (`"0.01"` here), like okx's `grouping` — it explains the
   level spacing, it is not a wire rule and job 1 ignores it.
+
+### ex5 REST snapshot (SECOND stream, captured 2026-08-23)
+
+`ex5-raw` carries **two** streams, the same split ex1 and ex2 have: the WS `depth` feed above, and
+bitget's REST depth endpoint. NiFi tags the REST body with `"action": "snapshot"` and injects the
+market as a top-level `"pair"` (the response carries no symbol of its own), exactly as it does for
+ex1/ex2.
+
+```json
+{
+  "code": "00000",
+  "msg": "success",
+  "requestTime": 1787465707150,
+  "data": {
+    "a": [[1.4482, 433.2497], [1.4483, 927.4044], [1.4484, 1432.4082]],
+    "b": [[1.4481, 83.5936], [1.448, 433.2497], [1.4479, 3312.1526]],
+    "ts": "1787465707152"
+  },
+  "pair": "XRPUSDT",
+  "action": "snapshot",
+  "simulation": 0,
+  "id": "12caf5fe-b438-493e-9b42-75bdf31d92e6"
+}
+```
+
+(Level arrays trimmed — the real response carried ~195 asks and ~195 bids. `simulation` and `id`
+are NiFi's, shown here because this capture came off the raw topic; the committed fixture omits
+them, like every other fixture, and the shared tests inject them.)
+
+Parsing notes (job 1) — it differs from the WS frame on **every** axis that matters:
+
+- **`action` is `"snapshot"` on BOTH streams, so it cannot be the discriminator.** Same trap as
+  ex1/ex2. The parser branches on the shape of `data`: an **object** is the REST body, an
+  **array** is a WS frame.
+- **Market key is the injected root `pair`** (`XRPUSDT`), not `arg.instId` — there is no `arg`.
+- **`data` is a single OBJECT**, not an array, so this stream can never fan one record out into
+  several events the way the WS one can.
+- **The sides are `a` / `b`**, not `asks` / `bids`. Both are required: this is a full book, never
+  a per-side snapshot, so a body missing either side is dropped rather than half-applied.
+- **Levels are JSON NUMBERS**, not string pairs — the one place ex5 shares a hazard with ex3/ex4.
+  They go through `Levels.fromNumericArrays`, i.e. BigDecimal from the decimal literal then
+  `toPlainString`, never via double. Scale is the literal's own: `1.448` stays `"1.448"`.
+- **Sequence and event time are the inner `data.ts`** (STRING epoch millis), with **jump 600,
+  tolerance 10 — identical to a WS snapshot** (user decision 2026-08-23). It is deliberately NOT
+  the null-seq `baselinePending` bootstrap that ex1/ex2 give their REST bodies. ⚠ The consequence
+  is that the first WS update after a resync must land 590–610 ms after the REST book's timestamp
+  or job 2 dead-letters it as a `sequence_gap` — the snapshot→update risk below, extended to the
+  resync path. See todo.md.
+- **`requestTime` is ignored** — it is the API round trip, not the book's timestamp.
+- **`code` / `msg` are not inspected.** An error body has no `data.a` / `data.b`, so the shape
+  whitelist already discards it; a second check would be dead weight.
 
 ## ex6-raw — bybit
 

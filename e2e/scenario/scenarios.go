@@ -47,32 +47,33 @@ var Scenarios = []struct {
 	{"28-ex5-multi-book-frame", Ex5MultiBookFrame},
 	{"29-ex5-noise-frames", Ex5NoiseFrames},
 	{"30-ex5-precision-dust", Ex5PrecisionDust},
+	{"31-ex5-rest-snapshot-resync", Ex5RestSnapshotResync},
 
 	// Bybit
-	{"31-ex6-snapshot-then-deltas", Ex6SnapshotThenDeltas},
-	{"32-ex6-one-sided-delta", Ex6OneSidedDelta},
-	{"33-ex6-sequence-gap", Ex6SequenceGap},
-	{"34-ex6-no-baseline", Ex6NoBaseline},
-	{"35-ex6-noise-frames", Ex6NoiseFrames},
-	{"36-ex6-precision-dust", Ex6PrecisionDust},
+	{"32-ex6-snapshot-then-deltas", Ex6SnapshotThenDeltas},
+	{"33-ex6-one-sided-delta", Ex6OneSidedDelta},
+	{"34-ex6-sequence-gap", Ex6SequenceGap},
+	{"35-ex6-no-baseline", Ex6NoBaseline},
+	{"36-ex6-noise-frames", Ex6NoiseFrames},
+	{"37-ex6-precision-dust", Ex6PrecisionDust},
 
 	// OKX
-	{"37-ex8-update-before-snapshot", Ex8UpdateBeforeSnapshot},
-	{"38-ex8-happy-path", Ex8HappyPath},
-	{"39-ex8-sequence-gap", Ex8SequenceGap},
-	{"40-ex8-stale-duplicate", Ex8StaleDuplicate},
-	{"41-ex8-precision-dust", Ex8PrecisionDust},
-	{"42-ex8-noise-frames", Ex8NoiseFrames},
+	{"38-ex8-update-before-snapshot", Ex8UpdateBeforeSnapshot},
+	{"39-ex8-happy-path", Ex8HappyPath},
+	{"40-ex8-sequence-gap", Ex8SequenceGap},
+	{"41-ex8-stale-duplicate", Ex8StaleDuplicate},
+	{"42-ex8-precision-dust", Ex8PrecisionDust},
+	{"43-ex8-noise-frames", Ex8NoiseFrames},
 
 	// Control plane — the snapshot requests job 2 sends NiFi. Grouped by feature
 	// rather than by exchange; see data_control.go.
-	{"43-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
-	{"44-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
+	{"44-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
+	{"45-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
 
 	// Control plane — the resync the ordering guards used to throw away, which
-	// is the deadlock fixed on 2026-08-19. 45 is the sequenced guard, 46 the
+	// is the deadlock fixed on 2026-08-19. 46 is the sequenced guard, 47 the
 	// event-time one; both prove the resync was ACCEPTED and that the episode
 	// re-armed. See data_control.go.
-	{"45-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
-	{"46-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
+	{"46-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
+	{"47-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
 }
