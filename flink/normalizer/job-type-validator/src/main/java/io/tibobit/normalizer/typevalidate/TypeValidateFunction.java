@@ -34,7 +34,12 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * <li><b>Snapshot</b> ({@code type == "snapshot"}): a fresh baseline, but
  * out-of-order/duplicate dropped — reject {@code stale_or_duplicate} if
  * {@code sequence_id <= lastSeq}. Otherwise it re-syncs the book: store
- * {@code lastSeq} and mark the stream trusted again.</li>
+ * {@code lastSeq} and mark the stream trusted again. Ordering is the WHOLE
+ * test: {@code sequence_jump} is deliberately never applied to a snapshot,
+ * because a snapshot re-anchors the sequence rather than continuing it, and the
+ * interval since the last update is the collector's choice, not the exchange's
+ * cadence. Contiguity therefore has exactly two sites, both in the update
+ * branch below — snapshot → next update, and update → update.</li>
  * <li><b>Update</b> ({@code type == "update"}, delta feeds ex1/ex2/ex5/ex6/ex8): needs
  * a baseline and a contiguous sequence. No baseline yet → {@code no_baseline};
  * still waiting to re-sync after a gap → {@code awaiting_snapshot};
@@ -185,6 +190,7 @@ public class TypeValidateFunction
         Long last = lastSeq.value();
 
         if ("snapshot".equals(event.getType())) {
+            // Ordering only — NO jump check here, for any exchange. See the class javadoc.
             if (!resyncPending() && last != null && seq <= last) {
                 reject(event, STALE_OR_DUPLICATE, ctx);
                 return;

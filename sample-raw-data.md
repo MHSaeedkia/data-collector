@@ -21,7 +21,7 @@
 | `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
-| `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts` (jump 600 ± 10); **+ a REST snapshot stream captured 2026-08-23** (`data` object, `a`/`b`, NUMERIC levels, injected `pair`) |
+| `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts`; **+ a REST snapshot stream captured 2026-08-23** (`data` object, `a`/`b`, NUMERIC levels, injected `pair`). ⚠ **RE-MEASURED live 2026-08-23**: the WS channel sends **no snapshots at all**, the REST body is the only baseline and is now **null-seq**, and the update window is **650 ± 110** |
 | `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture) |
 | `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
 | `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
@@ -341,11 +341,21 @@ GONE.** The feed moved off the `books50` channel onto the price-**grouped** `dep
 3. `arg` gained `params.scale` and `instType` changed `"SPOT"` → `"sp"`; `arg.channel` is now
    `depth`, so depth is no longer encoded in the channel name the way `books50` did.
 
-Because `seq` is gone the sequence id is the inner **`ts`** (STRING epoch millis), which is also
-the event time — the same double duty ex8/okx gives its `ts`. But where okx publishes on an exact
-300 ms cadence, bitget's is only **nominally 600 ms**, so ex5 is the ONE exchange with a nonzero
-`sequence_jump_tolerance`: **jump 600 ± 10**, and job 2 checks a window
-(`last + 590 ≤ ts ≤ last + 610`) instead of an equality. See memory/project_type_validator.md.
+Because `seq` is gone the sequence id of a WS **update** is the inner **`ts`** (STRING epoch
+millis), which is also the event time — the same double duty ex8/okx gives its `ts`. But where okx
+publishes on an exact 300 ms cadence, bitget's is a wall clock on a **variable** cadence, so ex5 is
+the ONE exchange with a nonzero `sequence_jump_tolerance`.
+
+**⚠ REVISED 2026-08-23 (2) — measured against the live dev feed, 4569 frames / 36 minutes,
+BTCUSDT only. Two things documented here were wrong:**
+
+1. **The WS `depth` channel sends NO snapshots.** 3538 updates, **0** `action:"snapshot"` frames.
+   The REST endpoint below is ex5's ONLY baseline source. (The snapshot sample in this section is
+   a real capture, but it is not something the live feed currently produces.)
+2. **The cadence is bimodal**, not 600: a 575–625 mass **plus a real 725–775 cluster**. Only
+   93.2% of update→update transitions fell inside `600 ± 10`. The window is now **jump 650 ±
+   110** = `[540, 760]` = 99.83% of 3537 live transitions; a genuinely missed tick (~1200 ms)
+   still falls outside, so gap detection survives. See memory/project_type_validator.md.
 
 **Snapshot sample** (level arrays trimmed — the real message carried **~160 asks and ~160 bids**;
 depth is no longer fixed by the channel name):
@@ -411,11 +421,11 @@ depth is no longer fixed by the channel name):
 }
 ```
 
-**⚠ The two samples above are 22 ms apart** (`…388` → `…410`), nowhere near 600. The user decided
-2026-08-22 that the ± 10 window applies to **every** transition, snapshot→update included, so on
-the live feed a burst like this one is dead-lettered `sequence_gap`, resets the book and asks the
-control plane for a fresh snapshot. Pinned as an expected result in
-`TypeValidateFunctionTest.capturedBurstAfterSnapshotIsAGap`; open risk in todo.md.
+**⚠ The two samples above are 22 ms apart** (`…388` → `…410`), nowhere near 600 — and a WS
+snapshot→update pair like this does not occur on the live feed at all, since the channel sends no
+snapshots. The transition that DOES occur is REST snapshot → WS update, and that one is no longer
+window-checked: the REST body is null-seq, so job 2 takes the `baselinePending` bootstrap and the
+next update re-anchors the baseline unconditionally. See the REST section below.
 
 Parsing notes (job 1):
 
@@ -433,9 +443,11 @@ Parsing notes (job 1):
 - **A side may be absent on an update** — the parser nulls the missing side rather than dropping
   the frame (job 5 reads null as "leave this side alone"), matching ex8/okx. Both captured frames
   happen to carry both sides.
-- **Sequence**: inner `ts` (parse the string to long), **jump 600, tolerance 10**. It is the ONLY
-  ordering signal on the wire. `checksum` is metadata — bitget intends it for CRC verification of
-  the top of the book, which this pipeline does not implement (todo.md).
+- **Sequence**: inner `ts` (parse the string to long), **jump 650, tolerance 110**. It is the ONLY
+  ordering signal on the wire, and it is a clock, not a counter — the band is fitted to the
+  measured distribution, not to a cadence bitget publishes. `checksum` is metadata — bitget
+  intends it for CRC verification of the top of the book, which is the divergence detector this
+  feed actually wants and this pipeline does not implement (todo.md).
 - **Two timestamps**: inner `ts` is a **string** epoch-millis (`"1787404282388"`), top-level `ts`
   a JSON **number**. In both captures they are equal, unlike the old `books50` frames where the
   outer one was slightly later. Only the inner one is read.
@@ -483,12 +495,16 @@ Parsing notes (job 1) — it differs from the WS frame on **every** axis that ma
 - **Levels are JSON NUMBERS**, not string pairs — the one place ex5 shares a hazard with ex3/ex4.
   They go through `Levels.fromNumericArrays`, i.e. BigDecimal from the decimal literal then
   `toPlainString`, never via double. Scale is the literal's own: `1.448` stays `"1.448"`.
-- **Sequence and event time are the inner `data.ts`** (STRING epoch millis), with **jump 600,
-  tolerance 10 — identical to a WS snapshot** (user decision 2026-08-23). It is deliberately NOT
-  the null-seq `baselinePending` bootstrap that ex1/ex2 give their REST bodies. ⚠ The consequence
-  is that the first WS update after a resync must land 590–610 ms after the REST book's timestamp
-  or job 2 dead-letters it as a `sequence_gap` — the snapshot→update risk below, extended to the
-  resync path. See todo.md.
+- **`sequence_id` is NULL and `sequence_jump` is 0** — the `baselinePending` bootstrap ex1/ex2
+  give their REST bodies. `data.ts` is still the **event time**; it is a real timestamp, just not
+  a comparable sequence. **⚠ REVISED 2026-08-23 (2) — this replaces the original decision to
+  sequence it by its own `data.ts` at 600 ± 10, which caused a live resync loop.** Measured on the
+  dev feed: the REST `ts` is on the endpoint's clock, ranging −706..+662 ms against the WS update
+  just before it and **behind it 57% of the time**, and the update just after it landed inside the
+  old window only **9.9%** of the time. So ~90% of resyncs gapped instantly — accept → gap → empty
+  the book → request another snapshot → repeat, **28.6 book resets and 28.7 requests per minute**,
+  with `control-plane` saturated. Replaying the same 36-minute capture through null-seq +
+  `650 ± 110` gives **0.1 resets/min and 0.1 requests/min**. Never compare the two clocks.
 - **`requestTime` is ignored** — it is the API round trip, not the book's timestamp.
 - **`code` / `msg` are not inspected.** An error body has no `data.a` / `data.b`, so the shape
   whitelist already discards it; a second check would be dead weight.
@@ -688,7 +704,7 @@ Parsing notes (job 1):
   spelled `grouping` rather than `params.scale`. Not a new envelope shape — a variant of ex5's.
   Since ex5's 2026-08-22 revision the two are closer still: both are `snapshot`/`update` delta
   feeds keyed on a string `ts`. The one rule that differs is the cadence — okx's 300 ms is
-  exact, bitget's 600 ms needs a ± 10 window.
+  exact, while bitget's is a variable wall clock needing a `650 ± 110` window.
 - **Market key**: `arg.instId` (`BTC-USDT` → `exchange_markets.market`) — note the DASH,
   unlike every other exchange's `BTCUSDT`. Channel identity is `arg.channel`
   (`books-grouped`) + `arg.grouping` (`"1"`): a price-GROUPED book with bucket size 1 —

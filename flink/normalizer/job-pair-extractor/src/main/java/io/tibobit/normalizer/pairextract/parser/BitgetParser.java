@@ -30,24 +30,47 @@ import java.util.List;
  * no longer exist on the wire; the replacement {@code checksum} is a CRC book-integrity value,
  * NOT monotonic and NOT usable as a sequence.
  *
- * <p>So the sequence id is the inner {@code ts} — the STRING epoch millis that is also the event
- * time, as on ex8/okx. Unlike okx's exact 300 ms cadence bitget's is only NOMINALLY 600 ms, so
- * the event carries {@code sequenceJumpTolerance = 10}: job 2 accepts
- * {@code last + 590 <= ts <= last + 610}.
+ * <p>So the sequence id of a WS UPDATE is the inner {@code ts} — the STRING epoch millis that is
+ * also the event time, as on ex8/okx. Unlike okx's exact 300 ms cadence bitget's is a wall clock
+ * on a variable cadence, so the event carries a wide {@code sequenceJumpTolerance} and job 2
+ * checks a window rather than an equality. See {@link #JUMP_MS}.
  *
- * <p><b>The REST snapshot is sequenced exactly like a WS one</b> (user decision 2026-08-23):
- * {@code data.ts}, jump 600, tolerance 10 — NOT the null-seq {@code baselinePending} bootstrap
- * ex1/ex2 give their REST bodies. So the first WS update after a resync must land 590–610 ms
- * after the REST book's timestamp or job 2 dead-letters it as a {@code sequence_gap}; this is the
- * same open risk the snapshot→update hop already carries, extended to the resync path (todo.md).
+ * <p><b>REVISED 2026-08-23 (2) — measured against the live dev feed, and both numbers were
+ * wrong.</b> 4569 consecutive {@code ex5-raw} frames over 34 minutes, BTCUSDT only:
+ *
+ * <ul>
+ *   <li><b>The WS feed sends NO snapshots at all</b> — 3538 updates, 0 {@code action:"snapshot"}
+ *       frames. The REST endpoint is ex5's ONLY baseline source, which is what made the two
+ *       mistakes below fatal rather than merely wasteful.</li>
+ *   <li><b>The REST {@code data.ts} is not on the WS clock.</b> Against the update just before it
+ *       it ranges −706..+662 ms and is BEHIND 57% of the time, and the update just after it landed
+ *       inside the old 600 ± 10 window only <b>9.9%</b> of the time. Sequencing the REST body by
+ *       its own {@code ts} therefore made ~90% of resyncs produce an instant false
+ *       {@code sequence_gap}: snapshot accepted → gap → book emptied → snapshot requested →
+ *       repeat, ~22 times a minute, with {@code control-plane} saturated by the loop.</li>
+ *   <li><b>update → update is bimodal</b>: 93.2% inside 600 ± 10, plus a real cluster at
+ *       725–775 ms. The old window dead-lettered that cluster too (~6.7 false gaps/minute).</li>
+ * </ul>
+ *
+ * <p>Hence: the REST snapshot is now <b>null-seq</b>, taking the {@code baselinePending} bootstrap
+ * ex1/ex2 give their REST bodies — job 2 orders it by event time and lets the first update after
+ * it adopt its own {@code ts} as the baseline, so the two clocks are never compared. And the
+ * update window widened to cover the measured distribution.
  */
 public class BitgetParser implements RawExchangeParser {
 
-    /** Nominal publish cadence of the {@code depth} channel, in millis (user-confirmed). */
-    private static final long JUMP_MS = 600L;
+    /**
+     * Centre of the accepted update→update interval, in millis. NOT a cadence bitget publishes —
+     * the measured distribution is bimodal (a 575–625 mass plus a 725–775 cluster), so this is the
+     * midpoint of the band that covers it, {@code 650 ± 110} = [540, 760] = 99.83% of 3537 live
+     * transitions. A genuinely missed tick is ~1200 ms and still falls outside, so gap detection
+     * survives; 4 transitions in 34 minutes landed at 875–1149 ms and are indistinguishable from
+     * one. The real divergence detector for this feed is the {@code checksum} CRC (todo.md).
+     */
+    private static final long JUMP_MS = 650L;
 
     /** Accepted drift either side of {@link #JUMP_MS} — a clock, not a counter. */
-    private static final long JUMP_TOLERANCE_MS = 10L;
+    private static final long JUMP_TOLERANCE_MS = 110L;
 
     @Override
     public List<ParsedBookEvent> parse(byte[] payload) throws Exception {
@@ -66,6 +89,14 @@ public class BitgetParser implements RawExchangeParser {
     /**
      * The REST depth response. {@code code}/{@code msg} are not inspected: an error body carries
      * no {@code data.a}/{@code data.b} arrays, so the shape whitelist already discards it.
+     *
+     * <p><b>Null sequence id, jump 0</b> — the ex1/ex2 REST treatment, and the fix for the resync
+     * loop measured on 2026-08-23 (see the class javadoc). {@code data.ts} comes off the REST
+     * endpoint's clock, not the WS one, so it can be neither ordered against a WS {@code ts} nor
+     * used as the origin of the update window. Leaving it null hands job 2 the
+     * {@code baselinePending} path instead: order this body by EVENT TIME, then let the first WS
+     * update after it adopt its own {@code ts} as the baseline. {@code data.ts} is still the event
+     * time — it is a real timestamp, just not a comparable sequence.
      */
     private List<ParsedBookEvent> parseRestSnapshot(JsonNode root) {
         JsonNode data = root.get("data");
@@ -77,10 +108,9 @@ public class BitgetParser implements RawExchangeParser {
         }
         long ts = Long.parseLong(data.get("ts").asText());
         RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "snapshot",
-                ts, JUMP_MS, ts,
+                null, 0L, ts,
                 Levels.fromNumericArrays(data.get("a")),
                 Levels.fromNumericArrays(data.get("b")));
-        event.setSequenceJumpTolerance(JUMP_TOLERANCE_MS);
         event.setSimulation(Json.simulation(root));
         event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(root.get("pair").asText(), event));

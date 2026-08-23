@@ -14,15 +14,23 @@
 //     `data[i].ts`, the STRING epoch millis that is also the event time.
 //   - Because that sequence is a CLOCK rather than a counter it never lands on an exact
 //     multiple, so ex5 is the only exchange with a nonzero `sequence_jump_tolerance`: job 2
-//     accepts `last + 600 ± 10` instead of an exact `last + jump` (Ex5JumpTolerance).
+//     accepts `last + 650 ± 110` instead of an exact `last + jump` (Ex5JumpTolerance).
 //
 //   - Since 2026-08-23 there is a SECOND stream on the topic: bitget's REST depth response, a
 //     wholly different shape carrying the same `action: "snapshot"` (Ex5RestSnapshotResync).
 //
-// ⚠ The window is applied to EVERY transition, snapshot→update included (user decision
-// 2026-08-22), and since 2026-08-23 that includes the REST snapshot, which is sequenced by its
-// own `data.ts` rather than bootstrapped null-seq. bitget's own capture shows the first update
-// only 22 ms behind the snapshot, so on the live feed that burst is a `sequence_gap` — todo.md.
+// REVISED 2026-08-23 (2), after measuring the live dev feed — 4569 frames over 34 minutes,
+// BTCUSDT only. Two numbers here were wrong:
+//
+//   - The WS feed sends NO snapshots at all (3538 updates, 0 snapshot frames), so the REST body
+//     is ex5's ONLY baseline. Ex5RestSnapshotResync is therefore the scenario closest to the
+//     live shape, not an edge case.
+//   - The REST `data.ts` runs on the endpoint's own clock — BEHIND the last WS update 57% of
+//     the time — so sequencing the REST body by it made ~90% of resyncs gap immediately:
+//     accept → gap → empty the book → ask again, 22 times a minute. It is now null-seq and
+//     takes the `baselinePending` bootstrap, exactly as ex1/ex2 REST bodies do.
+//   - update→update is bimodal (a 575–625 mass plus a real 725–775 cluster), so the old
+//     `600 ± 10` also dead-lettered ~6.7 legitimate updates a minute. Now `650 ± 110`.
 //
 // Every bitget market in the seed is a USDT market with rebase 0/0, so job 3 is the identity here
 // and there is nothing to assert about it — ex1 and ex4 are the only two exchanges that can.
@@ -74,7 +82,7 @@ var Ex5SnapshotThenUpdates = Scenario{
 	],
 	"ts": 1800000000600
 }`,
-		// 03 update at +595 — inside the ±10 window, so contiguous even though it is not 600
+		// 03 update at +595 — inside the window, so contiguous even though it is not 650
 		`{
 	"id": "0a1d5f6c-4b82-4f7e-9a30-2c8e5b1d7043",
 	"simulation": 1,
@@ -250,7 +258,7 @@ var Ex5UpdateBeforeSnapshot = Scenario{
 	},
 }
 
-// Ex5JumpTolerance — the rule that exists only for ex5. BOTH edges of the last+600±10 window are
+// Ex5JumpTolerance — the rule that exists only for ex5. BOTH edges of the last+650±110 window are
 // contiguous, and one millisecond past the edge is a real gap: the book is emptied by a reset,
 // the update is dead-lettered, a snapshot is requested, and the resync restores the book. This
 // is the scenario that would fail if the tolerance were dropped back to an exact check.
@@ -274,38 +282,38 @@ var Ex5JumpTolerance = Scenario{
 	],
 	"ts": 1800000000000
 }`,
-		// 02 update at +590 — the LOW edge of the window, accepted
+		// 02 update at +540 — the LOW edge of the window, accepted
 		`{
 	"id": "3dd2f930-7e58-491e-9381-8acc008a8199",
 	"simulation": 1,
 	"action": "update",
 	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
 	"data": [
-		{ "asks": [["77300.00", "1.5"]], "checksum": 222, "ts": "1800000000590" }
+		{ "asks": [["77300.00", "1.5"]], "checksum": 222, "ts": "1800000000540" }
 	],
-	"ts": 1800000000590
+	"ts": 1800000000540
 }`,
-		// 03 update at +610 — the HIGH edge, accepted; also a one-sided (bids-only) update
+		// 03 update at +760 — the HIGH edge, accepted; also a one-sided (bids-only) update
 		`{
 	"id": "a6b66bd5-9818-489a-8588-dd0791e8cb44",
 	"simulation": 1,
 	"action": "update",
 	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
 	"data": [
-		{ "bids": [["77298.00", "0"]], "checksum": 333, "ts": "1800000001200" }
+		{ "bids": [["77298.00", "0"]], "checksum": 333, "ts": "1800000001300" }
 	],
-	"ts": 1800000001200
+	"ts": 1800000001300
 }`,
-		// 04 update at +611 — one millisecond past the edge, so a gap
+		// 04 update at +761 — one millisecond past the edge, so a gap
 		`{
 	"id": "bedec549-33fa-4387-b39b-6b941619b164",
 	"simulation": 1,
 	"action": "update",
 	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
 	"data": [
-		{ "asks": [["77302.00", "5"]], "checksum": 444, "ts": "1800000001811" }
+		{ "asks": [["77302.00", "5"]], "checksum": 444, "ts": "1800000002061" }
 	],
-	"ts": 1800000001811
+	"ts": 1800000002061
 }`,
 		// 05 snapshot — the resync that answers the request
 		`{
@@ -364,11 +372,11 @@ var Ex5JumpTolerance = Scenario{
 			},
 			Bids: []events.PriceLevel{{Price: "77299", Quantity: "3"}},
 		},
-		{ // after 04 — +611 is a gap, so the reset empties the book
+		{ // after 04 — +761 is a gap, so the reset empties the book
 			ExchangeID: 5,
 			PairID:     1,
 			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:01Z",
+			EventTime:  "2027-01-15T08:00:02Z",
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
 		},
@@ -395,7 +403,7 @@ var Ex5JumpTolerance = Scenario{
 // independent events, each with its own ts and event time. No other exchange in the suite can
 // fan one record out into several events, so this is the only place that wiring is exercised.
 // Both elements are snapshots, which job 2 orders by "seq must move forward" with no jump rule —
-// so the ±10 window never applies here.
+// so the window never applies here.
 var Ex5MultiBookFrame = Scenario{
 	ExchangeID: 5,
 	PairID:     1,
@@ -669,11 +677,16 @@ var Ex5PrecisionDust = Scenario{
 // streams apart and the parser discriminates on the shape of `data` (same trap as ex1/ex2).
 //
 // The scenario runs it where it actually appears: a WS gap empties the book and asks the control
-// plane for a snapshot, and the REST body is what answers. That also pins the sequencing decision
-// (user, 2026-08-23) — the REST snapshot is sequenced like a WS one, `data.ts` with jump 600 ± 10,
-// NOT the null-seq `baselinePending` bootstrap ex1/ex2 give their REST bodies. So source 05 has to
-// land 590–610 ms after the REST book's own timestamp to be accepted, and it does; that coupling
-// is the open risk in todo.md, and this scenario is what will fail first if it bites.
+// plane for a snapshot, and the REST body is what answers.
+//
+// REVISED 2026-08-23 (2) to the shape measured on the live feed, and it is now the regression
+// test for the resync loop. The REST `data.ts` is BEHIND the WS update that preceded it (source
+// 04 vs 03) — the live case 57% of the time — and source 05 is an ordinary WS tick that is NOT
+// `REST ts + 650`. Both were fatal under the old sequencing: the REST body seeded the window from
+// the wrong clock, so the next update gapped, emptied the book and asked again, ~22 times a
+// minute. Null-seq fixes it by never comparing the two clocks — job 2 orders the REST body by
+// event time and lets source 05 re-anchor the baseline. ONE reject and ONE control command is
+// the whole assertion: a second of either means the loop is back.
 var Ex5RestSnapshotResync = Scenario{
 	ExchangeID: 5,
 	PairID:     1,
@@ -694,7 +707,7 @@ var Ex5RestSnapshotResync = Scenario{
 	],
 	"ts": 1800000000000
 }`,
-		// 02 WS update at exactly +600 — accepted, re-sizes the best ask
+		// 02 WS update at +600 — accepted, re-sizes the best ask
 		`{
 	"id": "2f8c4b16-93ad-4e70-8b25-1c7fa9d6e084",
 	"simulation": 1,
@@ -720,22 +733,27 @@ var Ex5RestSnapshotResync = Scenario{
 		// arg.instId, `data` an object, `a`/`b`, and numeric levels: 77311 is an integer literal
 		// and 77310.5 has one decimal place, so both prove BigDecimal-from-the-literal rather
 		// than a double round-trip or an invented trailing zero.
+		//
+		// Its `ts` is 50 ms BEHIND source 03 — the endpoint's clock, not the WS one. Because the
+		// parser leaves the sequence id null this is never compared against a WS ts, and job 2
+		// accepts it on the resync exemption.
 		`{
 	"id": "c5091ef7-4b8a-4d63-9e21-0f7c3a8b5d94",
 	"simulation": 1,
 	"code": "00000",
 	"msg": "success",
-	"requestTime": 1800000002398,
+	"requestTime": 1800000001948,
 	"data": {
 		"a": [[77310.5, 0.5], [77311, 1.25]],
 		"b": [[77309.75, 2], [77308, 0.125]],
-		"ts": "1800000002400"
+		"ts": "1800000001950"
 	},
 	"pair": "BTCUSDT",
 	"action": "snapshot"
 }`,
-		// 05 WS update at REST ts +600 — the whole point of sequencing the REST body: the WS
-		// stream picks contiguity back up from `data.ts`, not from the last WS frame.
+		// 05 WS update on the WS clock — deliberately NOT `REST ts + 650` (that would be
+		// ...002600). `baselinePending` adopts its ts as the fresh baseline unconditionally, so
+		// the two clocks never meet.
 		`{
 	"id": "e42b7c30-8d95-4a1e-b6f8-27d5019ac3be",
 	"simulation": 1,
@@ -746,10 +764,22 @@ var Ex5RestSnapshotResync = Scenario{
 			"asks": [["77310.50", "0"]],
 			"bids": [["77307.00", "3"]],
 			"checksum": 444,
-			"ts": "1800000003000"
+			"ts": "1800000002610"
 		}
 	],
-	"ts": 1800000003000
+	"ts": 1800000002610
+}`,
+		// 06 WS update at +750 from 05 — contiguity has resumed from the WS clock, and this is
+		// the upper live cluster the old 600 ± 10 window used to dead-letter.
+		`{
+	"id": "0be3f157-6c24-4a89-9d10-84f2ca7b3e56",
+	"simulation": 1,
+	"action": "update",
+	"arg": { "instType": "sp", "channel": "depth", "instId": "BTCUSDT", "params": { "scale": "0.01" } },
+	"data": [
+		{ "asks": [["77311.00", "2"]], "checksum": 555, "ts": "1800000003360" }
+	],
+	"ts": 1800000003360
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
@@ -764,7 +794,7 @@ var Ex5RestSnapshotResync = Scenario{
 			},
 			Bids: []events.PriceLevel{{Price: "77299", Quantity: "3"}},
 		},
-		{ // after 02 — +600 exactly, best ask re-sized
+		{ // after 02 — +600, best ask re-sized
 			ExchangeID: 5,
 			PairID:     1,
 			Simulation: 1,
@@ -783,11 +813,12 @@ var Ex5RestSnapshotResync = Scenario{
 			Asks:       []events.PriceLevel{},
 			Bids:       []events.PriceLevel{},
 		},
-		{ // after 04 — the REST body restores it; the numeric levels land as plain decimals
+		{ // after 04 — the REST body restores it; the numeric levels land as plain decimals, and
+			// the event time steps BACK to 08:00:01Z because that is the other clock
 			ExchangeID: 5,
 			PairID:     1,
 			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:02Z",
+			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
 				{Price: "77310.5", Quantity: "0.5"},
 				{Price: "77311", Quantity: "1.25"},
@@ -797,12 +828,24 @@ var Ex5RestSnapshotResync = Scenario{
 				{Price: "77308", Quantity: "0.125"},
 			},
 		},
-		{ // after 05 — contiguous with the REST ts: 77310.5 deleted, 77307 inserted
+		{ // after 05 — the baseline re-anchors: 77310.5 deleted, 77307 inserted
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks:       []events.PriceLevel{{Price: "77311", Quantity: "1.25"}},
+			Bids: []events.PriceLevel{
+				{Price: "77309.75", Quantity: "2"},
+				{Price: "77308", Quantity: "0.125"},
+				{Price: "77307", Quantity: "3"},
+			},
+		},
+		{ // after 06 — +750 accepted, 77311 re-sized
 			ExchangeID: 5,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
-			Asks:       []events.PriceLevel{{Price: "77311", Quantity: "1.25"}},
+			Asks:       []events.PriceLevel{{Price: "77311", Quantity: "2"}},
 			Bids: []events.PriceLevel{
 				{Price: "77309.75", Quantity: "2"},
 				{Price: "77308", Quantity: "0.125"},
@@ -815,7 +858,7 @@ var Ex5RestSnapshotResync = Scenario{
 		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 5, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "77311", Quantity: "1.25"}},
+		Asks: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "77311", Quantity: "2"}},
 		Bids: []events.AggregatedLevel{
 			{ExchangeID: 5, Simulation: 1, Price: "77309.75", Quantity: "2"},
 			{ExchangeID: 5, Simulation: 1, Price: "77308", Quantity: "0.125"},

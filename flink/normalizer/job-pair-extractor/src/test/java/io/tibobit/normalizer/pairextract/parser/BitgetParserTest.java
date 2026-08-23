@@ -24,8 +24,8 @@ class BitgetParserTest {
 
     /**
      * Given the captured ex5 snapshot, When parsed, Then the market comes from arg.instId, the
-     * data array is unwrapped, and the string ts becomes both sequence id (jump 600, tolerance
-     * 10) and event time — the outer numeric ts is ignored.
+     * data array is unwrapped, and the string ts becomes both sequence id (jump 650, tolerance
+     * 110) and event time — the outer numeric ts is ignored.
      */
     @Test
     @DisplayName("parses the captured snapshot")
@@ -37,8 +37,8 @@ class BitgetParserTest {
         RawOrderBookEvent event = parsed.get(0).getEvent();
         assertThat(event.getType()).isEqualTo("snapshot");
         assertThat(event.getSequenceId()).isEqualTo(1787404282388L);
-        assertThat(event.getSequenceJump()).isEqualTo(600L);
-        assertThat(event.getSequenceJumpTolerance()).isEqualTo(10L);
+        assertThat(event.getSequenceJump()).isEqualTo(650L);
+        assertThat(event.getSequenceJumpTolerance()).isEqualTo(110L);
         assertThat(event.getEventTime()).isEqualTo(1787404282388L); // inner STRING ts
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("77208.71");
         assertThat(event.getAsks().get(0).getQuantity()).isEqualTo("0.755945");
@@ -59,8 +59,8 @@ class BitgetParserTest {
         RawOrderBookEvent event = parsed.get(0).getEvent();
         assertThat(event.getType()).isEqualTo("update");
         assertThat(event.getSequenceId()).isEqualTo(1787404282410L);
-        assertThat(event.getSequenceJump()).isEqualTo(600L);
-        assertThat(event.getSequenceJumpTolerance()).isEqualTo(10L);
+        assertThat(event.getSequenceJump()).isEqualTo(650L);
+        assertThat(event.getSequenceJumpTolerance()).isEqualTo(110L);
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("77208.71");
         assertThat(event.getAsks().get(0).getQuantity()).isEqualTo("0"); // delete signal
         assertThat(event.getBids().get(2).getQuantity()).isEqualTo("0");
@@ -109,9 +109,14 @@ class BitgetParserTest {
      * arg.instId}), the single {@code data} OBJECT is read directly (not unwrapped from an
      * array), the sides are {@code a}/{@code b}, and the JSON-NUMBER levels become plain
      * decimal strings via BigDecimal — never via double.
+     *
+     * <p>And it is NULL-SEQ. This is the fix for the live resync loop measured 2026-08-23: the
+     * REST {@code ts} is a different clock from the WS one (behind it 57% of the time, and the
+     * next update landed in the old window only 9.9% of the time), so it must never seed the
+     * update window. Null hands job 2 the {@code baselinePending} bootstrap instead.
      */
     @Test
-    @DisplayName("parses the captured REST snapshot")
+    @DisplayName("the REST snapshot is null-seq so it never seeds the update window")
     void parsesRestSnapshot() throws Exception {
         List<ParsedBookEvent> parsed = parser.parse(Fixtures.bytes("ex5-rest-snapshot.json"));
 
@@ -119,10 +124,9 @@ class BitgetParserTest {
         assertThat(parsed.get(0).getMarket()).isEqualTo("XRPUSDT"); // injected `pair`
         RawOrderBookEvent event = parsed.get(0).getEvent();
         assertThat(event.getType()).isEqualTo("snapshot");
-        // Sequenced exactly like a WS snapshot (user decision 2026-08-23), NOT null-seq.
-        assertThat(event.getSequenceId()).isEqualTo(1787465707152L);
-        assertThat(event.getSequenceJump()).isEqualTo(600L);
-        assertThat(event.getSequenceJumpTolerance()).isEqualTo(10L);
+        assertThat(event.getSequenceId()).isNull();
+        assertThat(event.getSequenceJump()).isZero();
+        assertThat(event.getSequenceJumpTolerance()).isZero();
         assertThat(event.getEventTime()).isEqualTo(1787465707152L); // data.ts, not requestTime
         assertThat(event.getAsks()).extracting(PriceLevel::getPrice)
                 .containsExactly("1.4482", "1.4483", "1.4484");
