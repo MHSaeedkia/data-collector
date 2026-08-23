@@ -196,13 +196,16 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
-        <!-- Not in the image: flink-clients carries the LocalExecutorFactory that env.execute()
-             looks up to start an in-process MiniCluster, so it is needed only by run-local.sh. -->
+        <!-- flink-clients carries the LocalExecutorFactory that env.execute() looks up to start an
+             in-process MiniCluster, so it is what run-local.sh and an IDE launch need. `provided`,
+             not `test`: it ships inside flink-dist on the cluster exactly like the deps above, and
+             the two scopes are identical to shade — but only `provided` is on the classpath the IDE
+             hands a src/main class, so `test` made an F5 launch die with "No ExecutorFactory". -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-clients</artifactId>
             <version>${flink.version}</version>
-            <scope>test</scope>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
