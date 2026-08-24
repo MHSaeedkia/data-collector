@@ -66,4 +66,10 @@ var Scenarios = []struct {
 	// rather than by exchange; see data_control.go.
 	{"42-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
 	{"43-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
+
+	// Ompfinex
+
+	{"43-ex7-rest-then-ws-updates", Ex7RestThenWsUpdates},
+	{"44-ex7-sequence-gap", Ex7SequenceGap},
+	{"45-ex7-precision-dust", Ex7PrecisionDust},
 }
