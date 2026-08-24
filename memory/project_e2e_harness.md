@@ -563,3 +563,39 @@ most of them debug, info for scenario start and result"). Every `log.Printf` in 
 
 Verified: build/vet/gofmt clean, `scenario` tests pass, an invalid `-log-level` exits 1 with a
 readable message, and `-serve` logs one line at Info. **Not run live** — no full 41-scenario run.
+
+## 2026-08-24 — scenario 48, `48-ex6-rest-snapshot-resync`
+
+ex6/bybit's SECOND stream (the REST depth snapshot) got a scenario, mirroring what
+`31-ex5-rest-snapshot-resync` does for bitget. **Appended as 48 rather than slotted into the bybit
+block (32–37)**, deliberately: the ex5 block has already been renumbered twice and the standing
+note in this file says to grep the Go identifiers rather than quote numbers, so growing the tail
+was cheaper than shifting 12 entries. It also belongs with the resync scenarios conceptually — it
+is the regression test for the ex5 loop, ported to ex6's counter.
+
+What it feeds: WS snapshot (u 800) → WS delta (u 801) → WS delta u 805 (**gap** → dead-letter +
+reset + one control command) → **REST snapshot** (the `result` envelope) → WS delta u 806 →
+WS delta u 807. Six wanted snapshots, `WantRejects: ["sequence_gap"]`, exactly one
+`snapshot_request`.
+
+**The assertion that carries the weight is the count: ONE reject, ONE command.** A second of
+either means the REST body's own counter leaked into job 2's sequence state and the resync loop is
+back. Source 04 carries the **real captured** `result.u` (38992362) while the WS feed sits at 8xx,
+which is chosen so a wrong implementation fails loudly in *either* direction — adopt it and
+source 05's u=806 is instantly `stale_or_duplicate`; treat it as a forward jump and it is a
+`sequence_gap`.
+
+Source 02 doubles as the only place in the suite that feeds a present-but-**empty** side on an
+UPDATE (`"b": []`, the shape the live capture actually sends). `Ex6OneSidedDelta` covers the null
+(absent-key) case; this covers the empty one, which merges nothing because job 5 clears only on
+snapshots.
+
+Unlike ex5's REST scenario, the REST `cts` here is deliberately kept moving FORWARD (08:00:03,
+after the gap at 08:00:02) rather than lagging. The lagging-resync path is already covered by
+`47-control-ex1-lagging-rest-resync`, and on ex6 the novel hazard is the counter, not the clock.
+
+⚠ **NOT run live.** `go build ./...`, `go vet` and `gofmt` are clean, but the harness needs the
+docker compose stack (and does a destructive `down -v`), which was not up. So this scenario is
+unverified against the real pipeline — in particular the exact snapshot COUNT and the reset
+record's event time are reasoned from `Ex6SequenceGap` and `Ex5RestSnapshotResync`, not observed.
+Run it before trusting it.

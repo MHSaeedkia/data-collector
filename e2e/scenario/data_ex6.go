@@ -9,10 +9,15 @@
 //     awaiting_snapshot and stale_or_duplicate are all reachable. The sibling `data.seq` is
 //     non-contiguous bybit-internal metadata and is never read.
 //   - Sides are the abbreviated `b`/`a`, and a delta may carry only one of them. A MISSING key is
-//     a null side — "no report" — which job 5 leaves untouched, while a present-but-empty array
-//     clears it. ex3 proves that rule on snapshots; ex6 is the only place it can be proved on
-//     updates (Ex6OneSidedDelta).
+//     a null side — "no report" — which job 5 leaves untouched on either kind of event
+//     (Ex6OneSidedDelta, the only place that can be proved on updates). A present-but-empty array
+//     is a real report, but it only CLEARS on a snapshot: job 5 clears a side before merging only
+//     when the type is snapshot, so on an update an empty array merges nothing. The live feed
+//     sends exactly that (`"b": []` on a one-sided delta) — see Ex6RestSnapshotResync source 02.
 //   - The event time is `cts` (matching-engine time), not the outer `ts` (gateway send time).
+//   - `ex6-raw` carries TWO streams, the same REST+WS split ex1, ex2 and ex5 have. The REST depth
+//     response puts its book under `result` instead of `data` and is NULL-SEQ, because its
+//     `result.u` is on a different counter from the WS feed's (Ex6RestSnapshotResync).
 //
 // Every bybit market in the seed is a USDT market with rebase 0/0, so job 3 is the identity here.
 // Pair 1 (BTCUSDT) is price_precision 2 / quantity_precision 8.
@@ -740,5 +745,242 @@ var Ex6PrecisionDust = Scenario{
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{},
 		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62799.99", Quantity: "0.3"}},
+	},
+}
+
+// Ex6RestSnapshotResync — the SECOND stream on `ex6-raw` (added 2026-08-24): bybit's REST
+// `/v5/market/orderbook` response, which NiFi tags `action: "snapshot"` and stamps with the market
+// as a top-level `pair`. Same exchange, different envelope: the book sits under `result` rather
+// than `data`, which is all the parser needs to tell the two apart (unlike ex5, where `action`
+// reads "snapshot" on both streams and only the shape of `data` separates them).
+//
+// The scenario runs it where it actually appears — a WS gap empties the book and asks the control
+// plane for a snapshot, and the REST body is what answers.
+//
+// It is also the regression test for the ex5 resync loop, ported to ex6's failure mode. The REST
+// body's `result.u` is NOT on the WS counter: in the 2026-08-24 captures the REST value was
+// 171,928,550 LOWER than a WS value from 24 hours EARLIER, so the two cannot be compared. Source
+// 04 carries that real value (38992362) while the WS feed sits at 8xx, which makes a wrong
+// implementation fail loudly in EITHER direction — adopt it and source 05's u=806 is instantly
+// `stale_or_duplicate`; treat it as a forward jump and it is a `sequence_gap`. Null-seq is what
+// keeps it correct: job 2 orders this body by EVENT TIME (`result.cts`, the same matching-engine
+// clock the WS branch reads) and lets source 05 adopt its own `u` as the fresh baseline. ONE
+// reject and ONE control command is the whole assertion — a second of either means the loop.
+//
+// Source 02 also pins the shape the live capture actually sends: `"b": []`, a present-but-EMPTY
+// side on a delta. It is a real report, not a null side, but on an UPDATE job 5 merges it and
+// therefore changes nothing — only a SNAPSHOT clears a side. Ex6OneSidedDelta covers the null
+// (absent-key) case; this covers the empty one.
+var Ex6RestSnapshotResync = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline
+		`{
+	"id": "3c1f9b47-05ae-4d62-9f18-7b2ea6d05c31",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000000006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.9", "3"], ["77499.8", "4"]],
+		"a": [["77500.1", "1"], ["77500.2", "2"]],
+		"u": 800,
+		"seq": 112975848012
+	},
+	"cts": 1800000000000
+}`,
+		// 02 WS delta, contiguous — the best ask is re-sized, and the bids are reported as an
+		// EMPTY array rather than an absent key. On an update that merges nothing, so the two
+		// resting bids survive untouched.
+		`{
+	"id": "8d5a2e60-4c93-41b7-a0d6-51f8b7e93a24",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.1", "1.25"]],
+		"u": 801,
+		"seq": 112975848022
+	},
+	"cts": 1800000001000
+}`,
+		// 03 WS delta, u jumps 801 -> 805: dead-lettered, the book is reset, and NiFi is asked
+		`{
+	"id": "f70b6c19-2d84-4e05-b93a-6c1de5027f48",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.7", "1"]],
+		"a": [["77500.3", "5"]],
+		"u": 805,
+		"seq": 112975848090
+	},
+	"cts": 1800000002000
+}`,
+		// 04 REST snapshot — the resync answer, in the OTHER envelope. Note `result` instead of
+		// `data`, the NiFi-injected `pair` alongside bybit's own `result.s`, and `retCode`/
+		// `retMsg`/`time`, none of which the parser reads.
+		//
+		// `result.u` is the real captured value and is on a COMPLETELY different counter from the
+		// WS feed's 8xx. The parser drops it and leaves the sequence id null, so it is never
+		// compared; `result.cts` is still the event time.
+		`{
+	"id": "b2e84d51-7f36-4a90-8c25-0d9f1b3ae675",
+	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["77443.5", "0.185647"], ["77446.5", "0.00166"]],
+		"b": [["77443.4", "0.313301"], ["77442.3", "0.0006"]],
+		"ts": 1800000003012,
+		"u": 38992362,
+		"seq": 113017010359,
+		"cts": 1800000003000
+	},
+	"retExtInfo": {},
+	"time": 1800000003100,
+	"action": "snapshot",
+	"pair": "BTCUSDT"
+}`,
+		// 05 WS delta on the WS counter — deliberately NOT `result.u + 1`. baselinePending adopts
+		// its u as the fresh baseline unconditionally, so the two counters never meet. It deletes
+		// the best ask with qty "0" and inserts a bid.
+		`{
+	"id": "1a6c0f93-8b47-4d25-9e10-3f75c2ba8e06",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000004006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77442.2", "1.5"]],
+		"a": [["77443.5", "0"]],
+		"u": 806,
+		"seq": 113017010370
+	},
+	"cts": 1800000004000
+}`,
+		// 06 WS delta, contiguous with 05 — contiguity has resumed from the WS counter
+		`{
+	"id": "9e37b5c2-6a01-4f84-b7d9-24c8e0f61b3a",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000005006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"a": [["77446.6", "0.25"]],
+		"u": 807,
+		"seq": 113017010381
+	},
+	"cts": 1800000005000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 02 — the empty "b" merged nothing, so both bids are still here
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // the reset job 2 emitted for 03 — an empty book carrying the gap event's own time
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks:       []events.PriceLevel{},
+			Bids:       []events.PriceLevel{},
+		},
+		{ // after 04 — the REST body is the book, wholesale, at result.cts
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:03Z",
+			Asks: []events.PriceLevel{
+				{Price: "77443.5", Quantity: "0.185647"},
+				{Price: "77446.5", Quantity: "0.00166"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77443.4", Quantity: "0.313301"},
+				{Price: "77442.3", Quantity: "0.0006"},
+			},
+		},
+		{ // after 05 — accepted on baselinePending, not gapped: best ask deleted, a bid inserted
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:04Z",
+			Asks: []events.PriceLevel{
+				{Price: "77446.5", Quantity: "0.00166"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77443.4", Quantity: "0.313301"},
+				{Price: "77442.3", Quantity: "0.0006"},
+				{Price: "77442.2", Quantity: "1.5"},
+			},
+		},
+		{ // after 06 — contiguity resumed from the WS counter
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:05Z",
+			Asks: []events.PriceLevel{
+				{Price: "77446.5", Quantity: "0.00166"},
+				{Price: "77446.6", Quantity: "0.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77443.4", Quantity: "0.313301"},
+				{Price: "77442.3", Quantity: "0.0006"},
+				{Price: "77442.2", Quantity: "1.5"},
+			},
+		},
+	},
+	// Exactly one of each. A second reject or a second request means the REST body's own counter
+	// leaked into the sequence state and the resync loop is back.
+	WantRejects: []string{"sequence_gap"},
+	WantControlCommands: []events.ControlCommand{
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77446.5", Quantity: "0.00166"},
+			{ExchangeID: 6, Simulation: 1, Price: "77446.6", Quantity: "0.25"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77443.4", Quantity: "0.313301"},
+			{ExchangeID: 6, Simulation: 1, Price: "77442.3", Quantity: "0.0006"},
+			{ExchangeID: 6, Simulation: 1, Price: "77442.2", Quantity: "1.5"},
+		},
 	},
 }

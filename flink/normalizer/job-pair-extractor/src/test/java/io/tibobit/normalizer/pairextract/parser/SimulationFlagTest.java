@@ -71,6 +71,7 @@ class SimulationFlagTest {
             "5, ex5-rest-snapshot.json",
             "6, ex6-snapshot.json",
             "6, ex6-delta.json",
+            "6, ex6-rest-snapshot.json",
             "8, ex8-snapshot.json",
             "8, ex8-update.json",
     })
@@ -90,6 +91,7 @@ class SimulationFlagTest {
             "5, ex5-update.json",
             "5, ex5-rest-snapshot.json",
             "6, ex6-snapshot.json",
+            "6, ex6-rest-snapshot.json",
             "8, ex8-update.json",
     })
     void missingFlagIsZero(int exchangeId, String fixture) throws Exception {

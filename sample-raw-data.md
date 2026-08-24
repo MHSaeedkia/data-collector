@@ -22,7 +22,7 @@
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
 | `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts`; **+ a REST snapshot stream captured 2026-08-23** (`data` object, `a`/`b`, NUMERIC levels, injected `pair`). ⚠ **RE-MEASURED live 2026-08-23**: the WS channel sends **no snapshots at all**, the REST body is the only baseline and is now **null-seq**, and the update window is **650 ± 110** |
-| `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture) |
+| `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture); **+ a REST snapshot stream captured 2026-08-24** (`result` object, `a`/`b`, string levels, injected `action`/`pair`) — **null-seq**: `result.u` is on a DIFFERENT counter from the WS `data.u` |
 | `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
 | `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
 
@@ -599,6 +599,86 @@ Parsing notes (job 1):
 - **Two timestamps**, both JSON numbers: `ts` (outer, likely gateway send time) and `cts`
   (earlier — likely matching-engine time). Metadata.
 - **Still to capture**: a qty-"0" delete delta frame.
+
+**Re-confirmed 2026-08-24** against a fresh WS snapshot + delta pair (`u` 210920912 → 210920913,
+jump 1 ✅; `seq` 112975848012 → 112975848022, jump 10 — still unusable). Both match the parser as
+written; no WS change was needed. The new capture does settle one open shape question:
+
+- **An unchanged side on a delta arrives as a present-but-EMPTY array**, not as an absent key —
+  the captured delta carried `"b": []` with four ask changes. This is safe, but only because of
+  where job 5 clears: it clears a side before merging **only when the type is `snapshot`**, so on
+  an update an empty array merges nothing. The absent-key (null) and empty-array cases therefore
+  behave identically on updates and differ only on snapshots. Both are now pinned by tests
+  (`BybitParserTest.emptySideOnDeltaIsEmptyNotNull`, `Ex6RestSnapshotResync` source 02).
+
+### ex6 REST snapshot (SECOND stream, captured 2026-08-24)
+
+`ex6-raw` carries **two** streams, the same split ex1, ex2 and ex5 have: the WS feed above, and
+bybit's `/v5/market/orderbook` REST endpoint. NiFi tags the REST body with `"action": "snapshot"`
+and injects the market as a top-level `"pair"`, exactly as it does for the others.
+
+```json
+{
+  "retCode": 0,
+  "retMsg": "OK",
+  "result": {
+    "s": "BTCUSDT",
+    "a": [["77443.5", "0.185647"], ["77446.5", "0.00166"], ["77446.6", "0.000097"]],
+    "b": [["77443.4", "0.313301"], ["77442.3", "0.0006"], ["77441.4", "0.015528"]],
+    "ts": 1787491955753,
+    "u": 38992362,
+    "seq": 113017010359,
+    "cts": 1787491955741
+  },
+  "retExtInfo": {},
+  "time": 1787491955827,
+  "action": "snapshot",
+  "pair": "BTCUSDT",
+  "id": "2fae9d46-6171-40aa-924a-6ed690f32440",
+  "simulation": 0
+}
+```
+
+(Level arrays trimmed — the real response carried 50 levels per side. `simulation` and `id` are
+NiFi's, shown here because this capture came off the raw topic; the committed fixture omits them,
+like every other fixture, and the shared tests inject them.)
+
+Parsing notes (job 1):
+
+- **The discriminator is clean, unlike ex5's.** The book is under **`result`**, not `data`, and the
+  WS frame has no `action` field at all — so a single `result`-is-an-object check separates the two
+  streams. (ex1/ex2/ex5 all had to fall back to something subtler because `action` reads
+  `"snapshot"` on both of their streams.)
+- **Market key is `result.s`**, bybit's own symbol — which keeps the key derivation identical to
+  the WS branch. The injected root `pair` agrees with it and is redundant here; ex1/ex2/ex5 need
+  theirs only because those REST bodies carry no symbol at all.
+- **Both sides required.** A depth response is always a full book, never per-side, so a body
+  missing `a` or `b` is dropped rather than half-applied (it would silently wipe the other side).
+- **Levels are `[price, qty]` string pairs** — same as the WS feed. ex6 has **no** JSON-number
+  hazard on either stream, unlike ex5 whose REST body switched to numeric literals.
+- **⚠ `sequence_id` is NULL and `sequence_jump` is 0 — `result.u` is NOT on the WS counter.** This
+  is the single most important fact about this stream, and the captures prove it arithmetically:
+  the REST body is **24.3 hours LATER** than the WS pair above, yet its `u` is **171,928,550
+  LOWER** (38,992,362 vs 210,920,912). A monotonic counter cannot run backwards, so these are two
+  separate counters — most plausibly because the REST endpoint's `updateId` is scoped per request
+  depth rather than to the `orderbook.50` topic (**the reason is unconfirmed; the incomparability
+  is not**). Adopting `result.u` would make the next WS delta read as a ~172M jump — or, since the
+  REST value is the *smaller* one, as an immediate `stale_or_duplicate` — either way: accept →
+  reject → empty the book → request another snapshot → repeat. **That is exactly the live resync
+  loop ex5 was burned by on 2026-08-23** (28.6 book resets/min, `control-plane` saturated). So ex6
+  takes the same fix ex1/ex2/ex5 use: null-seq, and job 2's `baselinePending` bootstrap orders this
+  body by event time and lets the first WS delta after it adopt its own `u` as the baseline. **Never
+  compare the two counters.**
+- **`result.seq` is unusable too**, for the reason it always was on this exchange: it moves 10 per
+  `u` and is bybit-internal cross-topic metadata.
+- **Event time is `result.cts`** — the matching-engine time, the same field the WS branch reads, so
+  both ex6 streams share one event-time clock. This is cleaner than ex5, whose REST body offered
+  only a gateway `ts`.
+- **`result.ts` and the top-level `time` are ignored** — the gateway send time and the API round
+  trip respectively (`time` is ex5's ignored `requestTime`).
+- **`retCode` / `retMsg` are not inspected.** A bybit error body answers `"result": {}`, which has
+  no `a`/`b` arrays, so the shape whitelist already discards it; a second check would be dead
+  weight.
 
 ## ex7-raw — ompfinex
 

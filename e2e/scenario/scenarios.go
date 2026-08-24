@@ -76,4 +76,9 @@ var Scenarios = []struct {
 	// re-armed. See data_control.go.
 	{"46-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
 	{"47-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
+
+	// Bybit's SECOND stream, the REST depth snapshot (added 2026-08-24). Lives here
+	// rather than with 32-37 because it is a resync scenario: it is the regression
+	// test for the ex5 loop, ported to ex6's counter. See data_ex6.go.
+	{"48-ex6-rest-snapshot-resync", Ex6RestSnapshotResync},
 }
