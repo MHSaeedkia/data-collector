@@ -81,9 +81,10 @@ func (r *Registry) Catalog() domain.Catalog {
 
 // Enrich resolves a raw book into the display shape pushed to the
 // browser. Unknown ids fall back to placeholders. A per-exchange book
-// (RawBook.ExchangeID != 0) also gets its source exchange resolved at the
-// book level — that is what the browser routes on, while the per-level
-// exchange keeps the table rendering identical for both kinds of book.
+// (one whose ExchangeID is a real exchange) also gets its source exchange
+// resolved at the book level — that is what the browser routes on, while
+// the per-level exchange keeps the table rendering identical for both
+// kinds of book. A merged book resolves a list per level instead of one.
 func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -95,17 +96,29 @@ func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 
 	levels := make([]domain.Level, 0, len(rb.Levels))
 	for _, rl := range rb.Levels {
-		levels = append(levels, domain.Level{
+		l := domain.Level{
 			Price:      rl.Price,
 			Quantity:   rl.Quantity,
 			Simulation: rl.Simulation,
 			SourceID:   rl.SourceID,
-			Exchange:   r.exchange(rl.ExchangeID),
-		})
+		}
+		// A merged level sums several exchanges, so it resolves a list and
+		// leaves the scalar Exchange empty — resolving id 0 there would
+		// stamp every merged row with the "unknown" placeholder.
+		if rb.Merged {
+			l.Exchanges = make([]domain.Exchange, 0, len(rl.ExchangeIDs))
+			for _, id := range rl.ExchangeIDs {
+				l.Exchanges = append(l.Exchanges, r.exchange(id))
+			}
+		} else {
+			l.Exchange = r.exchange(rl.ExchangeID)
+		}
+		levels = append(levels, l)
 	}
 
 	b := domain.Book{
 		PairID:    rb.PairID,
+		Merged:    rb.Merged,
 		Base:      m.Base,
 		Quote:     m.Quote,
 		Side:      rb.Side,
@@ -113,7 +126,7 @@ func (r *Registry) Enrich(rb domain.RawBook) domain.Book {
 		Levels:    levels,
 		EventTime: rb.EventTime,
 	}
-	if rb.ExchangeID != 0 {
+	if rb.ExchangeID != domain.AggregatedExchangeID {
 		ex := r.exchange(rb.ExchangeID)
 		b.Exchange = &ex
 	}

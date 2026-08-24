@@ -171,8 +171,14 @@
 			// so we hold exactly one book per side and the dropdown contents
 			// come from the catalog message rather than from the data.
 			let catalog = { markets: [], exchanges: [] };
+			// The exchange_id vocabulary, kept in step with the constants of
+			// the same name in internal/domain: an exchange_id is either a
+			// real exchange (postgres ids, from 1 up) or one of the two
+			// cross-exchange views below. Never write the bare numbers.
+			const AGGREGATED = 0; // job 6's union: levels side by side
+			const MERGED = -1; // the merger's sum: one level per price
 			let selectedPair = null; // market id
-			let selectedExchange = 0; // exchange id, 0 = aggregated
+			let selectedExchange = AGGREGATED;
 			let books = { asks: null, bids: null };
 			let ws = null;
 
@@ -183,8 +189,11 @@
 			const $dot = document.getElementById("dot");
 			const $conn = document.getElementById("conn");
 
+			// The mirror of domain.Book.ExchangeID(). Merged is checked first
+			// because `exchange` is absent on both cross-exchange views.
 			function bookExchangeID(book) {
-				return book.exchange ? book.exchange.id : 0;
+				if (book.merged) return MERGED;
+				return book.exchange ? book.exchange.id : AGGREGATED;
 			}
 
 			function store(book) {
@@ -228,7 +237,8 @@
 				fillSelect(
 					$exchange,
 					[
-						{ value: 0, text: "All exchanges (aggregated)" },
+						{ value: AGGREGATED, text: "All exchanges (aggregated)" },
+						{ value: MERGED, text: "All exchanges (merged)" },
 						...(catalog.exchanges || []).map((e) => ({
 							value: e.id,
 							text: e.name,
@@ -269,11 +279,19 @@
 				return str + "0".repeat(places - current);
 			}
 
+			// A merged level was summed across exchanges, so it names them
+			// all — that list is the answer to "who is behind this quantity?",
+			// which is the first thing a reader of a merged level asks.
+			function exchangeNames(l) {
+				if (l.exchanges) return l.exchanges.map((e) => e.name).join(", ");
+				return l.exchange.name;
+			}
+
 			function rows(levels, priceDecimals, qtyDecimals, showExchange) {
 				return levels
 					.map(
 						(l) =>
-							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td>${showExchange ? `<td class="exch">${l.exchange.name}</td>` : ""}</tr>`,
+							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td>${showExchange ? `<td class="exch">${exchangeNames(l)}</td>` : ""}</tr>`,
 					)
 					.join("");
 			}
@@ -293,9 +311,12 @@
 					$meta.textContent = "";
 					return;
 				}
-				// One exchange per row is only worth a column when the book
-				// mixes exchanges — i.e. the aggregated view.
-				const showExchange = selectedExchange === 0;
+				// The exchange column is only worth its width when the book
+				// mixes exchanges — the two cross-exchange views, not a
+				// single exchange's own book (where it is one constant value).
+				const showExchange =
+					selectedExchange === AGGREGATED ||
+					selectedExchange === MERGED;
 
 				// asks come ascending (lowest first); show highest at top so best ask sits by the spread.
 				const askLevels = asks ? [...asks.levels].reverse() : [];
@@ -324,7 +345,7 @@
 					...allLevels.map((l) => decimalPlaces(l.quantity)),
 				);
 
-				const head = `<tr><th>Price</th><th>Qty</th>${showExchange ? '<th class="exch">Exchange</th>' : ""}</tr>`;
+				const head = `<tr><th>Price</th><th>Qty</th>${showExchange ? `<th class="exch">${selectedExchange === MERGED ? "Exchanges" : "Exchange"}</th>` : ""}</tr>`;
 				$book.innerHTML = `
         <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels, priceDecimals, qtyDecimals, showExchange)}</tbody></table>
         <div class="spread">

@@ -87,4 +87,6 @@ Deliberately **not** done, needs a decision:
   normalizer-only, so a refresh leaves the merger down — see [[flink-deploy-tooling]].
 - [[staleness-exporter]] does not watch the `-merged` topics.
 - No e2e coverage; `e2e/` asserts jobs 5 and 6 only ([[e2e-harness]]).
-- The web UI does not consume `-merged` ([[project_orderbook_web]]).
+- ~~The web UI does not consume `-merged`~~ **done 2026-08-24**: a third entry in [[orderbook-web]]'s
+  exchange dropdown, `exchange_id = -1` on the wire. Still NOT verified against live Kafka on either
+  side — no merged record has ever been produced AND consumed for real.

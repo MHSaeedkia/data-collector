@@ -1,6 +1,6 @@
 ---
 name: orderbook-web
-description: Standalone Go web app that consumes the aggregated and per-exchange Kafka topics (Confluent Avro) and renders a live order book in the browser
+description: Standalone Go web app that consumes the aggregated, per-exchange and price-merged Kafka topics (Confluent Avro) and renders a live order book in the browser
 metadata:
   type: project
 ---
@@ -9,7 +9,8 @@ metadata:
 
 Standalone **Go** app that consumes the aggregator's output topics (`p{pair_id}-{side}`, e.g.
 `p2-asks`/`p2-bids`; see [[orderbook-aggregation]]) — and, since 2026-08-10, job 5's
-per-exchange books as well — and shows a live order book in the browser.
+per-exchange books as well, and since 2026-08-24 the [[price-merger]]'s `-merged` topics —
+and shows a live order book in the browser.
 
 ## Stack & shape (decisions)
 
@@ -90,8 +91,8 @@ Unknown ids fall back to placeholders (`p{id}`/`?` for market, `unknown`/`نام
 
 ## Key implementation notes
 
-- Subscribes via regex `^p[0-9]+-(asks|bids)$` (franz-go `ConsumeRegex`) → matches only the
-  aggregated OUTPUT topics; upstream per-exchange topics carry a leading `ex…-` so they don't
+- Subscribes via regex `^p[0-9]+-(asks|bids)(-merged)?$` (franz-go `ConsumeRegex`) → matches the
+  aggregated OUTPUT topics and the merger's (see the 2026-08-24 section); upstream per-exchange topics carry a leading `ex…-` so they don't
   match ([[kafka-topic-strategy]]). Topic strings are otherwise opaque to
   hub/ingest — never parsed.
 - WebSocket served at `/ws`; static file server at `/`.
@@ -197,3 +198,86 @@ specific exchange is selected.
 - `store()`/`render()` key off `pair_id` + exchange id, not the `base/quote` string as before.
 - Not yet run against live Kafka — Go tests (all packages green), `go vet`, `gofmt` clean, and a
   local run confirming the page serves and `/ws` upgrades and delivers the catalog frame.
+
+---
+
+## 2026-08-24 — merged view (the price merger's `-merged` topics)
+
+Third view of the same pair, alongside job 6's union and job 5's per-exchange books: the
+[[price-merger]]'s `p{id}-{side}-merged`, where equal prices are **summed** and a level names the
+list of exchanges behind the sum.
+
+### The `exchange_id` vocabulary — ONE ubiquitous language, no bare numbers
+
+The exchange dropdown got a third entry, `All exchanges (merged)` (user's choice over a separate
+Union/Merged toggle). Merged is a *view*, not an exchange, so it has no `exchange_id` — but
+`Selection{pair, exchange}` already used 0 for the aggregated union, and real ids start at 1, so
+merged takes the free negative slot. `Selection`, `Matches`, `WSSelect`, the hub and the browser's
+select message are therefore **all unchanged**. The alternative (a `View` field on
+Selection/Book/WSSelect + hub matching) is cleaner in the abstract and cost several times the code;
+if a fourth view ever appears, that is the moment to switch.
+
+An `exchange_id` is now **exactly one of three things**, in both directions on the wire, and each is
+named — the user's requirement after the first cut left `-1` named and `0` a bare literal:
+
+| value | constant | meaning |
+| --- | --- | --- |
+| `1`+ | (postgres ids) | a real exchange — job 5's own book |
+| `0` | `domain.AggregatedExchangeID` | job 6's union: levels side by side |
+| `-1` | `domain.MergedExchangeID` | the merger's sum: one level per price |
+
+Declared in one const block at the top of `internal/domain/book.go` with the whole vocabulary in one
+doc comment, and **mirrored in `public/index.html` as `AGGREGATED`/`MERGED`** (the JS cannot import
+Go — if one side changes, the other has to change with it; that coupling is the price of the
+sentinel design and is called out in both files). Nothing writes the bare numbers any more:
+`registry.Enrich` tests `!= domain.AggregatedExchangeID`, the hub/registry/decoder tests assert on
+the constants, and the browser's `showExchange` is an explicit
+`=== AGGREGATED || === MERGED` rather than the `<= 0` trick the first cut used — the numeric
+ordering is an accident of the encoding, not a fact about the views.
+
+The flag that drives it is `Book.Merged` / `RawBook.Merged`, not the exchange field: `Book.Exchange`
+is nil for the aggregated *and* the merged book, so nil alone can't tell them apart —
+`Book.ExchangeID()` checks `Merged` first, and it is **the single place** a book is mapped onto the
+vocabulary above (a producer never stamps `MergedExchangeID` into `RawBook.ExchangeID`). `hub.latest` is keyed by `ExchangeID()`, so getting this
+wrong would silently overwrite the aggregated book with the merged one for the same pair+side.
+Two hub tests pin exactly that.
+
+### One consumer, not a third
+
+`aggregatedPattern` widened to `^p[0-9]+-(asks|bids)(-merged)?$` rather than adding a client. The
+merged topics carry one record per aggregated record — same rate, and **earliest** is the right
+offset for both (the book must paint on load). This regex is the deliberate **mirror image** of
+`MergerJob`'s: that one must *exclude* `-merged` or it consumes its own output forever, this one
+wants both. Only `NewSnapshotConsumer` still needs its own client, and only because
+`ConsumeResetOffset` is client-wide.
+
+### The shape difference, and where it is absorbed
+
+Same place as last time — `internal/schema`. `Decode` dispatches on the third Avro full name
+`io.tibobit.orderbook.MergedOrderBookEvent`. A merged **level** has `exchange_ids[]`/`source_ids[]`
+instead of the scalars, so `RawLevel` gained `ExchangeIDs`/`SourceIDs` (both `omitempty`, empty on
+every other producer) and `domain.Level` gained `Exchanges []Exchange`. The lists are **not**
+flattened to a first exchange: "who is behind this quantity?" is the only reason `exchange_ids`
+exists on the schema at all. `wireMerged` omits the record-level `source_id` the way `wireSnapshot`
+omits `trigger_id` — hamba skips schema fields with no struct counterpart, and the test marshals it
+with a real value to prove the skip works.
+
+`registry.Enrich` resolves the list for a merged book and **leaves the scalar `Level.Exchange` at
+its zero value** — resolving the absent id 0 would stamp every merged row with the
+`unknown`/`نامشخص` placeholder. The per-level placeholder fallback still applies inside the list, so
+an id postgres doesn't know shows as `unknown` rather than dropping a contributor.
+
+### Browser
+
+`exchangeNames(l)` joins `l.exchanges` with `", "` (user's choice over a bare count), falling back
+to `l.exchange.name`. The Exchange column now shows for `selectedExchange <= 0` (both cross-exchange
+views, still hidden for a single exchange where it is one constant), with the header reading
+`Exchanges` in the merged view. Levels render in the merger's order — asks ascending, bids
+descending, live before simulated at one price — the same convention `render()` already assumes.
+
+### Status
+
+All Go tests green (5 new: 2 decoder, 2 registry, 2 hub), `go vet` + `gofmt` clean, `node --check`
+on the extracted inline script, and a local run confirming the page serves with the third option. **NOT verified against live Kafka** — docker was
+down, so no merged record has ever actually been decoded by this app, and neither had the merger
+been run live when it was written. The first real test is a stack with the merger job submitted.

@@ -12,6 +12,8 @@ import (
 	"github.com/hamba/avro/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"orderbook-web/internal/domain"
 )
 
 // aggregatedOrderBookEventSchema mirrors
@@ -39,6 +41,45 @@ const aggregatedOrderBookEventSchema = `{
 		}}}
 	]
 }`
+
+// mergedOrderBookEventSchema mirrors
+// schemas/merged_order_book_event.avsc — the merger's summed view, where
+// a level names the LIST of exchanges whose quantities went into it.
+const mergedOrderBookEventSchema = `{
+	"type": "record",
+	"name": "MergedOrderBookEvent",
+	"namespace": "io.tibobit.orderbook",
+	"fields": [
+		{"name": "pair_id", "type": "int"},
+		{"name": "side", "type": {"type": "enum", "name": "Side", "symbols": ["asks", "bids"]}},
+		{"name": "id", "type": "string", "default": ""},
+		{"name": "source_id", "type": "string", "default": ""},
+		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+		{"name": "levels", "type": {"type": "array", "items": {
+			"type": "record",
+			"name": "MergedLevel",
+			"fields": [
+				{"name": "simulation", "type": "int", "default": 0},
+				{"name": "exchange_ids", "type": {"type": "array", "items": "int"}},
+				{"name": "source_ids", "type": {"type": "array", "items": "string"}},
+				{"name": "price", "type": "string"},
+				{"name": "quantity", "type": "string"}
+			]
+		}}}
+	]
+}`
+
+// fullMerged carries the record-level source_id that the decoder's
+// wireMerged deliberately has no field for, so a test message can put a
+// real value on the wire for it.
+type fullMerged struct {
+	PairID    int               `avro:"pair_id"`
+	Side      string            `avro:"side"`
+	ID        string            `avro:"id"`
+	SourceID  string            `avro:"source_id"`
+	EventTime time.Time         `avro:"event_time"`
+	Levels    []wireMergedLevel `avro:"levels"`
+}
 
 // orderBookSnapshotSchema mirrors schemas/order_book_snapshot.avsc — job
 // 5's per-exchange book, both sides in one record. Kept complete
@@ -148,7 +189,7 @@ func TestDecoder_Decode_ValidMessageAndCachesSchema(t *testing.T) {
 	require.Len(t, books, 1, "an aggregated record is one side, so one book")
 	rb := books[0]
 	assert.Equal(t, 1, rb.PairID)
-	assert.Equal(t, 0, rb.ExchangeID, "the aggregated book belongs to no single exchange")
+	assert.Equal(t, domain.AggregatedExchangeID, rb.ExchangeID, "the aggregated book belongs to no single exchange")
 	assert.Equal(t, "asks", rb.Side)
 	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.ID)
 	assert.Equal(t, int64(1_700_000_000_000), rb.EventTime)
@@ -316,6 +357,66 @@ func TestDecoder_Decode_SnapshotEmitsEmptySides(t *testing.T) {
 	require.Len(t, books, 2)
 	assert.Empty(t, books[0].Levels)
 	assert.Empty(t, books[1].Levels)
+}
+
+func TestDecoder_Decode_MergedKeepsEveryContributingExchange(t *testing.T) {
+	registryURL, _ := newTestRegistry(t, 5, mergedOrderBookEventSchema)
+	dec := NewDecoder(registryURL)
+
+	value := wireMessage(t, 5, mergedOrderBookEventSchema, fullMerged{
+		PairID:    1,
+		Side:      "bids",
+		ID:        "55555555-5555-4555-8555-555555555555",
+		SourceID:  "44444444-4444-4444-8444-444444444444",
+		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
+		Levels: []wireMergedLevel{{
+			Simulation:  0,
+			ExchangeIDs: []int{1, 3},
+			SourceIDs:   []string{"aaaa", "bbbb"},
+			Price:       "97240.5",
+			Quantity:    "14",
+		}},
+	})
+
+	books, err := dec.Decode(value)
+	require.NoError(t, err)
+	require.Len(t, books, 1, "a merged record is one side, so one book")
+	rb := books[0]
+	assert.True(t, rb.Merged, "the browser routes on this — a merged book has no exchange_id to route on")
+	assert.Equal(t, domain.AggregatedExchangeID, rb.ExchangeID)
+	assert.Equal(t, 1, rb.PairID)
+	assert.Equal(t, "bids", rb.Side)
+	assert.Equal(t, int64(1_700_000_000_000), rb.EventTime)
+	require.Len(t, rb.Levels, 1)
+	// The whole list survives: flattening to a first exchange would lose
+	// the answer to "who is behind this quantity?".
+	assert.Equal(t, []int{1, 3}, rb.Levels[0].ExchangeIDs)
+	assert.Equal(t, []string{"aaaa", "bbbb"}, rb.Levels[0].SourceIDs)
+	assert.Equal(t, "14", rb.Levels[0].Quantity)
+	assert.Zero(t, rb.Levels[0].ExchangeID, "a merged level has no single exchange")
+}
+
+func TestDecoder_Decode_MergedSimulationStaysOnItsOwnLevel(t *testing.T) {
+	registryURL, _ := newTestRegistry(t, 6, mergedOrderBookEventSchema)
+	dec := NewDecoder(registryURL)
+
+	// The merger groups by (price, simulation), so one price quoted both
+	// live and simulated arrives as two levels — never summed together.
+	value := wireMessage(t, 6, mergedOrderBookEventSchema, fullMerged{
+		PairID:    2,
+		Side:      "asks",
+		EventTime: time.UnixMilli(1_700_000_000_000).UTC(),
+		Levels: []wireMergedLevel{
+			{Simulation: 0, ExchangeIDs: []int{1}, SourceIDs: []string{"a"}, Price: "10", Quantity: "3"},
+			{Simulation: 1, ExchangeIDs: []int{2}, SourceIDs: []string{"b"}, Price: "10", Quantity: "4"},
+		},
+	})
+
+	books, err := dec.Decode(value)
+	require.NoError(t, err)
+	require.Len(t, books[0].Levels, 2)
+	assert.Equal(t, 0, books[0].Levels[0].Simulation)
+	assert.Equal(t, 1, books[0].Levels[1].Simulation)
 }
 
 func TestDecoder_Decode_UnknownSchemaIsRejected(t *testing.T) {
