@@ -28,8 +28,9 @@ import java.util.regex.Pattern;
  */
 public class PairExtractorJob {
 
-    // Also matches the postponed ex7-raw on purpose: scope lives in Parsers.byExchangeId(),
-    // and PairExtractFunction drops unparsered exchanges with a counter.
+    // Deliberately matches every ex{n}-raw topic, including exchanges with no parser yet
+    // (ex9 lbank today): scope lives in Parsers.byExchangeId(), and PairExtractFunction drops
+    // unparsered exchanges with a counter. Landing ex7 in 2026-08-24 needed no change here.
     private static final Pattern RAW_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-raw");
 
     public static void main(String[] args) throws Exception {

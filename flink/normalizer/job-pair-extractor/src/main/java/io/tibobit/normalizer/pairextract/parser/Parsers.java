@@ -3,9 +3,10 @@ package io.tibobit.normalizer.pairextract.parser;
 import java.util.Map;
 
 /**
- * The one place that says which exchanges are in scope. ex7 ompfinex is POSTPONED
- * (2026-07-14, raw-data issue) — its topic still matches the source pattern, and
- * PairExtractFunction drops its messages via the "no parser" counter.
+ * The one place that says which exchanges are in scope. An exchange absent from this map still
+ * has its topic matched by the source pattern; PairExtractFunction drops its messages via the
+ * "no parser" counter. ex9 lbank is the only such exchange left — ex7 ompfinex joined the map
+ * on 2026-08-24.
  */
 public final class Parsers {
 
@@ -20,6 +21,7 @@ public final class Parsers {
                 4, new RamzinexParser(),
                 5, new BitgetParser(),
                 6, new BybitParser(),
+                7, new OmpfinexParser(),
                 8, new OkxParser());
     }
 }

@@ -143,11 +143,17 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
   document; NO multi-doc splitting in job 1 (the discarded-capture
   2-newline-concatenated-docs lead was an artifact).
 - **ompfinex (ex7) POSTPONED 2026-07-14** (team decision — known issue with its raw data).
+  **SUPERSEDED 2026-08-24 — ex7 is IN SCOPE**: a teammate landed `OmpfinexParser` on
+  `feat/add-ompfinex` and the postponement is resolved. Pipeline scope is now **ex1–ex8**
+  (ex9 lbank still seeded-not-implemented). The two things deferred with ex7 both turned out
+  to have answers: the initial-book fixture is the REST snapshot (`data.lastUpdateId`, a REAL
+  seq), and the `U`/`u` range-gap investigation resolved to **`jump = u - U`, i.e. continuity
+  is `U_n == seq_{n-1}` rather than Binance's `+1`** — see [[project_pair_extractor]] for the
+  regime and the caveats on how well-evidenced that is.
   **okx (ex8) ADDED to scope 2026-07-14** (previously in DB with no topic — caveat settled
-  same day: snapshot+update samples captured, feed is live). Initial pipeline scope =
-  **ex1–ex6 + ex8**. Deferred with
-  ex7: initial-book fixture + `U`/`u` range-gap investigation. Job 1's `^ex[0-9]+-raw$` source
-  pattern still matches `ex7-raw` — exclude-vs-drop decision noted in todo.md M2.
+  same day: snapshot+update samples captured, feed is live). Job 1's `^ex[0-9]+-raw$` source
+  pattern always matched `ex7-raw` — the exclude-vs-drop decision (scope lives only in
+  `Parsers.byExchangeId()`) is what made landing ex7 a one-line registry change.
 - **Job-2 validation scope (REVISED 2026-07-14, user — supersedes the same-day
   "no checks for snapshot feeds" decision)**: two distinct rule kinds.
   (a) **Gap/jump validation** ONLY for the two delta feeds — **ex6 bybit (`u`, jump 1)**
@@ -247,8 +253,8 @@ compat check (do at M8).
 - Topic provisioning/retention: `ex{id}-raw` SETTLED 2026-07-14 — `scripts/warmup.sh` creates
   one per subscribed exchange (distinct exchange_ids from the same exchange_markets query,
   1 partition), retention 7 days "for now" (user). Note this is DB-driven, so a subscribed
-  ex7 would get a topic too — harmless while ex7 is postponed. Intermediate/dead-letter
-  topic families + their retention still open (M8).
+  ex7 gets a topic too — which since 2026-08-24 is what we want, not a harmless accident.
+  Intermediate/dead-letter topic families + their retention still open (M8).
 - Pipeline/project directory name under `flink/` — PROPOSED `flink/normalizer/`, not confirmed.
 - Deploy story — PROPOSED: one parameterized `run-job.sh`/`Dockerfile` at the pipeline root
   taking the module name (all modules share the same Flink base), not per-module copies.

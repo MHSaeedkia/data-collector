@@ -682,8 +682,47 @@ Parsing notes (job 1):
 
 ## ex7-raw — ompfinex
 
-> ⚠ **POSTPONED 2026-07-14** (team decision): known issue with its raw data — excluded from
-> the initial pipeline scope.
+> ⚠ **POSTPONED 2026-07-14 → IN SCOPE 2026-08-24.** `OmpfinexParser` landed on
+> `feat/add-ompfinex`. **No captures have been added to this document yet — that is a gap, not
+> an omission.** Everything below is the shape the parser reads, transcribed from its javadoc;
+> it is NOT a capture and nobody but the parser's author has seen the real frames.
+
+**Regime: REST snapshot + Centrifugo WS delta — a TRUE delta feed** (the ex6/ex8 family), not
+ex1/ex2's null-seq resync pattern, even though ompfinex is a Centrifugo exchange like ex1, ex2
+and ex4. Discriminator is easy: the REST body has a top-level `action: "snapshot"`, the WS
+frame has no `action` field at all.
+
+**REST snapshot.** `{"status":"OK","action":"snapshot","pair":"{market}","data":{"lastUpdateId":N,
+"time":...,"bids":[...],"asks":[...]}}`. Market is the top-level `pair` (a NUMERIC string, e.g.
+`"14"` — the ex4/ramzinex style, matching `exchange_markets.market`). Levels are `[price, qty]`
+string pairs. **Sequence id = `data.lastUpdateId` — a REAL seq, unlike ex1/ex2's null-seq
+snapshot and unlike ex6's REST body**; jump 0. Event time = `data.time`, **epoch MICROSECONDS**,
+divided by 1000.
+
+**WebSocket update.** Centrifugo push on channel `public-market:r-depth-{market}`.
+Binance-style diff-depth: `data.U`/`data.u` are the first/last update ids folded into the
+message. Sequence id = `data.u`, **jump = `u - U` (dynamic per message)** — so continuity is
+`U_n == seq_{n-1}`, **NOT** Binance's `U_n == seq_{n-1} + 1`. Sides are `a`/`b` (asks/bids),
+string pairs, qty `"0"` = delete. A side key is claimed to be always present, possibly as an
+empty array; the parser **requires both** and drops the whole message if either is missing
+(unlike ex6/ex8, which pass a null side). No message-level timestamp on the wire → event time
+is job-1 processing time, the ex4 situation.
+
+**⚠ What still needs capturing, and why each matters:**
+
+| Claim | Why it matters if wrong |
+| --- | --- |
+| `data.time` is epoch MICROseconds | ÷1000 puts event time in 1970 or year 58000; asserted nowhere in the e2e suite |
+| `U_n == u_{n-1}` (the `+0` convention) | off by one ⇒ every delta reads as a gap |
+| the first delta after a REST snapshot has `U == lastUpdateId` | if a mid-stream snapshot is not contiguous, ex7 enters the ex5 resync loop |
+| both `a` and `b` are always present | a missing key drops the message silently ⇒ an invisible sequence gap |
+
+The evidence behind the `+0` convention is **two consecutive live samples** (second message's
+`U` 859075 == first's `u` 859075). That establishes the convention; it does not establish the
+mid-stream-resync case, which is the one that bit ex5 and ex6.
+
+Hand-built payloads in this exact shape live in `e2e/scenario/data_ex7.go`. They are fixtures
+for the pipeline's arithmetic, **not captures** — do not cite them as wire evidence.
 
 ## ex8-raw — okx
 
