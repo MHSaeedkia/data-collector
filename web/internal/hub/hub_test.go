@@ -45,6 +45,10 @@ func exchangeBook(pairID, exchangeID int, side string) domain.Book {
 	}
 }
 
+func mergedBook(pairID int, side string) domain.Book {
+	return domain.Book{PairID: pairID, Side: side, Merged: true}
+}
+
 func TestAdd_SendsCatalog(t *testing.T) {
 	h := New()
 	h.SetCatalog(domain.Catalog{Markets: []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}}})
@@ -73,7 +77,7 @@ func TestSelect_AnswersWithHeldBooksForThatSelectionOnly(t *testing.T) {
 	c := &fakeConn{}
 	cl := h.add(c)
 
-	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: 0})
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
 
 	snap, ok := c.writes[1].(domain.WSSnapshot)
 	require.True(t, ok)
@@ -108,7 +112,7 @@ func TestPublish_ReachesOnlyClientsWatchingThatBook(t *testing.T) {
 	h := New()
 	watching, other, unselected := &fakeConn{}, &fakeConn{}, &fakeConn{}
 	h.selectBooks(h.add(watching), domain.Selection{PairID: 1, ExchangeID: 8})
-	h.selectBooks(h.add(other), domain.Selection{PairID: 1, ExchangeID: 0})
+	h.selectBooks(h.add(other), domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
 	h.add(unselected) // connected but has not chosen yet
 
 	b := exchangeBook(1, 8, "asks")
@@ -132,6 +136,36 @@ func TestPublish_KeysAggregatedAndPerExchangeSeparately(t *testing.T) {
 	h.Publish(exchangeBook(1, 8, "asks"))
 
 	assert.Len(t, h.latest, 2)
+}
+
+// Merged and aggregated arrive for the same pair+side with no exchange on
+// either, so only the merged flag keeps them apart — the one thing the
+// MergedExchangeID sentinel has to get right.
+func TestPublish_KeysMergedSeparatelyFromAggregated(t *testing.T) {
+	h := New()
+	h.Publish(aggregatedBook(1, "asks"))
+	h.Publish(mergedBook(1, "asks"))
+
+	assert.Len(t, h.latest, 2)
+}
+
+func TestSelect_MergedSelectionExcludesTheAggregatedBook(t *testing.T) {
+	h := New()
+	for _, b := range []domain.Book{
+		aggregatedBook(1, "asks"),
+		mergedBook(1, "asks"),
+		exchangeBook(1, 8, "asks"),
+	} {
+		h.latest[b.Key()] = b
+	}
+	c := &fakeConn{}
+	cl := h.add(c)
+
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.MergedExchangeID})
+
+	snap := c.writes[1].(domain.WSSnapshot)
+	require.Len(t, snap.Books, 1)
+	assert.True(t, snap.Books[0].Merged)
 }
 
 func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
