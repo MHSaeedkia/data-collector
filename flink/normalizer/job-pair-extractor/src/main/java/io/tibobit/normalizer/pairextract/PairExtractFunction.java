@@ -23,7 +23,7 @@ import java.util.Map;
  * none dead-lettered — dead-letter is job 2's validation concern):
  *
  * <ul>
- *   <li>no parser for the exchange (postponed ex7, future topics) → drop</li>
+ *   <li>no parser for the exchange (ex9 lbank, future topics) → drop</li>
  *   <li>unrecognized/malformed frame (whitelist rule) → drop, never crash</li>
  *   <li>unknown market string → WARN + drop (new pair not yet in exchange_markets)</li>
  *   <li>no {@code id} on the payload → WARN + drop (see below)</li>

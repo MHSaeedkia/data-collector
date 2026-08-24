@@ -86,16 +86,24 @@ Fixtures: `ex2-snapshot.json` is now the REST payload; the old WS message moved 
   `"{exchange_id}|{market}"`, so a case mismatch would also drop silently. lbank reuses okx's
   `market_id`s, so jobs 3–6 already resolve and need nothing. Tasks in todo.md M9.
 - **ex7-raw stays in the source pattern**; scope lives ONLY in `Parsers.byExchangeId()`
-  (1–6 + 8) and `PairExtractFunction` drops unparsered exchanges via the `dropped-no-parser`
+  and `PairExtractFunction` drops unparsered exchanges via the `dropped-no-parser`
   counter. Rationale: one place to change when ex7 lands; also safely absorbs any future
   `ex{n}-raw` topic (warmup.sh is DB-driven, so new subscribed exchanges get topics).
+  **This paid off 2026-08-24**: landing ompfinex cost exactly one map entry (`7, new
+  OmpfinexParser()`) and no job, source-pattern or topic change anywhere. The map is now
+  1–8; ex9 lbank is the only remaining drop-with-counter exchange. See the dated ex7
+  section at the end of this file.
 - **Offsets: `latest`** (consistent with the aggregator — live feed, no replay).
 - **event_time stamping per exchange** (job 2 and audits read this): ex1 `data.lastUpdate`,
-  ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts`, ex6 `cts`
+  ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts` (which is ALSO its
+  sequence id since 2026-08-22), ex6 `cts`
   (matching-engine time — chosen over outer `ts` as the analog of okx's data ts; revisit if
   the team prefers gateway time), ex8 `ts` (also the sequence id). **ex3 and ex4 have NO
   message-level timestamp → job-1 processing time** (`System.currentTimeMillis()`), flagged
-  per [[raw-pipeline-decision]].
+  per [[raw-pipeline-decision]]. **ex7 is the first exchange to MIX the two** (2026-08-24):
+  its REST snapshot carries a real wire time (`data.time`, epoch MICROseconds, divided by
+  1000) while its WS deltas carry none and get processing time. See the dated ex7 section
+  for why that mix is worth watching.
 - **Wire level order is passed through untouched** (including ex4 ramzinex's DESCENDING
   sells — best ask LAST). Sorting is job 5's concern; nothing in jobs 2–4 assumes order.
 - **Drop counters** (Flink metrics on the flatMap): `dropped-no-parser`,
@@ -187,3 +195,188 @@ fixture section in sample-raw-data.md; when changing event_time/ordering semanti
 job 2's expectations too.
 
 **2026-08-03 — `simulation` flag.** All 7 parsers lift it off the payload via `Json.simulation(carrier)`. ⚠ **ex3/wallex's envelope grew a THIRD element** — `["{market}@{side}", [levels…], {"simulation":N}]` — because its root is an array with no field to inject; the other six read it as a root field. `WallexParser` takes 2 or 3 elements, drops 4+. Cross-parser rule is tested once in `SimulationFlagTest`, not per parser. See [[simulation-flag]].
+
+**2026-08-22 — ex4/ramzinex re-verified against a SECOND live capture** (user-supplied,
+`orderbook:11`, `pub.offset` 10298388, 50+50 levels, rial-scale prices ~1.9M). Ran
+`RamzinexParser` on the raw frame: every documented assumption held — Centrifugo envelope,
+numeric channel id as the market key (`"11"`), `buys`→bids / `sells`→asks, 7-element
+JSON-number levels with only `[price, qty]` read, exact decimal literals preserved
+(`1398.2677`, `450`, no scientific notation), `seq = pub.offset` with jump 0, type
+`snapshot`, event time = processing time. **BOTH sides price-descending re-confirmed** (best
+bid FIRST `1910670`, best ask LAST `1910700`, spread +30) — the single riskiest ex4
+assumption, now corroborated by two independent captures a month apart.
+Two things the second capture changed:
+- **Element 6 range is wider than sample-raw-data.md records** (5–221 here vs the documented
+  "10–74"), and it tracks quantity magnitude (`0.23`→5, `1398.2677`→111, `10043.5`→221) —
+  so it is a UI depth-bar scale, NOT an order count. Still ignored; the doc's guess at its
+  meaning is the only thing stale.
+- **Market `"11"` has no `exchange_markets` row in the local seed** (ramzinex's local rows are
+  `12/2/13/3/643/…`, no `11`), so this frame drops on `dropped-unknown-market` locally. Consistent
+  with the known local-seed-vs-server drift in [[db-schema]] — verify the server row exists AND
+  that its `price_amount_rebase` is `-1` if pair 11 is IRT-quoted: a 1.9M price is rial-scale,
+  and a missing `-1` would publish prices 10× too high.
+The raw frame as supplied carries no NiFi `id`/`simulation`, so it parses but `PairExtractFunction`
+drops it on `dropped-no-id` — expected for a pre-NiFi capture, not a defect.
+
+**2026-08-23 — ex5/bitget gained a SECOND stream: the REST depth snapshot.** `ex5-raw` now
+carries the same REST+WS split ex1 and ex2 have. NiFi tags the REST body `"action":"snapshot"`
+and injects the market as a top-level `pair`, exactly as it does for those two — so, as with
+them, **`action` cannot be the discriminator**: it reads `"snapshot"` on both streams. The
+parser branches on the shape of `data` (object = REST, array = WS), which is the only field that
+differs unconditionally.
+
+It differs from the WS frame on every axis that matters, which is why it is a whole branch and
+not a few `path()` fallbacks: market key `pair` vs `arg.instId`; `data` a single OBJECT vs an
+array (so this stream can never fan one record into several events); sides spelled `a`/`b` vs
+`asks`/`bids`; and **levels are JSON NUMBERS**, so it reuses ex4's `Levels.fromNumericArrays`
+(BigDecimal from the literal, then `toPlainString` — `1.448` stays `"1.448"`). Both sides are
+required: it is always a full book, never a per-side snapshot.
+
+> ⚠ **SUPERSEDED 2026-08-23 (2) by commit 65f2f5d — the paragraph below records a decision
+> that was REVERSED.** The ex5 REST snapshot is now **null-seq / jump 0** and the WS window is
+> **650 ± 110**; sequencing it by its own `data.ts` caused a live resync loop. Kept for the
+> reasoning trail only. The correction lives in [[project_type_validator]] and
+> `sample-raw-data.md § ex5 REST`.
+
+**Sequencing — the decision worth remembering.** The REST snapshot carries `data.ts` as its
+sequence id with jump 600 and tolerance 10, i.e. it is treated *identically to a WS snapshot*.
+This was the user's explicit choice on 2026-08-23, taken over the offered alternative of the
+null-seq `baselinePending` bootstrap that ex1/ex2 give their REST bodies. The consequence, and
+the reason it is written down: **the first WS update after a resync must land 590–610 ms after
+the REST book's own timestamp**, or job 2 dead-letters it `sequence_gap`. That is the
+snapshot→update risk already logged against the WS feed, now extended to the resync path — see
+[[project_type_validator]] and todo.md. `requestTime` is ignored (it is the API round trip, not
+the book), and `code`/`msg` are not inspected because an error body has no `data.a`/`data.b` and
+already fails the shape whitelist.
+
+**No job-2 change was needed** — a REST snapshot produces the same `RawOrderBookEvent` a WS one
+does, so every rule downstream was already written for it. The change is job 1 only, plus tests
+and docs: `BitgetParser` (split into `parseRestSnapshot` / `parseWsFrames`), the new fixture
+`ex5-rest-snapshot.json` (the real XRPUSDT capture, trimmed to 3 levels a side, `id`/`simulation`
+omitted like every other fixture), 2 new `BitgetParserTest` cases, the ex5 rows of
+`SimulationFlagTest`/`RecordIdTest`, e2e `Ex5RestSnapshotResync`, and `sample-raw-data.md § ex5`.
+All 231 normalizer tests green; both parser mutations bite (kill the `data`-shape discriminator,
+or read `requestTime` instead of `data.ts` → `parsesRestSnapshot` fails).
+
+
+## 2026-08-24 — ex6/bybit gained a SECOND stream: the REST depth snapshot
+
+`ex6-raw` now carries the same REST+WS split ex1, ex2 and ex5 have. Three captures were supplied
+(WS snapshot, WS delta, REST `/v5/market/orderbook` response); NiFi always attaches `id` and
+`simulation` to all of them.
+
+**The two WS captures needed no change at all.** They matched `BybitParser` as already written —
+`u` 210920912 → 210920913 (jump 1 ✅), `seq` 112975848012 → 112975848022 (jump 10, still
+unusable), event time `cts`. Re-confirmation, not rework.
+
+**The discriminator is genuinely easy here, and that is worth knowing** because every previous
+REST+WS exchange made it hard. ex1/ex2/ex5 all inject `action:"snapshot"` onto the REST body while
+their WS stream *also* says `"snapshot"`, so each needed something subtler (ex5 branches on the
+shape of `data`). On ex6 the REST book lives under **`result`** and the WS book under **`data`**,
+and the WS frame has no `action` field at all — so `root.path("result").isObject()` is sufficient
+and unambiguous. Don't copy ex5's shape-trap reasoning onto ex6.
+
+Other REST/WS differences: market key is **`result.s`** (bybit's own symbol — the WS branch uses
+`data.s`, so the key derivation stays identical across both streams; the injected root `pair`
+agrees and is redundant, unlike ex1/ex2/ex5 whose REST bodies carry no symbol). Both sides
+required (always a full book). **Levels are string pairs on BOTH streams** — ex6 has no
+JSON-number hazard anywhere, unlike ex5 whose REST body switched to numeric literals. Event time
+is **`result.cts`**, the same matching-engine field the WS branch reads, so both ex6 streams share
+one event-time clock — cleaner than ex5, which only had a gateway `ts`.
+
+**⚠ The sequencing decision, and the reason this one was not a judgement call.** The REST snapshot
+is **null-seq / jump 0**, because `result.u` is demonstrably not on the WS counter — and the proof
+is arithmetic rather than statistical, which is why no live measurement was needed this time. The
+REST capture is **24.3 hours LATER** than the WS pair yet its `u` is **171,928,550 LOWER**
+(38,992,362 vs 210,920,912). A monotonic counter cannot run backwards, so they are two separate
+counters. (Most plausibly the REST `updateId` is scoped per request depth rather than to the
+`orderbook.50` topic — **that explanation is unconfirmed; the incomparability is not.**) Adopting
+it would break in whichever direction the numbers happened to fall: forward → `sequence_gap`;
+backward, which is the actual case → immediate `stale_or_duplicate`. Either way it is
+**exactly the ex5 resync loop** (accept → reject → empty the book → request another snapshot →
+repeat, which cost 28.6 resets/min on the dev server). So ex6 takes the `baselinePending`
+bootstrap: job 2 orders the body by event time and the first WS delta after it adopts its own `u`
+as the baseline. **Never compare the two counters.** `result.seq` is unusable for the reason it
+always was here (moves 10 per `u`, cross-topic metadata). `result.ts` and the top-level `time` are
+ignored; `retCode`/`retMsg` are not inspected because a bybit error body answers `"result": {}`,
+which has no `a`/`b` and already fails the shape whitelist.
+
+**A shape question the new capture settled.** An unchanged side on a live delta arrives as a
+present-but-**EMPTY** array (`"b": []`), not as an absent key. This is safe, but the reason is
+narrower than the ex6 docs previously implied: job 5 clears a side before merging **only when the
+type is `snapshot`**, so on an update an empty array merges nothing. Null (absent key) and empty
+therefore behave identically on updates and differ only on snapshots. The old `data_ex6.go` header
+said a present-but-empty array "clears it" without that qualifier — corrected, and both cases are
+now pinned by tests.
+
+**No job-2 change was needed** — the null-seq `baselinePending` path is exchange-agnostic and
+already existed for ex1/ex2/ex5. Job 1 only, plus tests and docs: `BybitParser` split into
+`parseRestSnapshot` / `parseWsFrame`, the new fixture `ex6-rest-snapshot.json` (the real BTCUSDT
+capture trimmed to 3 levels a side, `id`/`simulation` omitted like every other fixture), 5 new
+`BybitParserTest` cases (3 → 8), the ex6 rows of `SimulationFlagTest`/`RecordIdTest`, e2e
+`Ex6RestSnapshotResync`, `sample-raw-data.md § ex6`. All 126 job-1 + common tests green.
+**⚠ e2e NOT run live** — the harness needs the docker stack and does a destructive `down -v`; the
+scenario compiles and vets clean but has not been executed.
+
+## 2026-08-24 — ex7/ompfinex LANDED, resolving the 2026-07-14 postponement
+
+A teammate implemented `OmpfinexParser` on `feat/add-ompfinex` (commits `80fa07d`, `cb4b3a7`,
+`63b6588`) together with six e2e scenarios. Reviewed 2026-08-24; the code is sound, the
+**evidence behind it is the weak part** — read the caveats below before trusting ex7 in
+production.
+
+**The regime: REST snapshot + Centrifugo WS delta, a TRUE delta feed** (the ex6/ex8 family), NOT
+ex1/ex2's null-seq resync pattern — even though ex7 is a Centrifugo exchange like ex1/ex2/ex4 and
+reuses the same `Centrifugo.push` envelope helper. That combination is new: **ex7 is the first
+Centrifugo exchange with real delta semantics**, so "Centrifugo ⇒ ex1-style null-seq bootstrap" is
+no longer a safe inference. Discriminator is easy, ex6-style: the REST body has a top-level
+`action:"snapshot"`, the WS frame has no `action` at all.
+
+**⚠ The sequencing decision, and why it is different from every other exchange.** The parser
+stamps `sequence_jump = u - U` **per message** — the first DYNAMIC jump in the platform; every
+other exchange has a constant from the exchange's cadence (1, 300, 600±10) or 0. Algebraically
+job 2's check `seq == lastSeq + jump` reduces to **`U == lastSeq`**, i.e. Binance-style
+diff-depth contiguity but with **`U_n == seq_{n-1}`, NOT Binance's `U_n == seq_{n-1} + 1`**.
+Two consequences worth holding onto:
+
+- It is *more* robust than the fixed-jump exchanges, not less. A replayed duplicate carries the
+  old `U`, so it fails the equality and falls to `stale_or_duplicate` correctly — it does not hit
+  the `jump == 0` hole recorded in todo.md against the fixed-jump feeds.
+- But job 2 is no longer independently validating contiguity: both operands come from inside the
+  same message. The check is only as good as the exchange's own `U`.
+
+**⚠ The REST snapshot is SEQUENCED (`data.lastUpdateId`), not null-seq — the opposite of the ex6
+call.** This is the single riskiest decision on the branch. It is correct ONLY if the REST
+`lastUpdateId` sits on the same counter as the WS `u`, which is exactly the thing ex6 proved false
+for bybit (24.3 h later, 171,928,550 lower) and which cost ex5 a live resync loop. The claim rests
+on **two consecutive live samples** where the second message's `U` (859075) equalled the first's
+`u` (859075). That is enough to establish the `+0` convention; it is **not** enough to establish
+that a REST snapshot fetched mid-stream lands contiguously with the next delta. In production NiFi
+fetches the snapshot while deltas keep flowing, which is the race Binance's own docs prescribe
+buffering for. **If `U > lastUpdateId` on a live resync, ex7 enters the ex5 loop**: gap → snapshot
+request → snapshot → gap. Nothing in the e2e suite can surface this, because every scenario
+constructs `U == prev seq` by hand. **Verify against the live feed before trusting ex7.**
+
+**⚠ Both side keys are REQUIRED, unlike ex6/ex8.** `a` and `b` must each be an array or the WHOLE
+message is dropped (both sides, silently, via `dropped-unparseable` — no dead-letter, so a drop
+here is an invisible sequence gap). ex6/ex8 instead pass `null` for an absent side. The
+justification is a wire claim — "a side key is always present, possibly empty" — and an empty
+array is a genuine no-op on an update (job 5 clears a side only when `type == "snapshot"`, the
+same narrow reason recorded for ex6). **If that claim is wrong, ex7 loses messages silently.**
+Making ex7 tolerate a missing side the way ex6 does would cost two `has()` checks and remove the
+whole failure mode; worth considering.
+
+**Event time mixes two clocks** — REST snapshot = `data.time` (epoch MICROseconds ÷ 1000), WS
+delta = job-1 processing time. ex4/ramzinex is fully processing-time and therefore internally
+consistent; ex7 is the first that is not. Job 2 is unaffected (ex7 is sequenced, so the
+event-time guard never runs), but a snapshot stamped with exchange time can land BEHIND deltas
+stamped with local time, and the micros÷1000 conversion is asserted **nowhere** — every ex7
+scenario sets `IgnoreEventTime`, so a factor-1000 error would leave the suite green.
+
+**What is missing relative to every other parser** (all convention, all cheap):
+`sample-raw-data.md` § ex7 still says POSTPONED and holds **no captures**, so none of the four
+"CONFIRMED" wire claims in the javadoc are reproducible by anyone else; there is no
+`OmpfinexParserTest` (the other seven parsers each have one); there are no `ex7-*.json` fixtures;
+and ex7 is absent from the two cross-parser convention tests, `SimulationFlagTest` and
+`RecordIdTest`, which enumerate ex1–6+8. The parser *does* call `Json.simulation`/`Json.sourceIds`
+correctly, so it would pass those — nothing pins it.

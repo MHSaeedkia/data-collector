@@ -107,6 +107,16 @@ type AggregatedLevel struct {
 // JSON with the ids nested under a `payload` object until 2026-08-18, so a
 // scenario written before then that still nests them is reading a dead shape.
 //
+// Reason is why the snapshot is wanted — `no_baseline` or `sequence_gap`, the
+// only two conditions that leave the book untrustworthy. It is declared and
+// compared literally, because it is the one field that distinguishes two
+// commands a scenario would otherwise be unable to tell apart: 43 opens a
+// no_baseline episode and then a sequence_gap one, and before this field its two
+// wanted commands were byte-identical. On a REPEATED request it stays the reason
+// that OPENED the episode, not the `awaiting_snapshot` the triggering update was
+// dead-lettered with — so a declared reason lines up with the FIRST reject of
+// each episode in WantRejects, never with the holds after it.
+//
 // Simulation is declared and compared literally, exactly as it is on a snapshot:
 // the flag is carried from the event whose gap triggered the request, and a
 // command that lost it would have NiFi call a real exchange on the strength of
@@ -125,6 +135,7 @@ type AggregatedLevel struct {
 // ids, so a scenario declaring it would only be restating ExchangeID and PairID.
 type ControlCommand struct {
 	Action     string `json:"action"` // "snapshot_request"
+	Reason     string `json:"reason"` // "no_baseline" | "sequence_gap"
 	ExchangeID int64  `json:"exchange_id"`
 	PairID     int64  `json:"pair_id"`
 	Simulation int64  `json:"simulation"`

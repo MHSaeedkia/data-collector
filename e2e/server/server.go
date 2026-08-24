@@ -219,6 +219,14 @@ func validate(s scenario.Scenario) error {
 		if command.Action == "" {
 			return fmt.Errorf("want_control_commands[%d]: action must not be empty", i)
 		}
+		// The two triggers job 2 asks on. Anything else — `awaiting_snapshot` in
+		// particular, which is what the update that prompts a RETRY is dead-lettered
+		// with — can never come off the topic, so a scenario declaring it is a typo
+		// worth a 400 rather than a diff minutes later.
+		if command.Reason != "no_baseline" && command.Reason != "sequence_gap" {
+			return fmt.Errorf("want_control_commands[%d]: reason is %q; job 2 only asks on \"no_baseline\" or \"sequence_gap\"",
+				i, command.Reason)
+		}
 		if command.ExchangeID != s.ExchangeID || command.PairID != s.PairID {
 			return fmt.Errorf("want_control_commands[%d]: names exchange %d pair %d, but the scenario feeds exchange %d pair %d",
 				i, command.ExchangeID, command.PairID, s.ExchangeID, s.PairID)

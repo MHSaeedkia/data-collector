@@ -53,6 +53,12 @@
 						"type": "long"
 					},
 					{
+						"name": "sequence_jump_tolerance",
+						"type": "long",
+						"default": 0,
+						"doc": "The rejected event's own sequence_jump_tolerance, verbatim."
+					},
+					{
 						"name": "event_time",
 						"type": {
 							"type": "long",
