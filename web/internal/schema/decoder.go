@@ -18,13 +18,14 @@ import (
 
 const magicByte = 0x0
 
-// The two record types this app consumes, by Avro full name. Dispatching
-// on the writer schema's name rather than on the topic keeps topic
-// strings opaque past the consumer — and the name is the thing that
-// actually determines the payload shape.
+// The record types this app consumes, by Avro full name. Dispatching on
+// the writer schema's name rather than on the topic keeps topic strings
+// opaque past the consumer — and the name is the thing that actually
+// determines the payload shape.
 const (
 	aggregatedSchemaName = "io.tibobit.orderbook.AggregatedOrderBookEvent"
 	snapshotSchemaName   = "io.tibobit.orderbook.OrderBookSnapshot"
+	mergedSchemaName     = "io.tibobit.orderbook.MergedOrderBookEvent"
 )
 
 // wireLevel/wireEvent mirror aggregated_order_book_event.avsc for
@@ -44,6 +45,28 @@ type wireEvent struct {
 	ID        string      `avro:"id"`
 	EventTime time.Time   `avro:"event_time"`
 	Levels    []wireLevel `avro:"levels"`
+}
+
+// wireMergedLevel/wireMerged mirror merged_order_book_event.avsc (the
+// merger). Same record shape as the aggregated event apart from the
+// level: quantities at one price are summed, so exchange_id/source_id
+// become the aligned lists of everything that went into the sum. The
+// record-level source_id is dropped like the aggregated one is — the UI
+// renders lineage per level, not per record.
+type wireMergedLevel struct {
+	Simulation  int      `avro:"simulation"`
+	ExchangeIDs []int    `avro:"exchange_ids"`
+	SourceIDs   []string `avro:"source_ids"`
+	Price       string   `avro:"price"`
+	Quantity    string   `avro:"quantity"`
+}
+
+type wireMerged struct {
+	PairID    int               `avro:"pair_id"`
+	Side      string            `avro:"side"`
+	ID        string            `avro:"id"`
+	EventTime time.Time         `avro:"event_time"`
+	Levels    []wireMergedLevel `avro:"levels"`
 }
 
 // wireSnapLevel/wireSnapshot mirror order_book_snapshot.avsc (job 5).
@@ -110,6 +133,8 @@ func (d *Decoder) Decode(value []byte) ([]domain.RawBook, error) {
 		return decodeSnapshot(sch, value[5:])
 	case aggregatedSchemaName:
 		return decodeAggregated(sch, value[5:])
+	case mergedSchemaName:
+		return decodeMerged(sch, value[5:])
 	default:
 		return nil, fmt.Errorf("unexpected schema %q", named.FullName())
 	}
@@ -137,6 +162,38 @@ func decodeAggregated(sch avro.Schema, payload []byte) ([]domain.RawBook, error)
 		ID:        we.ID,
 		Levels:    levels,
 		EventTime: we.EventTime.UnixMilli(),
+	}}, nil
+}
+
+// decodeMerged maps a merged record onto the same RawBook the other two
+// producers land in, keeping the lists intact rather than flattening them
+// to a first exchange — losing "who is behind this quantity" would defeat
+// the point of showing the merged view at all. Merged is set on the book
+// because it is what the browser routes on: a merged book has no
+// exchange_id of its own (see domain's exchange_id vocabulary).
+func decodeMerged(sch avro.Schema, payload []byte) ([]domain.RawBook, error) {
+	var wm wireMerged
+	if err := avro.Unmarshal(sch, payload, &wm); err != nil {
+		return nil, fmt.Errorf("decode avro payload: %w", err)
+	}
+
+	levels := make([]domain.RawLevel, len(wm.Levels))
+	for i, l := range wm.Levels {
+		levels[i] = domain.RawLevel{
+			Simulation:  l.Simulation,
+			ExchangeIDs: l.ExchangeIDs,
+			SourceIDs:   l.SourceIDs,
+			Price:       l.Price,
+			Quantity:    l.Quantity,
+		}
+	}
+	return []domain.RawBook{{
+		PairID:    wm.PairID,
+		Merged:    true,
+		Side:      wm.Side,
+		ID:        wm.ID,
+		Levels:    levels,
+		EventTime: wm.EventTime.UnixMilli(),
 	}}, nil
 }
 

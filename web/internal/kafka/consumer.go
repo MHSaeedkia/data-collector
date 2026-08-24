@@ -14,9 +14,16 @@ import (
 )
 
 const (
-	// Aggregated output topics: p{pair_id}-{side} (e.g. p2-asks).
-	// Per-exchange topics carry a leading ex... so they don't match.
-	aggregatedPattern = `^p[0-9]+-(asks|bids)$`
+	// Aggregated output topics: p{pair_id}-{side} (e.g. p2-asks), plus the
+	// merger's p{pair_id}-{side}-merged. Per-exchange topics carry a
+	// leading ex... so they don't match.
+	//
+	// The -merged suffix is optional here ON PURPOSE, and this regex is
+	// the mirror image of the merger job's own: that one must exclude
+	// -merged or it would consume its own output forever, while this one
+	// wants both views. Same record rate and same shape of consumer, so
+	// they share this client rather than needing a third.
+	aggregatedPattern = `^p[0-9]+-(asks|bids)(-merged)?$`
 	// Job 5's per-exchange books: one record holds both sides.
 	snapshotPattern = `^ex[0-9]+-p[0-9]+-orderbook-snapshot-flink$`
 )
@@ -25,9 +32,9 @@ type Consumer struct {
 	client *kgo.Client
 }
 
-// NewAggregatedConsumer reads the aggregator's output from the earliest
-// offset, so the current book renders on page load (dev only — it
-// replays the retention window each restart).
+// NewAggregatedConsumer reads the aggregator's and the merger's output
+// from the earliest offset, so the current book renders on page load
+// (dev only — it replays the retention window each restart).
 func NewAggregatedConsumer(broker string) (*Consumer, error) {
 	return newConsumer(broker, "agg", aggregatedPattern, kgo.NewOffset().AtStart())
 }
