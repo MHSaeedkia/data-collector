@@ -13,19 +13,27 @@ import java.util.regex.Pattern;
 /**
  * Order book adjustment.
  *
- * Pipeline (step 1 — pass-through):
+ * Pipeline:
  *   Kafka input  p{id}-{side}            (AggregatedOrderBookEvent, subject aggregated-order-book-event)
  *     -> source (regex)
- *     -> Kafka output  p{id}-{side}-adjusted   (same subject, same record, unchanged)
+ *     -> map BuySellCommissionFunction   (no-op for now)
+ *     -> map OurProfitFunction           (no-op for now)
+ *     -> map SlippageFunction            (no-op for now)
+ *     -> Kafka output  p{id}-{side}-adjusted   (same subject)
  *
  * This is NOT a stage of the raw-normalization pipeline and does not live in flink/normalizer/. It
  * reads that pipeline's finished output and publishes a parallel view of it, exactly as
  * flink/merger does — job 6's output is untouched and every view is a separate topic consumers
  * choose between.
  *
- * <p><b>Step 1 emits the record verbatim.</b> There is deliberately no transform operator between
- * source and sink: an identity {@code map} would be a placeholder for logic that does not exist
- * yet. The adjustment steps to come get their own operator when they arrive.
+ * <p><b>The three adjustment stages exist but do nothing yet.</b> They are chained in the order the
+ * user specified — commission, then profit, then slippage — and each currently returns its input
+ * unchanged, so the record still reaches the output topic verbatim. The order is part of the
+ * contract, not an arrangement of convenience: the stages compose, so each one sees prices the
+ * ones above it have already moved.
+ *
+ * <p>Every stage is {@code .name()}d, which is what makes the chain readable in the Flink web UI —
+ * the cheapest way to confirm a deployed job is wired the way this file says.
  *
  * <p>The round trip is therefore the only thing that can go wrong here, and it is not free: the
  * record is decoded into {@link AggregatedOrderBook} and re-encoded, so a field this job's model
@@ -64,6 +72,12 @@ public class AdjustmentJob {
                 .build();
 
         env.fromSource(source, WatermarkStrategy.noWatermarks(), "aggregated-order-book-source")
+                .map(new BuySellCommissionFunction())
+                .name("buy-sell-commission")
+                .map(new OurProfitFunction())
+                .name("our-profit")
+                .map(new SlippageFunction())
+                .name("slippage")
                 .sinkTo(KafkaSink.<AggregatedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
                         .setRecordSerializer(KafkaRecordSerializationSchema.<AggregatedOrderBook>builder()

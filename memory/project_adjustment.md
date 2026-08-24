@@ -10,8 +10,8 @@ metadata:
 A **third parallel view** of the cross-exchange book, alongside job 6's `p{id}-{side}` and the
 merger's `-merged`. Requested 2026-08-24, to be built up in steps the user dictates.
 
-**Step 1 (done): read `p{id}-{side}`, write the same record verbatim to `p{id}-{side}-adjusted`.**
-Nothing is transformed yet. Later steps will add the actual adjustment logic — do not anticipate
+**Step 1 (done): read `p{id}-{side}`, write the same record verbatim to `p{id}-{side}-adjusted`,
+through three named but empty adjustment stages.** Nothing is transformed yet. Later steps will add the actual adjustment logic — do not anticipate
 them ([[scope-discipline]]).
 
 ## Shape, and why it mirrors the merger
@@ -34,9 +34,26 @@ the wire-header id, so anything that reads `p{id}-{side}` reads the adjusted top
 ⚠ The moment a step adds a field that only exists after adjustment, that is when it needs its own
 subject — and then the usual "re-register AND resubmit, in that order" rule applies.
 
-**No identity operator between source and sink.** Step 1 is `fromSource(...).sinkTo(...)`. An empty
-pass-through `map` would be a placeholder for logic that does not exist; the transform gets its own
-operator when there is one.
+**Three named placeholder stages, chained in the user's order** (2026-08-24, user's explicit
+call — it REVERSES the first version of this job, which had no operator at all on the grounds that
+an empty `map` is a placeholder for logic that does not exist):
+
+```
+source -> BuySellCommissionFunction -> OurProfitFunction -> SlippageFunction -> sink
+```
+
+Each returns its input unchanged for now; how each one calculates is a later step and is
+deliberately NOT guessed at. **The order is part of the contract, not tidiness** — the stages
+compose, so slippage sees prices the two above it have already moved. If slippage should work off
+the exchange's original prices instead, the chain has to change shape, not just its arithmetic.
+
+Every stage is `.name()`d so the chain is readable in the Flink web UI — the cheapest check that a
+deployed job is wired the way the source says.
+
+`AdjustmentFunctionsTest` writes the no-op contract down and is **meant to fail when real logic
+lands**; that failure is the prompt to restate the contract rather than let a stage move prices
+with nothing describing it. Mutation-checked: making one stage alter a price fails both its own
+test and the chain test.
 
 **The model mirrors the schema in FULL, and here that is load-bearing.** The merger's
 `AggregatedOrderBook` is a reader — it models only what it consumes. This job re-encodes the same
@@ -66,6 +83,27 @@ slot: 6 normalizer + merger + adjustment = **8/8**. The next job, or any paralle
 needs the taskmanager reconfigured. [[price-merger]] recorded 7/8 as "the 8th is the last one" —
 this is that one.
 
+## OPEN — what the three stages actually do, and where their parameters live
+
+Nothing in the repo mentions commission, fee, profit, slippage or markup, and **no table has a
+column for any of them** (`exchange_markets` carries rebase/precision/staleness/depth-aggregation
+only; `markets` carries the four precision columns). So before step 2 these have to be settled:
+
+- **The formulas**, per stage — percentage, basis points, or fixed; applied to price, to quantity,
+  or both.
+- **The sign convention.** `asks` is what a user buys at and `bids` what they sell at, so a
+  commission normally moves price in OPPOSITE directions on the two sides. Assumed, never
+  confirmed — do not implement off this sentence.
+- **Where the parameters live and at what granularity.** Commission is plausibly per-EXCHANGE (each
+  exchange charges its own, and levels carry `exchange_id`), while "our profit" is ours and is
+  plausibly per-market or global — different granularities for different stages. The platform's
+  existing pattern is a postgres column read through `RefreshingLookup` (jobs 3 and 4), which would
+  mean a schema change.
+- **The output shape.** If an adjusted level must carry the ORIGINAL price alongside the adjusted
+  one, the "reuse `aggregated-order-book-event`" decision above dies and this job needs its own
+  subject plus the usual re-register-then-resubmit dance. Worth deciding once rather than three
+  times.
+
 ## OPEN — the lineage question, deliberately not decided
 
 [[record-lineage]]'s rule is that any step writing a record to a topic mints a fresh `id` and names
@@ -85,7 +123,7 @@ and `run-normalizer-jobs` stay normalizer-only and leave it down, exactly like t
 
 ## Status
 
-6 tests green, `mvn package` clean, shaded jar carries the right `Main-Class` and **zero**
+11 tests green, `mvn package` clean, shaded jar carries the right `Main-Class` and **zero**
 `org/apache/flink` or `org/apache/avro` entries (everything is `provided`, as intended).
 **NOT run live** — no stack was up, no smoke test, no e2e scenario. Also not wired into
 [[staleness-exporter]] (which does not watch `-merged` either), `e2e/`, or `web/`.
