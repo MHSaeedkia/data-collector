@@ -150,6 +150,7 @@
                                     <directory>${project.basedir}/../../schemas</directory>
                                     <includes>
                                         <include>aggregated_order_book_event.avsc</include>
+                                        <include>adjusted_order_book_event.avsc</include>
                                     </includes>
                                 </resource>
                             </resources>

@@ -16,21 +16,25 @@ import java.util.regex.Pattern;
  * Pipeline:
  *   Kafka input  p{id}-{side}            (AggregatedOrderBookEvent, subject aggregated-order-book-event)
  *     -> source (regex)
- *     -> map BuySellCommissionFunction   (no-op for now)
- *     -> map OurProfitFunction           (no-op for now)
- *     -> map SlippageFunction            (no-op for now)
- *     -> Kafka output  p{id}-{side}-adjusted   (same subject)
+ *     -> map AdjustedOrderBook::from     (same book, nothing adjusted yet)
+ *     -> map BuySellCommissionFunction   (price x 1.0035 on asks, x 0.9965 on bids)
+ *     -> map OurProfitFunction           (then x 1.001 / x 0.999)
+ *     -> map SlippageFunction            (then x 1.01  / x 0.99)
+ *     -> Kafka output  p{id}-{side}-adjusted   (subject adjusted-order-book-event)
  *
  * This is NOT a stage of the raw-normalization pipeline and does not live in flink/normalizer/. It
  * reads that pipeline's finished output and publishes a parallel view of it, exactly as
  * flink/merger does — job 6's output is untouched and every view is a separate topic consumers
  * choose between.
  *
- * <p><b>The three adjustment stages exist but do nothing yet.</b> They are chained in the order the
- * user specified — commission, then profit, then slippage — and each currently returns its input
- * unchanged, so the record still reaches the output topic verbatim. The order is part of the
- * contract, not an arrangement of convenience: the stages compose, so each one sees prices the
- * ones above it have already moved.
+ * <p><b>The three stages COMPOUND, in the order the user specified</b> — commission, then profit,
+ * then slippage. Each multiplies the price the one before it produced, so the total on asks is
+ * 1.0035 x 1.001 x 1.01 = <b>1.014548535</b>, not the 1.0145 that adding the rates would give. The
+ * order is part of the contract, not an arrangement of convenience.
+ *
+ * <p>Each stage also writes the rate it applied onto the record, so the published event says what
+ * was charged and not merely what the answer was. That is why the output has a schema of its own
+ * ({@code adjusted-order-book-event}) rather than reusing job 6's.
  *
  * <p>Every stage is {@code .name()}d, which is what makes the chain readable in the Flink web UI —
  * the cheapest way to confirm a deployed job is wired the way this file says.
@@ -72,19 +76,21 @@ public class AdjustmentJob {
                 .build();
 
         env.fromSource(source, WatermarkStrategy.noWatermarks(), "aggregated-order-book-source")
+                .map(AdjustedOrderBook::from)
+                .name("to-adjusted")
                 .map(new BuySellCommissionFunction())
                 .name("buy-sell-commission")
                 .map(new OurProfitFunction())
                 .name("our-profit")
                 .map(new SlippageFunction())
                 .name("slippage")
-                .sinkTo(KafkaSink.<AggregatedOrderBook>builder()
+                .sinkTo(KafkaSink.<AdjustedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
-                        .setRecordSerializer(KafkaRecordSerializationSchema.<AggregatedOrderBook>builder()
+                        .setRecordSerializer(KafkaRecordSerializationSchema.<AdjustedOrderBook>builder()
                                 // Route each record to p{pair_id}-{side}-adjusted (e.g. p1-asks-adjusted).
-                                .setTopicSelector((TopicSelector<AggregatedOrderBook>) book ->
+                                .setTopicSelector((TopicSelector<AdjustedOrderBook>) book ->
                                         "p" + book.getPairId() + "-" + book.getSide() + OUTPUT_TOPIC_SUFFIX)
-                                .setValueSerializationSchema(new AggregatedOrderBookSerializer(schemaRegistryUrl))
+                                .setValueSerializationSchema(new AdjustedOrderBookSerializer(schemaRegistryUrl))
                                 .build())
                         .build())
                 .name("adjusted-order-book-sink");

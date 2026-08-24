@@ -1,0 +1,89 @@
+{
+	"type": "record",
+	"name": "AdjustedOrderBookEvent",
+	"namespace": "io.tibobit.orderbook",
+	"doc": "flink/adjustment's output on p{pair_id}-{side}-adjusted: job 6's aggregated book with every level's price moved by the commission, profit and slippage stages, and the rates that were applied carried alongside so a consumer can see what was done to the price. Levels are field-for-field identical to AggregatedLevel — only the record gained fields.",
+	"fields": [
+		{
+			"name": "pair_id",
+			"type": "int"
+		},
+		{
+			"name": "side",
+			"type": {
+				"type": "enum",
+				"name": "Side",
+				"symbols": ["asks", "bids"]
+			}
+		},
+		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "Carried through from the aggregated record this was adjusted from — the adjustment job does not currently mint an id of its own. See the open lineage question in memory/project_adjustment.md."
+		},
+		{
+			"name": "event_time",
+			"type": {
+				"type": "long",
+				"logicalType": "timestamp-millis"
+			}
+		},
+		{
+			"name": "buy_sell_commission_percent",
+			"type": "string",
+			"default": "0",
+			"doc": "The buy/sell commission applied, as a PERCENT (e.g. \"0.35\" means 0.35%, a multiplier of 1.0035 on asks and 0.9965 on bids). A string for the same reason price and quantity are: it feeds exact BigDecimal arithmetic, and a float rate would reintroduce the error the whole pipeline avoids."
+		},
+		{
+			"name": "our_profit_percent",
+			"type": "string",
+			"default": "0",
+			"doc": "Our own margin, applied after the commission, as a PERCENT."
+		},
+		{
+			"name": "slippage_percent",
+			"type": "string",
+			"default": "0",
+			"doc": "The slippage allowance, applied last, as a PERCENT. The three rates COMPOUND in the order commission -> profit -> slippage, so the total is their product, not their sum: 0.35 + 0.1 + 1 gives 1.014548535 on asks, not 1.0145."
+		},
+		{
+			"name": "levels",
+			"type": {
+				"type": "array",
+				"items": {
+					"type": "record",
+					"name": "AdjustedLevel",
+					"fields": [
+						{
+							"name": "exchange_id",
+							"type": "int"
+						},
+						{
+							"name": "simulation",
+							"type": "int",
+							"default": 0,
+							"doc": "The contributing exchange's simulation flag, carried through from the aggregated level. 0 = live, 1 = simulation."
+						},
+						{
+							"name": "source_id",
+							"type": "string",
+							"default": "",
+							"doc": "id of the job-5 snapshot this level came from, carried through unchanged from the aggregated level."
+						},
+						{
+							"name": "price",
+							"type": "string",
+							"doc": "The ADJUSTED price: the aggregated price with all three rates applied. The original is not carried — see memory/project_adjustment.md if that is ever wanted."
+						},
+						{
+							"name": "quantity",
+							"type": "string",
+							"doc": "Carried through unchanged — the adjustment stages move price only."
+						}
+					]
+				}
+			}
+		}
+	]
+}

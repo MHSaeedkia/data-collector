@@ -1,6 +1,6 @@
 ---
 name: adjustment
-description: flink/adjustment/ — standalone Flink project reading job 6's p{id}-{side} and publishing p{id}-{side}-adjusted; step 1 is a verbatim pass-through, later steps add real adjustment logic.
+description: flink/adjustment/ — standalone Flink project reading job 6's p{id}-{side} and publishing p{id}-{side}-adjusted on its own subject; three COMPOUNDING price stages (commission 0.35%, profit 0.1%, slippage 1%) whose rates ride on the event; the asks-up/bids-down sign convention is assumed, not confirmed.
 metadata:
     type: project
 ---
@@ -10,8 +10,9 @@ metadata:
 A **third parallel view** of the cross-exchange book, alongside job 6's `p{id}-{side}` and the
 merger's `-merged`. Requested 2026-08-24, to be built up in steps the user dictates.
 
-**Step 1 (done): read `p{id}-{side}`, write the same record verbatim to `p{id}-{side}-adjusted`,
-through three named but empty adjustment stages.** Nothing is transformed yet. Later steps will add the actual adjustment logic — do not anticipate
+**Step 1 (done): read `p{id}-{side}` → `p{id}-{side}-adjusted`, through three named stages.
+Step 2 (done): the three stages, empty. Step 3 (done): each stage moves the price by a constant
+percent and records the rate it used on the published event.** Later steps will add the actual adjustment logic — do not anticipate
 them ([[scope-discipline]]).
 
 ## Shape, and why it mirrors the merger
@@ -22,17 +23,25 @@ which is never installed to a repository). Same trade, same reasoning as [[price
 user named the merger as the model. It is not a stage of the raw pipeline; it reads that pipeline's
 finished output.
 
-`Decimals` was deliberately NOT copied over: step 1 does no arithmetic, and a helper with no caller
-is not a helper.
+`Decimals.canonicalize` was copied in at step 3, when there was finally arithmetic to need it; step
+1 deliberately went without.
 
 ## Decisions
 
-**Output uses the SAME subject, `aggregated-order-book-event`.** The adjusted record IS an
-aggregated record — nothing was changed — so it needs no schema of its own and **no registry work
-to deploy**, which is the standing trap on this platform ([[avro-schema]]). Consumers resolve by
-the wire-header id, so anything that reads `p{id}-{side}` reads the adjusted topic unchanged.
-⚠ The moment a step adds a field that only exists after adjustment, that is when it needs its own
-subject — and then the usual "re-register AND resubmit, in that order" rule applies.
+**Its own subject, `adjusted-order-book-event`** (`schemas/adjusted_order_book_event.avsc`, added
+step 3). Steps 1–2 reused `aggregated-order-book-event`, which was right while the record was
+byte-identical to job 6's — the moment the user asked to *see the rates in the event*, it stopped
+being. A **new** subject, deliberately not an evolution of the aggregated one: job 6's contract with
+`web/` is frozen and must not grow fields because a downstream job wanted them.
+
+⚠ `scripts/warmup.sh` had to gain a `register_schema` line. The e2e harness registers every
+`schemas/*.avsc` on its own, so a missing line there is **invisible to a green e2e run** and only
+surfaces as this job dying at its first emit — exactly how `control-command` was broken for two
+days ([[control-plane]]).
+
+The levels are field-for-field identical to `AggregatedLevel`; only the record gained fields. The
+original price is **not** carried alongside the adjusted one — not asked for, and easy to add if
+auditing ever wants it.
 
 **Three named placeholder stages, chained in the user's order** (2026-08-24, user's explicit
 call — it REVERSES the first version of this job, which had no operator at all on the grounds that
@@ -50,10 +59,50 @@ the exchange's original prices instead, the chain has to change shape, not just 
 Every stage is `.name()`d so the chain is readable in the Flink web UI — the cheapest check that a
 deployed job is wired the way the source says.
 
-`AdjustmentFunctionsTest` writes the no-op contract down and is **meant to fail when real logic
-lands**; that failure is the prompt to restate the contract rather than let a stage move prices
-with nothing describing it. Mutation-checked: making one stage alter a price fails both its own
-test and the chain test.
+### What each stage does (step 3)
+
+| Stage | Percent | Applied to |
+| --- | --- | --- |
+| `BuySellCommissionFunction` | 0.35 | the exchange's own price |
+| `OurProfitFunction` | 0.1 | the commission-adjusted price |
+| `SlippageFunction` | 1 | the profit-adjusted price |
+
+**They COMPOUND, they do not add.** On asks the total is 1.0035 × 1.001 × 1.01 = **1.014548535**,
+not the 1.0145 that summing the rates gives. That follows from the chain the user asked for, and
+`theThreeStagesCompoundRatherThanAdd` pins it with literal expected prices — worked out
+independently rather than recomputed from the rates, since a test that repeats the implementation's
+formula agrees with it by construction.
+
+**The rates are constants in each function class** (`static final BigDecimal PERCENT`), which is
+where the DB read replaces them — user's sequencing, 2026-08-24: constants first, database later.
+Each stage writes the rate it used onto the record itself, so the event and the arithmetic cannot
+disagree; there is no second place holding "what we said we charged".
+
+### ⚠ The sign convention — the single most important line in this job
+
+`Prices.multiplier` is the only place it is decided: **`asks` is what a user BUYS at so every charge
+moves that price UP; `bids` is what they SELL at so every charge moves it DOWN.** Both take money
+from the same side of the trade. Inverting either would publish a book you could buy from and sell
+back into at a profit.
+
+This is the standard convention and what the stages were written against, but **it was assumed, not
+confirmed by the user**. If it is wrong it is wrong in that one method. Inverting it fails 7 tests.
+
+### Exactness
+
+`BigDecimal` from the wire string throughout ([[bigdecimal-rules]]); `movePointLeft(2)` converts
+percent to fraction rather than `divide(100)`, because a scale shift is exact and cannot throw.
+Prices are canonicalized on the way out so the scale that exact multiplication grows
+(`62650.00` × 1.0035 = `62869.275000`) does not accumulate as trailing zeros down the chain.
+`arithmeticIsExactNotFloatingPoint` fails if anyone reaches for a double.
+
+**Nothing is rounded to the market's tick size.** Job 4 applied `markets.price_precision` upstream
+and multiplying re-introduces decimals past it, but re-truncating needs the per-market precision
+this job does not read, and picking a rounding DIRECTION is a decision with money in it (down
+favours the buyer on asks and us on bids). Left exact and flagged rather than guessed.
+
+16 tests. Three mutations confirmed to bite: inverting the sign (7 fail), swapping BigDecimal for
+double (4 fail), and the serializer dropping a rate (2 fail).
 
 **The model mirrors the schema in FULL, and here that is load-bearing.** The merger's
 `AggregatedOrderBook` is a reader — it models only what it consumes. This job re-encodes the same
@@ -83,26 +132,25 @@ slot: 6 normalizer + merger + adjustment = **8/8**. The next job, or any paralle
 needs the taskmanager reconfigured. [[price-merger]] recorded 7/8 as "the 8th is the last one" —
 this is that one.
 
-## OPEN — what the three stages actually do, and where their parameters live
+## OPEN — moving the rates into the database
 
-Nothing in the repo mentions commission, fee, profit, slippage or markup, and **no table has a
-column for any of them** (`exchange_markets` carries rebase/precision/staleness/depth-aggregation
-only; `markets` carries the four precision columns). So before step 2 these have to be settled:
+The user's stated next step. **No table has a column for any of these today** (`exchange_markets`
+carries rebase/precision/staleness/depth-aggregation; `markets` the four precision columns), so it
+is a schema change plus a `RefreshingLookup`, the way jobs 3 and 4 read rebase factors and
+precisions.
 
-- **The formulas**, per stage — percentage, basis points, or fixed; applied to price, to quantity,
-  or both.
-- **The sign convention.** `asks` is what a user buys at and `bids` what they sell at, so a
-  commission normally moves price in OPPOSITE directions on the two sides. Assumed, never
-  confirmed — do not implement off this sentence.
-- **Where the parameters live and at what granularity.** Commission is plausibly per-EXCHANGE (each
-  exchange charges its own, and levels carry `exchange_id`), while "our profit" is ours and is
-  plausibly per-market or global — different granularities for different stages. The platform's
-  existing pattern is a postgres column read through `RefreshingLookup` (jobs 3 and 4), which would
-  mean a schema change.
-- **The output shape.** If an adjusted level must carry the ORIGINAL price alongside the adjusted
-  one, the "reuse `aggregated-order-book-event`" decision above dies and this job needs its own
-  subject plus the usual re-register-then-resubmit dance. Worth deciding once rather than three
-  times.
+The unresolved part is **granularity, and it differs per stage**:
+
+- A commission is charged by the **exchange**, and levels carry `exchange_id` — so it is plausibly
+  per-exchange, which would make it a per-LEVEL rate and the current per-record field a lie the
+  moment two exchanges with different fees appear in one book.
+- **Our profit** is ours, so per-market or global is plausible and a per-record field is fine.
+- **Slippage** is usually a function of DEPTH, so a flat percent may not survive contact with the
+  real requirement at all.
+
+Settle granularity before writing the migration: it decides whether the rate fields stay on the
+record or move onto the level, which is a schema change either way but a much worse one to do
+twice.
 
 ## OPEN — the lineage question, deliberately not decided
 
@@ -123,7 +171,7 @@ and `run-normalizer-jobs` stay normalizer-only and leave it down, exactly like t
 
 ## Status
 
-11 tests green, `mvn package` clean, shaded jar carries the right `Main-Class` and **zero**
+16 tests green, `mvn package` clean, shaded jar carries the right `Main-Class` and **zero**
 `org/apache/flink` or `org/apache/avro` entries (everything is `provided`, as intended).
 **NOT run live** — no stack was up, no smoke test, no e2e scenario. Also not wired into
 [[staleness-exporter]] (which does not watch `-merged` either), `e2e/`, or `web/`.

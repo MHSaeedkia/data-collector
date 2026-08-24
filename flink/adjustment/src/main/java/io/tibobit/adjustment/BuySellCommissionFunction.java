@@ -2,23 +2,32 @@ package io.tibobit.adjustment;
 
 import org.apache.flink.api.common.functions.MapFunction;
 
+import java.math.BigDecimal;
+
 /**
  * Buy/sell commission — the commission charged on a buy or a sell.
  *
- * <p><b>Deliberately a no-op right now.</b> The stage exists so the pipeline has the shape the
- * adjustments will occupy; how commission is actually calculated is defined in a later step and is
- * not guessed at here. Until then it returns the book it was handed, unchanged.
+ * <p>Moves every level's price by {@link #PERCENT}% and records the rate it used on the book, so
+ * the published event says what was charged rather than only what the result was. Direction — up on
+ * {@code asks}, down on {@code bids} — is decided once, in {@link Prices#multiplier}.
  *
- * <p>Which side is which is worth stating before the logic lands, because it decides the SIGN: {@code asks} is what a user buys at and {@code bids} is what a user sells at, so a commission normally moves the price against the user in opposite directions on the two sides. Confirm that before implementing rather than inferring it from this comment.
+ * <p>First in the chain, so it is the only stage that sees the exchange's own price untouched. Everything after it compounds on this result.
  *
- * <p>Plain {@link MapFunction}, not a Rich one: nothing here needs {@code open()} yet. It becomes a
- * {@code RichMapFunction} when it needs a {@code RefreshingLookup} for its parameters, the way
- * jobs 3 and 4 read their rebase factors and precisions from postgres.
+ * <p><b>The rate is a constant for now, and this field is where the database read replaces it</b>
+ * (user, 2026-08-24: constants first, DB later). When it does, this becomes a
+ * {@code RichMapFunction} holding a {@code RefreshingLookup}, the way jobs 3 and 4 read rebase
+ * factors and precisions from postgres — and the lookup key is the open question:
+ * a commission is charged by the EXCHANGE, and levels carry {@code exchange_id}, so this is plausibly per-exchange — which would make it a per-LEVEL rate rather than the per-record one the schema has today.
  */
-public class BuySellCommissionFunction implements MapFunction<AggregatedOrderBook, AggregatedOrderBook> {
+public class BuySellCommissionFunction implements MapFunction<AdjustedOrderBook, AdjustedOrderBook> {
+
+    /** Percent, not a fraction: 0.35 means 0.35%. */
+    static final BigDecimal PERCENT = new BigDecimal("0.35");
 
     @Override
-    public AggregatedOrderBook map(AggregatedOrderBook book) {
+    public AdjustedOrderBook map(AdjustedOrderBook book) {
+        Prices.applyPercent(book, PERCENT);
+        book.setBuySellCommissionPercent(PERCENT.toPlainString());
         return book;
     }
 }

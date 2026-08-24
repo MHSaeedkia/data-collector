@@ -1,98 +1,164 @@
 package io.tibobit.adjustment;
 
-import org.apache.flink.api.common.functions.MapFunction;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The three adjustment stages are placeholders: each returns its input unchanged, and the chain of
- * all three does too.
+ * The three adjustment stages, and the arithmetic they compose into.
  *
- * <p>These tests are the written-down contract of that stage of the work, and they are **meant to
- * fail** the moment real logic lands — that failure is the reminder to state the new contract here
- * rather than let a stage change prices with nothing describing what it does. Do not delete them
- * then; rewrite them.
- *
- * <p>Fields are asserted individually rather than by reference, because a future implementation
- * that mutates the book in place would still satisfy {@code assertThat(out).isSameAs(in)} while
- * having changed every price.
+ * <p>Expected prices are spelled out as literals rather than recomputed from the rates: a test that
+ * repeats the implementation's formula agrees with the implementation by construction and proves
+ * nothing. These were worked out independently and are what the job must publish.
  */
 class AdjustmentFunctionsTest {
 
-    private static AggregatedOrderBook book() {
-        return new AggregatedOrderBook(3, "asks", "agg-id-1", 1750680000000L, List.of(
+    /** 62650.00 chosen for readable arithmetic: x1.0035 lands exactly on 62869.275. */
+    private static AdjustedOrderBook book(String side) {
+        return AdjustedOrderBook.from(new AggregatedOrderBook(3, side, "agg-id-1", 1750680000000L, List.of(
                 new AggregatedLevel(6, 1, "snapshot-A", "62650.00", "0.50000000"),
-                new AggregatedLevel(8, 1, "snapshot-B", "62651.25", "1.25")));
+                new AggregatedLevel(8, 1, "snapshot-B", "1000", "1.25"))));
     }
 
-    private static void assertUnchanged(AggregatedOrderBook out) {
+    private static AdjustedOrderBook wholeChain(String side) {
+        return new SlippageFunction()
+                .map(new OurProfitFunction()
+                        .map(new BuySellCommissionFunction().map(book(side))));
+    }
+
+    private static List<String> prices(AdjustedOrderBook book) {
+        return book.getLevels().stream().map(AdjustedLevel::getPrice).toList();
+    }
+
+    // ---- direction: the convention the whole job rests on -----------------------
+
+    @Test
+    void commissionRaisesAskPricesAndLowersBidPrices() {
+        // asks are what a user BUYS at, bids what they SELL at: a charge takes money from the same
+        // side of the trade both times, so the two move in OPPOSITE directions.
+        assertThat(prices(new BuySellCommissionFunction().map(book("asks"))))
+                .containsExactly("62869.275", "1003.5");
+        assertThat(prices(new BuySellCommissionFunction().map(book("bids"))))
+                .containsExactly("62430.725", "996.5");
+    }
+
+    @Test
+    void everyStageMovesAsksUpAndBidsDown() {
+        BigDecimal start = new BigDecimal("1000");
+        for (String side : List.of("asks", "bids")) {
+            boolean up = side.equals("asks");
+            assertThat(new BigDecimal(prices(new BuySellCommissionFunction().map(book(side))).get(1)))
+                    .matches(p -> up == (p.compareTo(start) > 0), side + " commission");
+            assertThat(new BigDecimal(prices(new OurProfitFunction().map(book(side))).get(1)))
+                    .matches(p -> up == (p.compareTo(start) > 0), side + " profit");
+            assertThat(new BigDecimal(prices(new SlippageFunction().map(book(side))).get(1)))
+                    .matches(p -> up == (p.compareTo(start) > 0), side + " slippage");
+        }
+    }
+
+    // ---- each stage on its own ---------------------------------------------------
+
+    @Test
+    void eachStageAppliesItsOwnRate() {
+        assertThat(prices(new BuySellCommissionFunction().map(book("asks"))).get(1)).isEqualTo("1003.5");
+        assertThat(prices(new OurProfitFunction().map(book("asks"))).get(1)).isEqualTo("1001");
+        assertThat(prices(new SlippageFunction().map(book("asks"))).get(1)).isEqualTo("1010");
+    }
+
+    @Test
+    void eachStageRecordsTheRateItApplied() {
+        assertThat(new BuySellCommissionFunction().map(book("asks")).getBuySellCommissionPercent()).isEqualTo("0.35");
+        assertThat(new OurProfitFunction().map(book("asks")).getOurProfitPercent()).isEqualTo("0.1");
+        assertThat(new SlippageFunction().map(book("asks")).getSlippagePercent()).isEqualTo("1");
+    }
+
+    @Test
+    void aStageLeavesTheOtherTwoRatesUntouched() {
+        AdjustedOrderBook only = new BuySellCommissionFunction().map(book("asks"));
+
+        assertThat(only.getBuySellCommissionPercent()).isEqualTo("0.35");
+        assertThat(only.getOurProfitPercent()).isEqualTo("0");
+        assertThat(only.getSlippagePercent()).isEqualTo("0");
+    }
+
+    // ---- the chain ---------------------------------------------------------------
+
+    @Test
+    void theThreeStagesCompoundRatherThanAdd() {
+        // 1000 x 1.0035 x 1.001 x 1.01 = 1014.548535, NOT 1000 x 1.0145 = 1014.5.
+        assertThat(prices(wholeChain("asks"))).containsExactly("63561.46571775", "1014.548535");
+        assertThat(prices(wholeChain("bids"))).containsExactly("61744.61133225", "985.548465");
+    }
+
+    @Test
+    void theChainReportsAllThreeRates() {
+        AdjustedOrderBook out = wholeChain("asks");
+
+        assertThat(out.getBuySellCommissionPercent()).isEqualTo("0.35");
+        assertThat(out.getOurProfitPercent()).isEqualTo("0.1");
+        assertThat(out.getSlippagePercent()).isEqualTo("1");
+    }
+
+    // ---- what must NOT change ----------------------------------------------------
+
+    @Test
+    void everythingExceptPriceIsCarriedThroughUntouched() {
+        AdjustedOrderBook out = wholeChain("asks");
+
         assertThat(out.getPairId()).isEqualTo(3);
         assertThat(out.getSide()).isEqualTo("asks");
         assertThat(out.getId()).isEqualTo("agg-id-1");
         assertThat(out.getEventTime()).isEqualTo(1750680000000L);
-        assertThat(out.getLevels()).hasSize(2);
 
-        AggregatedLevel first = out.getLevels().get(0);
+        assertThat(out.getLevels()).hasSize(2);
+        AdjustedLevel first = out.getLevels().get(0);
         assertThat(first.getExchangeId()).isEqualTo(6);
         assertThat(first.getSimulation()).isEqualTo(1);
         assertThat(first.getSourceId()).isEqualTo("snapshot-A");
-        assertThat(first.getPrice()).isEqualTo("62650.00");
+        // Quantities are untouched: these stages move what a unit costs, not how many there are.
         assertThat(first.getQuantity()).isEqualTo("0.50000000");
-
-        AggregatedLevel second = out.getLevels().get(1);
-        assertThat(second.getExchangeId()).isEqualTo(8);
-        assertThat(second.getPrice()).isEqualTo("62651.25");
-        assertThat(second.getQuantity()).isEqualTo("1.25");
-    }
-
-    @Test
-    void buySellCommissionPassesEveryFieldThroughUnchanged() throws Exception {
-        assertUnchanged(new BuySellCommissionFunction().map(book()));
-    }
-
-    @Test
-    void ourProfitPassesEveryFieldThroughUnchanged() throws Exception {
-        assertUnchanged(new OurProfitFunction().map(book()));
-    }
-
-    @Test
-    void slippagePassesEveryFieldThroughUnchanged() throws Exception {
-        assertUnchanged(new SlippageFunction().map(book()));
+        assertThat(out.getLevels().get(1).getQuantity()).isEqualTo("1.25");
     }
 
     /**
-     * The three composed, in the order {@code AdjustmentJob} chains them. Worth its own test even
-     * while every stage is a no-op: once they are not, this is where "the whole chain still
-     * produces a well-formed book" is checked, and the order it runs in is part of the contract.
+     * {@code AdjustedOrderBook.from} copies the levels, so the stages mutating in place cannot
+     * write through to the record the deserializer produced. Sharing them would corrupt the input
+     * of anything that later reads the aggregated book alongside this chain.
      */
     @Test
-    void theChainOfAllThreePassesTheBookThroughUnchanged() throws Exception {
-        List<MapFunction<AggregatedOrderBook, AggregatedOrderBook>> chain = List.of(
-                new BuySellCommissionFunction(),
-                new OurProfitFunction(),
-                new SlippageFunction());
+    void adjustingDoesNotMutateTheAggregatedInput() {
+        AggregatedOrderBook input = new AggregatedOrderBook(1, "asks", "id", 1L,
+                List.of(new AggregatedLevel(6, 0, "s", "1000", "1")));
 
-        AggregatedOrderBook out = book();
-        for (MapFunction<AggregatedOrderBook, AggregatedOrderBook> stage : chain) {
-            out = stage.map(out);
-        }
+        new BuySellCommissionFunction().map(AdjustedOrderBook.from(input));
 
-        assertUnchanged(out);
+        assertThat(input.getLevels().get(0).getPrice()).isEqualTo("1000");
     }
 
-    /** An emptied book (job 6's output after a reset) must survive the chain too. */
+    /** An emptied book (job 6's output after a reset) still reports the rates and stays empty. */
     @Test
-    void anEmptyBookSurvivesTheChain() throws Exception {
-        AggregatedOrderBook empty = new AggregatedOrderBook(1, "bids", "agg-id-empty", 1L, List.of());
+    void anEmptyBookSurvivesTheChain() {
+        AdjustedOrderBook empty = AdjustedOrderBook.from(
+                new AggregatedOrderBook(1, "bids", "agg-id-empty", 1L, List.of()));
 
-        AggregatedOrderBook out = new SlippageFunction()
+        AdjustedOrderBook out = new SlippageFunction()
                 .map(new OurProfitFunction().map(new BuySellCommissionFunction().map(empty)));
 
         assertThat(out.getLevels()).isEmpty();
         assertThat(out.getId()).isEqualTo("agg-id-empty");
-        assertThat(out.getSide()).isEqualTo("bids");
+        assertThat(out.getSlippagePercent()).isEqualTo("1");
+    }
+
+    /** Exact decimal arithmetic, never a double: 0.1% of 0.07 must not drift. */
+    @Test
+    void arithmeticIsExactNotFloatingPoint() {
+        AdjustedOrderBook book = AdjustedOrderBook.from(new AggregatedOrderBook(1, "asks", "id", 1L,
+                List.of(new AggregatedLevel(6, 0, "s", "0.07", "1"))));
+
+        // 0.07 x 1.001 = 0.07007 exactly. A double round-trip gives 0.07007000000000001.
+        assertThat(prices(new OurProfitFunction().map(book))).containsExactly("0.07007");
     }
 }
