@@ -81,4 +81,15 @@ var Scenarios = []struct {
 	// rather than with 32-37 because it is a resync scenario: it is the regression
 	// test for the ex5 loop, ported to ex6's counter. See data_ex6.go.
 	{"48-ex6-rest-snapshot-resync", Ex6RestSnapshotResync},
+
+	// Ompfinex (added 2026-08-24). Appended rather than slotted in after ex8, for the
+	// same reason 48 was: renumbering an existing block silently invalidates every
+	// reference to it in memory/, todo.md and past run logs, and the numbers are not
+	// worth that. Grep the Go identifiers, not the numbers. See data_ex7.go.
+	{"49-ex7-rest-then-ws-updates", Ex7RestThenWsUpdates},
+	{"50-ex7-sequence-gap", Ex7SequenceGap},
+	{"51-ex7-precision-dust", Ex7PrecisionDust},
+	{"52-ex7-no-baseline", Ex7NoBaseline},
+	{"53-ex7-noise-frames", Ex7NoiseFrames},
+	{"54-ex7-one-sided-update", Ex7OneSidedUpdate},
 }

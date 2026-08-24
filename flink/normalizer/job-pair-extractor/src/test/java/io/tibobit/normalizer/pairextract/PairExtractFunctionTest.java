@@ -169,7 +169,7 @@ class PairExtractFunctionTest {
     }
 
     /**
-     * Given a message from an exchange with no registered parser (postponed ex7), When it
+     * Given a message from an exchange with no registered parser (ex9 lbank), When it
      * flows through, Then it is dropped without crashing.
      */
     @Test
