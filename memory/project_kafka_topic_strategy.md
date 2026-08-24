@@ -72,9 +72,10 @@ produced in the gap is silently lost. Provisioning up front removes the race. Th
 constraint that makes `make refresh-normalizer` submit jobs downstream-first.
 
 **Retention:** intermediates get the 1h `INPUT_RETENTION_MS` (transient, high volume, fully
-reproducible by replaying `ex{id}-raw`). `rejected-flink` gets 7 days — it is an audit point read by
-hand via kafka-ui, often long after the rejection, so 1h would make it useless. Same
-`--if-not-exists` caveat as above: retention only lands at first creation.
+reproducible by replaying `ex{id}-raw`). `rejected-flink` gets 2 days (lowered from 7 days on
+2026-08-24) — it is an audit point read by hand via kafka-ui, often long after the rejection, so 1h
+would make it useless. Same `--if-not-exists` caveat as above: retention only lands at first
+creation.
 
 ## kafka-ui AVRO-per-topic without registry clutter (serde config)
 
