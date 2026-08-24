@@ -65,26 +65,29 @@ var Scenarios = []struct {
 	{"42-ex8-precision-dust", Ex8PrecisionDust},
 	{"43-ex8-noise-frames", Ex8NoiseFrames},
 
-	// Ompfinex
+	//Ompfinex
 
 	{"44-ex7-rest-then-ws-updates", Ex7RestThenWsUpdates},
 	{"45-ex7-sequence-gap", Ex7SequenceGap},
 	{"46-ex7-precision-dust", Ex7PrecisionDust},
+	{"47-ex7-no-baseline", Ex7NoBaseline},
+	{"48-ex7-noise-frames", Ex7NoiseFrames},
+	{"49-ex7-one-sided-update", Ex7OneSidedUpdate},
 
 	// Control plane — the snapshot requests job 2 sends NiFi. Grouped by feature
 	// rather than by exchange; see data_control.go.
-	{"47-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
-	{"48-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
+	{"50-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
+	{"51-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
 
 	// Control plane — the resync the ordering guards used to throw away, which
 	// is the deadlock fixed on 2026-08-19. 46 is the sequenced guard, 47 the
 	// event-time one; both prove the resync was ACCEPTED and that the episode
 	// re-armed. See data_control.go.
-	{"49-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
-	{"50-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
+	{"52-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
+	{"53-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
 
 	// Bybit's SECOND stream, the REST depth snapshot (added 2026-08-24). Lives here
 	// rather than with 32-37 because it is a resync scenario: it is the regression
 	// test for the ex5 loop, ported to ex6's counter. See data_ex6.go.
-	{"51-ex6-rest-snapshot-resync", Ex6RestSnapshotResync},
+	{"54-ex6-rest-snapshot-resync", Ex6RestSnapshotResync},
 }

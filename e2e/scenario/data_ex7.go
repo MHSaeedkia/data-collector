@@ -2,7 +2,8 @@
 // Centrifugo WS deltas carrying a Binance-style u/U range on channel
 // "public-market:r-depth-{market}". The conventions these follow are in data.go.
 //
-// Confirmed from OmpfinexParser (io.tibobit.normalizer.pairextract.parser):
+// Confirmed from OmpfinexParser (io.tibobit.normalizer.pairextract.parser),
+// verified against live samples:
 //   - The market comes from the channel suffix on updates
 //     ("public-market:r-depth-14" -> market "14") and from the top-level
 //     "pair" field on snapshots. They must agree, or the two streams route to
@@ -10,14 +11,29 @@
 //     silent job-1 drop, not a dead-letter).
 //   - Continuity is U_n == seq_{n-1} (NOT seq_{n-1}+1): a delta's U must equal
 //     the previous event's seq (the snapshot's lastUpdateId, or the previous
-//     delta's u). A break is reject_reason "sequence_gap".
+//     delta's u) — confirmed against two consecutive live samples where the
+//     second message's U (859075) equalled the first's u (859075) exactly.
+//   - A side key (a/b) is always present on the wire, possibly an empty array,
+//     and an empty array is a no-op — NOT a "null side" the way bybit/okx have
+//     one. If a side key is missing entirely (not just empty), isArray() fails
+//     and the WHOLE event is dropped, both sides — there is no partial-event
+//     case for this exchange.
 //   - Deltas carry no wire timestamp; job 1 stamps processing time, so any
 //     snapshot produced by a delta has a wall-clock, unassertable EventTime.
 //     Every scenario that includes a delta therefore sets IgnoreEventTime and
-//     blanks EventTime on every WantSnapshots entry, including the ones that
-//     came from the REST snapshot — the flag is all-or-nothing per scenario.
+//     blanks EventTime on every WantSnapshots entry, including ones that came
+//     from the REST snapshot — the flag is all-or-nothing per scenario.
 //   - REST snapshot "time" is epoch MICROSECONDS on the wire (divided by 1000
 //     for the platform's millis event time) — confirmed against a live sample.
+//   - Control commands carry a Reason matching the reject_reason that
+//     triggered them (confirmed live: "no_baseline").
+//
+// NOT verified against job 2 (type-validator) source, and deliberately not
+// built here: a stale/duplicate-replay scenario (reject_reason vocabulary for
+// a delta whose u is <= the last accepted seq is unconfirmed) and a rebase
+// scenario (no ompfinex market with non-zero rebase factors has been
+// identified yet). Add them once job 2's source or the relevant
+// exchange_markets rows are available.
 
 package scenario
 
@@ -304,12 +320,8 @@ var Ex7SequenceGap = Scenario{
 		},
 	},
 	WantRejects: []string{"sequence_gap"},
-	// The gap is what makes job 2 ask NiFi for a fresh snapshot: one command
-	// for the episode, matching the one rejected event (see Ex1SequenceGap's
-	// own note on this — there is no second command if a further update
-	// arrives before resync, but this scenario resyncs right away).
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", ExchangeID: 7, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 7, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
@@ -410,6 +422,390 @@ var Ex7PrecisionDust = Scenario{
 		Bids: []events.AggregatedLevel{
 			{ExchangeID: 7, Simulation: 1, Price: "62650.12", Quantity: "0.3"},
 			{ExchangeID: 7, Simulation: 1, Price: "62649.5", Quantity: "1"},
+		},
+	},
+}
+
+// Ex7NoBaseline — a WS delta before any REST snapshot has no baseline to apply
+// to. This is what makes job 2 ask NiFi for a snapshot: only a snapshot can
+// give the pair a baseline.
+var Ex7NoBaseline = Scenario{
+	ExchangeID:      7,
+	PairID:          1,
+	IgnoreEventTime: true,
+	Sources: []string{
+		// 01 ws update, no baseline yet
+		`{
+	"id": "10a2b3c4-d5e6-4f3a-8b9c-0d1e2f3a4b5c",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-depth-14",
+		"pub": {
+			"data": {
+				"U": 600000,
+				"u": 600001,
+				"a": [
+					["62651", "0.29045069"]
+				],
+				"b": [
+					["62649", "0.55175335"]
+				]
+			},
+			"offset": 6000
+		}
+	}
+}`,
+		// 02 rest snapshot, lastUpdateId 700000
+		`{
+	"id": "21b3c4d5-e6f7-4a3b-9c0d-1e2f3a4b5c6d",
+	"simulation": 1,
+	"status": "OK",
+	"action": "snapshot",
+	"pair": "14",
+	"data": {
+		"lastUpdateId": 700000,
+		"time": 1800000000000000,
+		"bids": [
+			["62649", "0.50000000"],
+			["62640", "1.31062803"]
+		],
+		"asks": [
+			["62650", "2.21924167"],
+			["62660", "0.33476925"]
+		]
+	}
+}`,
+		// 03 ws update — U == 700000 (the snapshot's lastUpdateId), applies cleanly
+		`{
+	"id": "32c4d5e6-f7a8-4b3c-0d1e-2f3a4b5c6d7e",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-depth-14",
+		"pub": {
+			"data": {
+				"U": 700000,
+				"u": 700001,
+				"a": [
+					["62670", "0.40000000"]
+				],
+				"b": []
+			},
+			"offset": 6001
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 02 rest snapshot
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62650", Quantity: "2.21924167"},
+				{Price: "62660", Quantity: "0.33476925"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62649", Quantity: "0.5"},
+				{Price: "62640", Quantity: "1.31062803"},
+			},
+		},
+		{ // after 03 ws update
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62650", Quantity: "2.21924167"},
+				{Price: "62660", Quantity: "0.33476925"},
+				{Price: "62670", Quantity: "0.4"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62649", Quantity: "0.5"},
+				{Price: "62640", Quantity: "1.31062803"},
+			},
+		},
+	},
+	WantRejects: []string{"no_baseline"},
+	WantControlCommands: []events.ControlCommand{
+		{Action: "snapshot_request", Reason: "no_baseline", ExchangeID: 7, PairID: 1, Simulation: 1},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 7, Simulation: 1, Price: "62650", Quantity: "2.21924167"},
+			{ExchangeID: 7, Simulation: 1, Price: "62660", Quantity: "0.33476925"},
+			{ExchangeID: 7, Simulation: 1, Price: "62670", Quantity: "0.4"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 7, Simulation: 1, Price: "62649", Quantity: "0.5"},
+			{ExchangeID: 7, Simulation: 1, Price: "62640", Quantity: "1.31062803"},
+		},
+	},
+}
+
+// Ex7NoiseFrames — ompfinex frames job 1 drops WITHOUT consuming a sequence id
+// or emitting anything: no "push" at all, a channel outside the r-depth
+// prefix, and an update missing one of its side keys entirely (as opposed to
+// carrying it as an empty array, which IS valid — see Ex7OneSidedUpdate).
+// None of these reach job 2, so none of them dead-letter either.
+var Ex7NoiseFrames = Scenario{
+	ExchangeID:      7,
+	PairID:          1,
+	IgnoreEventTime: true,
+	Sources: []string{
+		// 01 connect ack — no "push" key at all
+		`{
+	"id": "43d5e6f7-a8b9-4c3d-1e2f-3a4b5c6d7e8f",
+	"simulation": 1,
+	"connect": {
+		"client": "9f8e7d6c-5b4a-4392-8102-abcdef012345",
+		"version": "5.0.0"
+	}
+}`,
+		// 02 foreign channel — starts with "public-market:" but not the r-depth prefix
+		`{
+	"id": "54e6f7a8-b9c0-4d3e-2f3a-4b5c6d7e8f90",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-trades-14",
+		"pub": {
+			"data": {
+				"price": "62650",
+				"quantity": "0.01"
+			},
+			"offset": 7000
+		}
+	}
+}`,
+		// 03 rest snapshot, lastUpdateId 800000
+		`{
+	"id": "65f7a8b9-c0d1-4e3f-3a4b-5c6d7e8f9012",
+	"simulation": 1,
+	"status": "OK",
+	"action": "snapshot",
+	"pair": "14",
+	"data": {
+		"lastUpdateId": 800000,
+		"time": 1800000000000000,
+		"bids": [
+			["62949", "0.50000000"],
+			["62940", "1.31062803"]
+		],
+		"asks": [
+			["62950", "2.21924167"],
+			["62960", "0.33476925"]
+		]
+	}
+}`,
+		// 04 malformed update — "b" key missing entirely (not an empty array), dropped whole
+		`{
+	"id": "76a8b9c0-d1e2-4f3a-4b5c-6d7e8f901234",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-depth-14",
+		"pub": {
+			"data": {
+				"U": 800000,
+				"u": 800001,
+				"a": [
+					["62970", "0.10000000"]
+				]
+			},
+			"offset": 7001
+		}
+	}
+}`,
+		// 05 ws update — valid, U == 800000 (the snapshot's lastUpdateId, since 04 never advanced it)
+		`{
+	"id": "87b9c0d1-e2f3-4a3b-5c6d-7e8f90123456",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-depth-14",
+		"pub": {
+			"data": {
+				"U": 800000,
+				"u": 800001,
+				"a": [
+					["62951", "0.15000000"]
+				],
+				"b": [
+					["62938", "1.10000000"]
+				]
+			},
+			"offset": 7002
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 03 rest snapshot
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62950", Quantity: "2.21924167"},
+				{Price: "62960", Quantity: "0.33476925"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62949", Quantity: "0.5"},
+				{Price: "62940", Quantity: "1.31062803"},
+			},
+		},
+		{ // after 05 ws update — 04 never touched the book or the baseline
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62950", Quantity: "2.21924167"},
+				{Price: "62951", Quantity: "0.15"},
+				{Price: "62960", Quantity: "0.33476925"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62949", Quantity: "0.5"},
+				{Price: "62940", Quantity: "1.31062803"},
+				{Price: "62938", Quantity: "1.1"},
+			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 7, Simulation: 1, Price: "62950", Quantity: "2.21924167"},
+			{ExchangeID: 7, Simulation: 1, Price: "62951", Quantity: "0.15"},
+			{ExchangeID: 7, Simulation: 1, Price: "62960", Quantity: "0.33476925"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 7, Simulation: 1, Price: "62949", Quantity: "0.5"},
+			{ExchangeID: 7, Simulation: 1, Price: "62940", Quantity: "1.31062803"},
+			{ExchangeID: 7, Simulation: 1, Price: "62938", Quantity: "1.1"},
+		},
+	},
+}
+
+// Ex7OneSidedUpdate — a side key carried as an EMPTY ARRAY is a valid no-op on
+// that side, not a drop and not an error — distinct from Ex7NoiseFrames'
+// missing-key case, which drops the whole message. Matches a live sample
+// pattern (one message touching bids only with "a": [], the next touching
+// asks only with "b": []).
+var Ex7OneSidedUpdate = Scenario{
+	ExchangeID:      7,
+	PairID:          1,
+	IgnoreEventTime: true,
+	Sources: []string{
+		// 01 rest snapshot, lastUpdateId 900000
+		`{
+	"id": "98c0d1e2-f3a4-4b3c-6d7e-8f9012345678",
+	"simulation": 1,
+	"status": "OK",
+	"action": "snapshot",
+	"pair": "14",
+	"data": {
+		"lastUpdateId": 900000,
+		"time": 1800000000000000,
+		"bids": [
+			["62649", "0.50000000"],
+			["62640", "1.31062803"]
+		],
+		"asks": [
+			["62650", "2.21924167"],
+			["62660", "0.33476925"]
+		]
+	}
+}`,
+		// 02 ws update — "a" empty (no ask changes), only bids move
+		`{
+	"id": "a9d1e2f3-a4b5-4c3d-7e8f-901234567890",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-depth-14",
+		"pub": {
+			"data": {
+				"U": 900000,
+				"u": 900001,
+				"a": [],
+				"b": [
+					["62649", "0"],
+					["62638", "1.10000000"]
+				]
+			},
+			"offset": 9000
+		}
+	}
+}`,
+		// 03 ws update — "b" empty (no bid changes), only asks move
+		`{
+	"id": "bae2f3a4-b5c6-4d3e-8f90-123456789012",
+	"simulation": 1,
+	"push": {
+		"channel": "public-market:r-depth-14",
+		"pub": {
+			"data": {
+				"U": 900001,
+				"u": 900002,
+				"a": [
+					["62650", "0"],
+					["62670", "0.40000000"]
+				],
+				"b": []
+			},
+			"offset": 9001
+		}
+	}
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01 rest snapshot
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62650", Quantity: "2.21924167"},
+				{Price: "62660", Quantity: "0.33476925"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62649", Quantity: "0.5"},
+				{Price: "62640", Quantity: "1.31062803"},
+			},
+		},
+		{ // after 02 ws update — asks untouched, bids changed
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62650", Quantity: "2.21924167"},
+				{Price: "62660", Quantity: "0.33476925"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62640", Quantity: "1.31062803"},
+				{Price: "62638", Quantity: "1.1"},
+			},
+		},
+		{ // after 03 ws update — bids untouched, asks changed
+			ExchangeID: 7,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "",
+			Asks: []events.PriceLevel{
+				{Price: "62660", Quantity: "0.33476925"},
+				{Price: "62670", Quantity: "0.4"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62640", Quantity: "1.31062803"},
+				{Price: "62638", Quantity: "1.1"},
+			},
+		},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 7, Simulation: 1, Price: "62660", Quantity: "0.33476925"},
+			{ExchangeID: 7, Simulation: 1, Price: "62670", Quantity: "0.4"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 7, Simulation: 1, Price: "62640", Quantity: "1.31062803"},
+			{ExchangeID: 7, Simulation: 1, Price: "62638", Quantity: "1.1"},
 		},
 	},
 }
