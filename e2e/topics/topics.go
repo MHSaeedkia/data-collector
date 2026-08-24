@@ -17,9 +17,9 @@ import (
 // Retentions, in milliseconds, as in scripts/warmup.sh.
 const (
 	inputRetentionMS    = "3600000"   // 1 hour
-	rawRetentionMS      = "604800000" // 7 days
+	rawRetentionMS      = "172800000" // 2 days
 	outputRetentionMS   = "21600000"  // 6 hours
-	rejectedRetentionMS = "604800000" // 7 days — dead-letter is an audit point, read by hand long after the fact
+	rejectedRetentionMS = "172800000" // 2 days — dead-letter is an audit point, read by hand long after the fact
 	controlRetentionMS  = "3600000"   // 1 hour — a stale command has no value once the gap it addressed is resolved
 )
 

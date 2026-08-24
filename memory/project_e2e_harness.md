@@ -340,14 +340,41 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   takes job 2's snapshot branch and CAN dead-letter `stale_or_duplicate` — ex3's "no reachable
   dead-letter" property does not carry over.
 - **Snapshot feeds with a sequence have no gap rule, and that is asserted deliberately**
-  (2026-08-01). ex4 and ex5 both set `sequence_jump = 0`, but job 2's snapshot branch never reads
-  the jump at all — it only checks `seq <= lastSeq`. `Ex4StaleOffset` and `Ex5StaleSeq` each end on
-  a huge forward jump that must be ACCEPTED. If someone later "fixes" jump 0 into a contiguity
-  rule, those two fail rather than silently starving the book.
+  (2026-08-01). ex4 sets `sequence_jump = 0`, but job 2's snapshot branch never reads the jump at
+  all — it only checks `seq <= lastSeq`. `Ex4StaleOffset` ends on a huge forward jump that must be
+  ACCEPTED. If someone later "fixes" jump 0 into a contiguity rule, it fails rather than silently
+  starving the book. **⚠ ex5 left this pairing 2026-08-22** — it is a delta feed now, so
+  `Ex5StaleSeq` is GONE (its `seq` is off the wire) and the ex5 block was rewritten and renumbered;
+  ex4 is the last member.
+- **ex5 scenarios rewritten + the whole list RENUMBERED 2026-08-22, then AGAIN 2026-08-23** — the
+  ex5 block grew 5 → 6 → 7, so everything after it has now shifted by two from its 2026-08-22
+  numbering. **Current state: bybit 32–37, okx 38–43, control plane 44–47** (the deadlock pair that
+  memory once called "44/45", then "45/46", is now **46/47** — stop quoting numbers for it and grep
+  `ControlEx6StaleResyncAccepted` / `ControlEx1LaggingRestResync` instead). The ex5 seven are
+  `25-snapshot-then-updates`, `26-update-before-snapshot`, `27-jump-tolerance`,
+  `28-multi-book-frame`, `29-noise-frames`, `30-precision-dust`, `31-rest-snapshot-resync`. Two
+  were new capabilities ex5 could not have as a snapshot-only feed: it has a cold start
+  (`no_baseline` + a control command) and it can gap. `27-ex5-jump-tolerance` is the ONLY scenario
+  anywhere that exercises `sequence_jump_tolerance`: both window edges (+590, +610) accepted, +611
+  a real gap.
+- **`31-ex5-rest-snapshot-resync` (2026-08-23)** — bitget's REST depth body, the second stream on
+  `ex5-raw` ([[project_pair_extractor]]). It is run where the REST body actually appears: a WS gap
+  empties the book and asks the control plane, and the REST snapshot is what answers, after which
+  a WS update at REST-ts + 600 continues the book. That last step is the point — it pins the user's
+  2026-08-23 decision that the REST snapshot is sequenced by its own `data.ts` (600 ± 10) rather
+  than bootstrapped null-seq, so **this is the scenario that fails first if that coupling bites in
+  production**. Verified live 2026-08-23 (PASS, ~21 s) and mutation-checked live against the real
+  stack: shifting ONLY the REST body's `data.ts` by −100 ms puts source 05 outside the window, and
+  the run fails with an EMPTY book at record 4 (the reset) instead of the restored one — so the
+  green run is not vacuous and the REST timestamp really is driving the window.
+- **`Ex5NoiseFrames` lost two cases and that is the point** — `action: "update"` is a legitimate
+  frame now, and `seq`/`pseq` are not read at all, so their wire types cannot reject anything. What
+  replaced them: an unknown action, and a book object carrying NEITHER side.
 - **ex5 is the only exchange whose one Kafka record can become several events** (2026-08-01).
   `BitgetParser` loops `data[]` and emits one event per element (okx's parser has the same shape but
   its captures only ever carry one). `Ex5MultiBookFrame` pins the fan-out — two book objects in one
-  record produce two snapshots with their own seq and event time. The same loop drops the WHOLE
+  record produce two snapshots with their own ts and event time (both elements are snapshots, which
+  job 2 orders by "must move forward" with no jump rule, so the ±10 window never applies there). The same loop drops the WHOLE
   record if any element is malformed, including elements already read, so a partial book is never
   emitted.
 - **ex6 is the only place the null-side rule can be proved on an UPDATE** (2026-08-01). "Null side
@@ -536,3 +563,39 @@ most of them debug, info for scenario start and result"). Every `log.Printf` in 
 
 Verified: build/vet/gofmt clean, `scenario` tests pass, an invalid `-log-level` exits 1 with a
 readable message, and `-serve` logs one line at Info. **Not run live** — no full 41-scenario run.
+
+## 2026-08-24 — scenario 48, `48-ex6-rest-snapshot-resync`
+
+ex6/bybit's SECOND stream (the REST depth snapshot) got a scenario, mirroring what
+`31-ex5-rest-snapshot-resync` does for bitget. **Appended as 48 rather than slotted into the bybit
+block (32–37)**, deliberately: the ex5 block has already been renumbered twice and the standing
+note in this file says to grep the Go identifiers rather than quote numbers, so growing the tail
+was cheaper than shifting 12 entries. It also belongs with the resync scenarios conceptually — it
+is the regression test for the ex5 loop, ported to ex6's counter.
+
+What it feeds: WS snapshot (u 800) → WS delta (u 801) → WS delta u 805 (**gap** → dead-letter +
+reset + one control command) → **REST snapshot** (the `result` envelope) → WS delta u 806 →
+WS delta u 807. Six wanted snapshots, `WantRejects: ["sequence_gap"]`, exactly one
+`snapshot_request`.
+
+**The assertion that carries the weight is the count: ONE reject, ONE command.** A second of
+either means the REST body's own counter leaked into job 2's sequence state and the resync loop is
+back. Source 04 carries the **real captured** `result.u` (38992362) while the WS feed sits at 8xx,
+which is chosen so a wrong implementation fails loudly in *either* direction — adopt it and
+source 05's u=806 is instantly `stale_or_duplicate`; treat it as a forward jump and it is a
+`sequence_gap`.
+
+Source 02 doubles as the only place in the suite that feeds a present-but-**empty** side on an
+UPDATE (`"b": []`, the shape the live capture actually sends). `Ex6OneSidedDelta` covers the null
+(absent-key) case; this covers the empty one, which merges nothing because job 5 clears only on
+snapshots.
+
+Unlike ex5's REST scenario, the REST `cts` here is deliberately kept moving FORWARD (08:00:03,
+after the gap at 08:00:02) rather than lagging. The lagging-resync path is already covered by
+`47-control-ex1-lagging-rest-resync`, and on ex6 the novel hazard is the counter, not the clock.
+
+⚠ **NOT run live.** `go build ./...`, `go vet` and `gofmt` are clean, but the harness needs the
+docker compose stack (and does a destructive `down -v`), which was not up. So this scenario is
+unverified against the real pipeline — in particular the exact snapshot COUNT and the reset
+record's event time are reasoned from `Ex6SequenceGap` and `Ex5RestSnapshotResync`, not observed.
+Run it before trusting it.

@@ -100,8 +100,19 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
   delta**: their WS messages are deltas (`type=update`, `pub.offset`, jump 1) and the full book
   arrives over REST tagged `action:"snapshot"` with an injected `pair` (null seq → job-2 resync).
   So they are delta feeds subject to the gap/jump rule, NOT the out-of-order-only check described
-  in (b) below. Only **ex4 + ex5** remain true snapshot feeds. See [[pair-extractor]] /
-  [[type-validator]] and `sample-raw-data.md`. The rest of this record stands as written.
+  in (b) below. **ex5 bitget followed them 2026-08-22** (see the next bullet), so **only ex4
+  ramzinex remains a true snapshot feed**. See [[pair-extractor]] / [[type-validator]] and
+  `sample-raw-data.md`. The rest of this record stands as written.
+- **⚠ ex5 bitget SUPERSEDED 2026-08-22 — new wire sample from the exchange.** The feed moved off
+  the `books50` channel onto the price-GROUPED `depth` channel (`arg.params.scale: "0.01"`,
+  `instType` `SPOT` → `sp`), and three things changed together: `action` gained the `"update"`
+  value (true delta feed, qty `"0"` = delete, confirmed on the wire), **`seq` and `pseq` vanished
+  entirely**, and a `checksum` appeared. The checksum is a CRC book-integrity value — NOT
+  monotonic, NOT a sequence — so every "ex5 = `seq`" statement below is dead. The replacement
+  ordering field is the inner **`ts`** (STRING epoch millis, also the event time), and because
+  that is a CLOCK rather than a counter it needed a new schema field,
+  `sequence_jump_tolerance` — **ex5 is jump 600 ± 10**, everyone else 0 (= the old exact check).
+  See [[avro-schema]], [[type-validator]], [[pair-extractor]].
 - **Three regimes**: full-snapshot-every-msg (**ex1 nobitex + ex2 bitpin + ex4 ramzinex +
   ex5 bitget RE-CONFIRMED 2026-07-14** post-reset, samples + parsing notes in
   `sample-raw-data.md` — ex1/ex2/ex4 Centrifugo but different channel keys (ex4's is a
@@ -149,9 +160,9 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
   pair): drop any snapshot whose ordering value is not greater than the last seen. No
   gap/jump rule — gaps self-heal on the next snapshot. Ordering fields: ex1/ex2/ex4 =
   Centrifugo `pub.offset` (ex1 fallback `lastUpdate`, ex2 fallback `event_time`);
-  ex5 = `seq` (fallback inner `ts`; the discarded capture's non-monotonic `seq` is exactly
-  what this check drops, not a reason to distrust the field). **ex3 wallex has NO ordering
-  field at all** — no out-of-order protection possible (Kafka offset = arrival order).
+  ex5 = `seq` (fallback inner `ts`) — **DEAD since 2026-08-22: `seq` is off the wire and ex5 is
+  a delta feed with a gap rule, not a snapshot feed with an out-of-order check; see the
+  supersession bullet above**. **ex3 wallex has NO ordering field at all** — no out-of-order protection possible (Kafka offset = arrival order).
 - Fixtures: RESET 2026-07-14 — being rebuilt per exchange (checklist in todo.md M0); the
   earlier bybit snapshot+delta and bitget snapshot captures were discarded with the rest.
 - Kafka records: key=null, 1 partition per topic.

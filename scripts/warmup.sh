@@ -81,10 +81,10 @@ fi
 
 echo "Creating Kafka topics..."
 
-RAW_RETENTION_MS=604800000    # 7 days
+RAW_RETENTION_MS=172800000    # 2 days
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
-REJECTED_RETENTION_MS=604800000  # 7 days — dead-letter is an audit point, read by hand long after the fact
+REJECTED_RETENTION_MS=172800000  # 2 days — dead-letter is an audit point, read by hand long after the fact
 CONTROL_RETENTION_MS=3600000  # 1 hour — a stale command has no value once the gap it addressed is resolved
 
 create_topic() {

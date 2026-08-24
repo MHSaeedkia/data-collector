@@ -45,10 +45,19 @@ captured wire formats in `sample-raw-data.md`):
   empty (for a snapshot: clear the side). Never conflate the two.
 - **`sequence_id` nullable**: null = the feed has no ordering field at all (only ex3) — job 2 must
   pass such events through unchecked. For everyone else job 1 fills it from the per-exchange ordering
-  field (ex1/2/4 `pub.offset`, ex5 `seq`, ex6 `u`, ex8 `ts` as long).
+  field (ex1/2/4 `pub.offset`, ex6 `u`, ex8 + **ex5 (since 2026-08-22)** `ts` as long).
 - **`sequence_jump` semantics**: >0 = delta feed, job-2 gap rule `seq == last + jump` (ex6=1,
-  ex8=300); **0 = snapshot feed** — no gap rule, only the out-of-order check (drop if not strictly
-  greater than last seen).
+  ex8=300, **ex5=600 since 2026-08-22**); **0 = snapshot feed** — no gap rule, only the
+  out-of-order check (drop if not strictly greater than last seen).
+- **`sequence_jump_tolerance` (added 2026-08-22, `default: 0` so it is a BACKWARD-compatible
+  evolution)**: half-width of the accepted window, making the real rule
+  `last + jump - tol <= seq <= last + jump + tol`. At 0 — every exchange but ex5 — it collapses to
+  the exact check that was there before, so nothing else changed behaviour. **ex5 bitget stamps 10**
+  because its sequence is a millisecond CLOCK on a nominal 600 ms cadence, not a counter, so it
+  never lands on an exact multiple. Lives on `raw_order_book_event` and its nested copy inside
+  `rejected_order_book_event`; it does NOT flow to `order_book_snapshot` or the aggregated topics,
+  and the rejected SERIALIZER needed no change because it delegates to the raw one. ⚠ re-register
+  both subjects — same trap as `pipeline_timings` / `simulation` / `reason`.
 - **`type=reset`** is a synthetic marker job 2 emits on a true gap ([[type-validator]]); job 5 turns
   it into an emptied book so the [[aggregator]] drops that exchange from the union. `Type` is an Avro
   **enum**, so `reset` had to be added as a symbol (v2/id 7) or the serializer NPEs.

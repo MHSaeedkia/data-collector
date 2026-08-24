@@ -31,8 +31,9 @@ final class Levels {
 
     /**
      * {@code [[price, qty, ...metadata], ...]} JSON-number arrays (ex4 ramzinex — elements
-     * 2+ are derived notional/flags/timestamps, ignored). Values go through BigDecimal from
-     * the decimal literal (Json.MAPPER), then toPlainString.
+     * 2+ are derived notional/flags/timestamps, ignored; ex5's REST snapshot, exactly two
+     * elements). Values go through BigDecimal from the decimal literal (Json.MAPPER), then
+     * toPlainString.
      */
     static List<PriceLevel> fromNumericArrays(JsonNode array) {
         List<PriceLevel> levels = new ArrayList<>(array.size());
