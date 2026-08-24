@@ -28,12 +28,21 @@
 //   - Control commands carry a Reason matching the reject_reason that
 //     triggered them (confirmed live: "no_baseline").
 //
-// NOT verified against job 2 (type-validator) source, and deliberately not
-// built here: a stale/duplicate-replay scenario (reject_reason vocabulary for
-// a delta whose u is <= the last accepted seq is unconfirmed) and a rebase
-// scenario (no ompfinex market with non-zero rebase factors has been
-// identified yet). Add them once job 2's source or the relevant
-// exchange_markets rows are available.
+// Two cases the peer exchange blocks have are still missing here. Both are
+// buildable now — the reasons this file originally gave for skipping them do
+// not hold:
+//
+//   - A stale/duplicate replay (ex8 has 41, ex1/ex2 have 05/13). The
+//     reject_reason is NOT unconfirmed: TypeValidateFunction's update branch
+//     rejects sequence_id <= lastSeq as "stale_or_duplicate". Worth knowing
+//     when writing it — a genuinely REPLAYED ompfinex message cannot reach
+//     that branch, because it carries the old U as well and so fails the
+//     U == lastSeq contiguity check first. Reaching stale_or_duplicate takes
+//     a delta whose U is right but whose u has gone backwards.
+//   - A rebase scenario (ex1 has 07/08, ex4 has 23/24). ompfinex DOES have
+//     markets with non-zero factors: 02_seed.sql gives market "1" (pair 2)
+//     price_amount_rebase -1, and roughly half the ex7 rows carry it. This
+//     needs the ex7 pair-2 row present wherever the suite runs, nothing more.
 
 package scenario
 

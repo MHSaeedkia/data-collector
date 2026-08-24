@@ -599,3 +599,75 @@ docker compose stack (and does a destructive `down -v`), which was not up. So th
 unverified against the real pipeline — in particular the exact snapshot COUNT and the reset
 record's event time are reasoned from `Ex6SequenceGap` and `Ex5RestSnapshotResync`, not observed.
 Run it before trusting it.
+
+## 2026-08-24 — ex7/ompfinex scenarios 49–54
+
+A teammate added `data_ex7.go` (six scenarios) on `feat/add-ompfinex`, mirroring ex6's block
+almost one-for-one: `49-ex7-rest-then-ws-updates`, `50-ex7-sequence-gap`,
+`51-ex7-precision-dust`, `52-ex7-no-baseline`, `53-ex7-noise-frames`,
+`54-ex7-one-sided-update`. All on ex7/pair 1 (ompfinex market `"14"`, rebase 0/0).
+
+**They were originally SLOTTED IN at 44–49, shifting the control-plane block and the ex6 REST
+scenario to 50–54 — REVERTED 2026-08-24 in review.** The shift silently invalidated every
+"44/45 verified live" / "44/45 mutation-checked" note in [[project_control_plane]] and todo.md,
+and left `scenarios.go`'s own comment reading "46 is the sequenced guard, 47 the event-time one"
+above entries numbered 52 and 53 — a stale comment the renumber itself created. Appending ex7 to
+the tail instead — the precedent scenario 48 set six entries earlier — restores 44–48 and makes
+the diff against main **purely additive**: 11 lines added, no existing entry touched, nothing to
+sweep. **This is the rule now: new scenarios go on the tail. Grep the Go identifiers, never the
+numbers.**
+
+**Coverage vs the peer blocks.** ex7 matches ex6's six cases exactly. It is missing the two
+its other peers have: a **stale/duplicate** case (`41-ex8-stale-duplicate`,
+`05/13-ex1/ex2-stale-rest-replay`) and a **rebase** case (`07/08`, `23/24`). The file header
+originally justified skipping rebase with "no ompfinex market with non-zero rebase factors
+has been identified yet" — **that was wrong** (corrected in the file 2026-08-24): `02_seed.sql` gives roughly half the ex7 rows
+`price_amount_rebase = -1`, e.g. `(7, '1', 2, ..., -1, 0, ...)`. The rebase scenario is buildable
+today.
+
+**Every ex7 scenario sets `IgnoreEventTime`**, correctly — its deltas carry no wire timestamp and
+job 1 stamps processing time, the ex3/ex4 situation. But the flag is all-or-nothing per scenario,
+so it also blanks the REST snapshot's event time, and **the parser's epoch-MICROseconds ÷ 1000
+conversion is therefore asserted nowhere in the suite**. A factor-1000 error puts event time in
+1970 or the year 58000 and every scenario still passes. A snapshot-only scenario (no deltas,
+`IgnoreEventTime` off) would pin it for one extra fixture. Note `scenario.go`'s comment on the
+field still says "Only ex3 wallex needs it" — that was already stale for ex4 before this branch.
+
+**What the ex7 scenarios can and cannot prove.** They correctly exercise the `U == prev seq`
+arithmetic, the empty-array-vs-missing-key distinction (`49` covers empty = valid no-op, `48`
+source 04 covers missing = whole message dropped without consuming a sequence id), and the
+one-command-per-episode control-plane rule. They **cannot** surface the real production hazard,
+because every source is hand-built with `U == prev seq`: whether a REST snapshot fetched
+mid-stream is actually contiguous with the next live delta. See [[project_pair_extractor]] § ex7.
+
+### VERIFIED LIVE 2026-08-24 — all six ex7 scenarios PASS
+
+`49` 35s, `50` 19s, `51` 37s, `52` 18s, `53` 38s, `54` 34s (they were numbered 44–49 when the
+run happened; renumbered to the tail immediately afterwards, same six scenarios unchanged) — **6 run, 6 passed, 0 failed**,
+against the local docker stack on `feat/add-ompfinex`.
+
+**⚠ Read the first run as a warning about this harness, not about ex7.** The run was done
+WITHOUT `stack.Provision` (deliberately — it does `docker compose down -v` and the user's stack
+held live state). Every scenario failed with **`got 0 records, want N`** — nothing out of the
+pipeline at all. Cause: the running postgres held a **hand-trimmed 2-exchange fixture** (2
+exchanges, 2 markets, 4 `exchange_markets` rows), not `02_seed.sql`'s 8 exchanges, so job 1
+could not resolve `7|14` and dropped every message on `dropped-unknown-market`. **`stack.Provision`
+is not just stack hygiene — it is what loads the seed**, and skipping it produces a confident,
+totally invalid all-fail result whose error message (`got 0 records`) points at the assertion
+rather than at the lookup. If a whole exchange's scenarios read 0 records, **check
+`exchange_markets` before reading anything into it.**
+
+The fix was a 2-row patch rather than a wipe: `INSERT` exchange 7 plus
+`(7, '14', 1, 'unsubscribe', 0, 0, NULL, 60)`. `markets.id 1` was already at price precision 2 /
+quantity 8, so the ex7 slice then matched `02_seed.sql` exactly. Reversible with a 2-row DELETE.
+Scenario times of 18–38s (vs the ~80s recorded elsewhere) are because the maven build was already
+warm — only the first scenario pays for `mvn clean package`.
+
+**What the green run does and does not establish.** It confirms end to end: the `U == prev seq`
+arithmetic through job 2, the dynamic `u - U` jump, `sequence_gap` and `no_baseline` each
+producing exactly ONE control command per episode, the reset emptying the book, job 4's 2/8
+truncation on an ompfinex feed, empty-array-vs-missing-key on both paths, and the four
+undeclared-`WantControlCommands` scenarios really asking for nothing. It does **NOT** touch the
+open production risk, because every source hand-builds `U == prev seq`: whether a REST snapshot
+fetched mid-stream is contiguous with the next live delta. It also does not exercise the
+micros÷1000 conversion (all six set `IgnoreEventTime`). See [[project_pair_extractor]] § ex7.

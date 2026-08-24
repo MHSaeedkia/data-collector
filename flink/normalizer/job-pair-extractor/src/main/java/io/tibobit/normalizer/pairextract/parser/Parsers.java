@@ -3,8 +3,10 @@ package io.tibobit.normalizer.pairextract.parser;
 import java.util.Map;
 
 /**
- * The one place that says which exchanges are in scope. — its topic still matches the source pattern, and
- * PairExtractFunction drops its messages via the "no parser" counter.
+ * The one place that says which exchanges are in scope. An exchange absent from this map still
+ * has its topic matched by the source pattern; PairExtractFunction drops its messages via the
+ * "no parser" counter. ex9 lbank is the only such exchange left — ex7 ompfinex joined the map
+ * on 2026-08-24.
  */
 public final class Parsers {
 
