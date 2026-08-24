@@ -134,13 +134,16 @@ done <<< "$distinct_exchanges"
 # Output topics — one per pair+side. Two parallel views of the same cross-exchange book:
 #   p{id}-{side}          normalizer job 6 — levels UNIONED, each keeping its own exchange_id
 #   p{id}-{side}-merged   flink/merger     — levels SUMMED, one per price, exchange_ids as a list
-# The -merged family is created here (not in the merger project) for the same reason as every other
-# topic: its source reads from `latest`, so the topic must exist before the job starts.
+#   p{id}-{side}-adjusted flink/adjustment — job 6's record, adjusted (step 1: passed through)
+# The -merged and -adjusted families are created here (not in their own projects) for the same
+# reason as every other topic: their sources read from `latest`, so the topic must exist before the
+# job starts. Auto-creation would also give them the broker default retention, not this one.
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
         create_topic "p${pair_id}-${side}" "$OUTPUT_RETENTION_MS"
         create_topic "p${pair_id}-${side}-merged" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}-adjusted" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 

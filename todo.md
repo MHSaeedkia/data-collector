@@ -1,5 +1,13 @@
 # TODO
 
+## adjustment
+
+- [x] **Step 1 — `flink/adjustment/` created, pass-through** (2026-08-24, user request) — standalone single-module project mirroring `flink/merger`'s shape, reads `p{id}-{side}` and writes the identical record to `p{id}-{side}-adjusted`. Output reuses the subject `aggregated-order-book-event`, so no new schema and no registry step to deploy. No transform operator between source and sink — step 1 has no logic to put in one. 6 tests green, 3 mutations confirmed to fail (drop `source_id`, drop `simulation`, write `side` as a String), shaded jar clean with zero flink/avro entries. `warmup.sh` pre-creates the `-adjusted` family; `ALL_JOBS` submits it. **NOT run live.** See [[project_adjustment]]
+- [ ] **Steps 2+ — the user will dictate the actual adjustment logic.** Do not anticipate or design ahead ([[project_scope_discipline]])
+- [ ] **⚠ The cluster is now at 8/8 task slots** (6 normalizer + merger + adjustment, parallelism 1 each, `taskmanager.numberOfTaskSlots: 8`). The next job or any parallelism increase needs the taskmanager reconfigured — this is the last slot the merger's note flagged
+- [ ] **Decide the lineage rule for the adjusted record.** Step 1 carries job 6's `id` through verbatim, which is what "without any changes" means but conflicts with [[project_record_lineage]]'s re-stamp-on-write convention. The aggregated schema has no record-level `source_ids` to name a parent in, so honouring the convention would need a schema change. Settle it before step 2 writes anything genuinely different
+- [ ] `p{id}-{side}-adjusted` is not watched by the staleness exporter, has no e2e coverage, and is not consumed by `web/` — the same three gaps `-merged` has
+
 ## market subscriptions
 
 - [x] `markets/` → `market-subscriptions/` + a Go operator console (2026-08-22, user request) — reads `exchange_markets` joined to `exchanges`, drives NiFi's two `/control-plane` endpoints, one binary with the UI `go:embed`ded (user asked for a single service, not split frontend/backend). Table with status badges, filter by exchange/status/search, click-to-sort, checkbox multi-select and "select all shown" for whole-exchange actions, per-market results so one failure never blocks the rest. All 9 settings in `.env`, nothing hardcoded. Mirrors `web/`'s layout, vendored, test-stage Dockerfile, compose service on :8090. **18 tests green, build/vet/gofmt clean; NEVER run against a live postgres or NiFi — docker was down.** See [[project_market_subscriptions]]
