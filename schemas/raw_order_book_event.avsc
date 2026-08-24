@@ -47,6 +47,12 @@
 			"type": "long"
 		},
 		{
+			"name": "sequence_jump_tolerance",
+			"type": "long",
+			"default": 0,
+			"doc": "Half-width of the accepted window around sequence_jump: an update is contiguous when last + jump - tolerance <= sequence_id <= last + jump + tolerance. 0 (the default, and every exchange but ex5) means the exact check. ex5/bitget stamps 600 +/- 10 because its sequence is a millisecond timestamp on a nominal 600 ms cadence, not a counter."
+		},
+		{
 			"name": "event_time",
 			"type": {
 				"type": "long",

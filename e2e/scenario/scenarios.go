@@ -39,31 +39,46 @@ var Scenarios = []struct {
 	{"23-ex4-rebase-toman", Ex4RebaseToman},
 	{"24-ex4-rebase-scaled-unit", Ex4RebaseScaledUnit},
 
-	// Bitget
-	{"25-ex5-bitget-snapshots", Ex5BitgetSnapshots},
-	{"26-ex5-multi-book-frame", Ex5MultiBookFrame},
-	{"27-ex5-stale-seq", Ex5StaleSeq},
-	{"28-ex5-noise-frames", Ex5NoiseFrames},
-	{"29-ex5-precision-dust", Ex5PrecisionDust},
+	// Bitget — a snapshot/update delta feed since 2026-08-22, and the only exchange
+	// whose sequence is a millisecond clock rather than a counter (jump 600 ± 10).
+	{"25-ex5-snapshot-then-updates", Ex5SnapshotThenUpdates},
+	{"26-ex5-update-before-snapshot", Ex5UpdateBeforeSnapshot},
+	{"27-ex5-jump-tolerance", Ex5JumpTolerance},
+	{"28-ex5-multi-book-frame", Ex5MultiBookFrame},
+	{"29-ex5-noise-frames", Ex5NoiseFrames},
+	{"30-ex5-precision-dust", Ex5PrecisionDust},
+	{"31-ex5-rest-snapshot-resync", Ex5RestSnapshotResync},
 
 	// Bybit
-	{"30-ex6-snapshot-then-deltas", Ex6SnapshotThenDeltas},
-	{"31-ex6-one-sided-delta", Ex6OneSidedDelta},
-	{"32-ex6-sequence-gap", Ex6SequenceGap},
-	{"33-ex6-no-baseline", Ex6NoBaseline},
-	{"34-ex6-noise-frames", Ex6NoiseFrames},
-	{"35-ex6-precision-dust", Ex6PrecisionDust},
+	{"32-ex6-snapshot-then-deltas", Ex6SnapshotThenDeltas},
+	{"33-ex6-one-sided-delta", Ex6OneSidedDelta},
+	{"34-ex6-sequence-gap", Ex6SequenceGap},
+	{"35-ex6-no-baseline", Ex6NoBaseline},
+	{"36-ex6-noise-frames", Ex6NoiseFrames},
+	{"37-ex6-precision-dust", Ex6PrecisionDust},
 
 	// OKX
-	{"36-ex8-update-before-snapshot", Ex8UpdateBeforeSnapshot},
-	{"37-ex8-happy-path", Ex8HappyPath},
-	{"38-ex8-sequence-gap", Ex8SequenceGap},
-	{"39-ex8-stale-duplicate", Ex8StaleDuplicate},
-	{"40-ex8-precision-dust", Ex8PrecisionDust},
-	{"41-ex8-noise-frames", Ex8NoiseFrames},
+	{"38-ex8-update-before-snapshot", Ex8UpdateBeforeSnapshot},
+	{"39-ex8-happy-path", Ex8HappyPath},
+	{"40-ex8-sequence-gap", Ex8SequenceGap},
+	{"41-ex8-stale-duplicate", Ex8StaleDuplicate},
+	{"42-ex8-precision-dust", Ex8PrecisionDust},
+	{"43-ex8-noise-frames", Ex8NoiseFrames},
 
 	// Control plane — the snapshot requests job 2 sends NiFi. Grouped by feature
 	// rather than by exchange; see data_control.go.
-	{"42-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
-	{"43-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
+	{"44-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
+	{"45-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
+
+	// Control plane — the resync the ordering guards used to throw away, which
+	// is the deadlock fixed on 2026-08-19. 46 is the sequenced guard, 47 the
+	// event-time one; both prove the resync was ACCEPTED and that the episode
+	// re-armed. See data_control.go.
+	{"46-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
+	{"47-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
+
+	// Bybit's SECOND stream, the REST depth snapshot (added 2026-08-24). Lives here
+	// rather than with 32-37 because it is a resync scenario: it is the regression
+	// test for the ex5 loop, ported to ex6's counter. See data_ex6.go.
+	{"48-ex6-rest-snapshot-resync", Ex6RestSnapshotResync},
 }

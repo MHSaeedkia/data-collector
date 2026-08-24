@@ -116,9 +116,19 @@ confirm that exchange drops out of `p{id}-{side}` on the gap and returns on the 
 **ex2 bitpin joined this list 2026-07-25** — it was re-classified from snapshot-only to
 REST-snapshot + WS-delta exactly like ex1, and needed NO job-2 code change (the `baselinePending`
 resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extractor]].
-(Remaining snapshot-only feeds ex4/ex5 and the no-ordering ex3 never hit the gap branch, so they
-never emit a reset.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+(The remaining snapshot-only feed ex4 and the no-ordering ex3 never hit the gap branch, so they
+never emit a reset. **ex5 bitget LEFT this list 2026-08-22** — it became a snapshot/update delta
+feed and now does hit it; see the jump-tolerance note below.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
 verified live yet.**
+
+## The ordering guards are suspended during a resync (2026-08-19)
+
+`out_of_order` (null-seq) and `stale_or_duplicate` (sequenced) both now sit behind
+`!resyncOutstanding()`. They only protect a book that is worth protecting, and once a gap has
+emitted its `RESET` there isn't one. Leaving them armed deadlocked the key permanently — the full
+mechanism, and why `lastEventTime` made it unrecoverable, is in [[project_control_plane]]. **If you
+ever tighten these guards again, the invariant to preserve is: a key with an outstanding
+`snapshot_request` must always have SOME path back to an accepted snapshot.**
 
 ## Gotchas (all cost real debugging time 2026-07-15)
 
@@ -181,3 +191,116 @@ off `sequence_jump` stamped by job 1's parsers — if an exchange's jump changes
 parser (job 1), not here; job 2 is exchange-agnostic.
 
 **2026-08-03 — `simulation` pass-through.** Valid events forward the same object, so the flag rides for free; but `emitReset` builds a FRESH event, so it explicitly copies the gap event's flag — otherwise emptying a simulated exchange's book would emit a record claiming to be live. See [[simulation-flag]].
+
+**2026-08-22 — the contiguity check became a WINDOW, for ex5/bitget.** bitget's new `depth`-channel
+sample dropped `seq` from the wire entirely (the `checksum` that replaced it is a CRC integrity
+value, not a sequence), so its ordering field is now the inner millisecond `ts`. A clock never
+lands on an exact multiple of a cadence, so `seq == last + jump` could not work: the rule is now
+`last + jump - tol <= seq <= last + jump + tol`, with `tol` from the new
+`sequence_jump_tolerance` schema field (`default: 0`, so a BACKWARD-compatible evolution).
+**ex5 stamps jump 600 / tolerance 10; every other exchange stamps 0, which collapses the window
+back to the exact check** — ex6's jump 1 and ex8's jump 300 are unchanged, and that is pinned by
+`zeroToleranceIsTheExactCheck`. Job 2 stays exchange-agnostic: it reads the tolerance off the
+event, it does not know which exchange sent it. ⚠ **re-register `raw-order-book-event` AND
+`rejected-order-book-event`, then resubmit** — same serializer-caches-the-write-schema trap as
+`pipeline_timings` / `simulation` / `reason`.
+
+**⚠ The window guards EVERY transition, snapshot→update included — a deliberate user decision
+(2026-08-22) taken over a flagged objection.** The consequence is real and visible in bitget's own
+capture: its first update follows the snapshot by **22 ms**, nowhere near 600, so on the live feed
+that burst is dead-lettered `sequence_gap`, empties the book via the reset, and asks the control
+plane for a fresh snapshot. If the resync snapshot is itself followed by a close-behind update, ex5
+can loop reset → request → snapshot → gap. The alternative offered and declined was to exempt the
+snapshot→update transition by reusing the existing `baselinePending` bootstrap (what ex1/ex2 do).
+Pinned as an EXPECTED result in `TypeValidateFunctionTest.capturedBurstAfterSnapshotIsAGap` so the
+behaviour is documented rather than surprising; open risk in todo.md, to settle against the live
+feed's real cadence.
+
+**2026-08-23 — audit: "a snapshot is ORDERED, never jump-checked" (user-stated invariant).** The
+user restated the rule for every exchange, not just ex5: an arriving snapshot (REST or WS) is
+validated on **ordering alone** — is its `sequence_id` newer than the last accepted one — and
+`sequence_jump` must never be applied to it. Gap detection has exactly **two legal sites**:
+snapshot → next update, and update → update. An update → snapshot transition gets the ordering
+check and nothing else.
+
+**Audit result: the code already conformed — no production behaviour changed.** Verified two ways.
+(a) Job 2 is the ONLY sequence validator in the platform: `getSequenceJump()` appears in exactly
+one expression, `long expected = last + event.getSequenceJump()`, inside the update branch;
+jobs 3–6 never read `sequence_id` for validation (job 5 only copies it onto the snapshot record).
+(b) Per-exchange, every snapshot lands in a branch that cannot reach that expression:
+
+| ex | snapshot `sequence_id` | jump | snapshot check |
+| --- | --- | --- | --- |
+| 1 nobitex (REST), 2 bitpin (REST), 3 wallex | `null` | 0 | event-time order only |
+| 4 ramzinex | `pub.offset` | 0 | `seq > lastSeq` only |
+| 5 bitget (WS `depth` **and** REST depth) | `ts` / `data.ts` | 600 (tol 10) | `seq > lastSeq` only |
+| 6 bybit | `data.u` | 1 | `seq > lastSeq` only |
+| 8 okx | `ts` | 300 | `seq > lastSeq` only |
+
+**What was actually missing was PROOF.** The pre-existing snapshot tests all used
+`snapshotFeed(…)`, i.e. **jump 0**, where `last + 0` is satisfied by nothing and a leaked jump
+check would be invisible; every delta-feed snapshot in the suite either arrived first
+(`lastSeq == null`, no check possible) or during a pending resync (`resyncPending()` exempts the
+guard). So a regression that moved the window check above the snapshot branch would have passed
+the whole suite. Four tests now pin it (48 → 52), all on **nonzero** jumps:
+`snapshotAfterUpdatesIgnoresTheJump` (ex6 jump 1, snapshot lands far PAST `last+jump`),
+`snapshotShortOfTheJumpIsStillAccepted` (ex8 jump 300, snapshot lands +7 — forward but far SHORT
+of the jump, the case an inequality-style leak would miss), `bitgetResyncSnapshotIsNotWindowChecked`
+(ex5, a resync ts 143 ms off the 600 grid, then the next update measured from the SNAPSHOT), and
+`snapshotOrderingBoundaryIgnoresTheJump` (jump 300: equal → `stale_or_duplicate`, +1 → accepted).
+Two mutations confirm they bite: making the snapshot branch enforce `seq == last + jump` fails 6
+tests (all 4 new + 2 old), and making a snapshot not re-anchor `lastSeq` fails 7.
+
+The invariant is now stated in the class javadoc's snapshot bullet and as a one-line comment on
+the branch itself, so the next person to "unify" the two branches has to read it first.
+
+**⚠ Note the interaction with the 2026-08-22 decision above, which is UNCHANGED.** The user's rule
+explicitly keeps snapshot → next update as a legal gap site, which is exactly the transition that
+dead-letters bitget's real +22 ms post-snapshot burst. So
+`capturedBurstAfterSnapshotIsAGap` still stands and the ex5 open risk in todo.md is still open —
+this audit narrowed nothing about it. **Why:** ordering-only-on-snapshots and window-on-the-next-
+update are independent rules that happen to meet at the same event pair. **How to apply:** if the
+ex5 risk is ever settled by exempting the post-snapshot update, that is a change to the UPDATE
+branch (or a `baselinePending`-style bootstrap), never to the snapshot branch.
+
+**2026-08-23 (2) — LIVE DIAGNOSIS on the dev server: the ex5 resync loop, and both of its causes.**
+The two open risks logged above stopped being theoretical. Measured on
+`tibobit-data-collector-afra` (ssh via the `asus` jump host; `/opt/data-collector`, all containers
+under `sudo docker`): `control-plane` contained nothing but
+`snapshot_request / sequence_gap / ex5 / pair 1`, and `ex5-p1-rejected-flink` alternated
+`sequence_gap` / `awaiting_snapshot` forever.
+
+**Evidence.** 4569 consecutive `ex5-raw` frames over 36 minutes, BTCUSDT (the only ex5 market with
+`status = subscribe`, so the stream needed no de-interleaving):
+
+- **The WS `depth` channel sends NO snapshots** — 3538 updates, **0** `action:"snapshot"` frames.
+  The REST endpoint is ex5's only baseline source. That is what turned both mistakes below from
+  wasteful into fatal, and it contradicts the 2026-08-23 answer "yes, both exist, keep as-is".
+- **The REST `data.ts` is a different clock.** Against the WS update just before it: range
+  −706..+662 ms, **behind 57.1%** of the time. The update just after it landed inside the old
+  `600 ± 10` window only **9.9%** of the time.
+- **update→update is bimodal**: a 575–625 mass **plus a real 725–775 cluster**. Only **93.16%**
+  inside `600 ± 10`; `[540, 760]` covers **99.83%** of 3537 transitions.
+
+**The loop**: REST snapshot accepted (only because a resync was pending) → its ts seeds the window
+from the wrong clock → next update ~620–700 ms later is outside `600 ± 10` → `sequence_gap` →
+reset empties the book → `snapshot_request` → NiFi answers with another REST snapshot → repeat.
+Median REST→REST interval 1201 ms, with 777 of 1030 cycles being exactly 2 updates long — the
+`gap, awaiting_snapshot` signature. Replaying the capture through the code: **1030 book resets and
+1031 requests in 36 min (28.6/min)**, 2641/4569 events accepted.
+
+**The fix** (user chose the widen option over ordering-only, 2026-08-23): `BitgetParser` now stamps
+the REST snapshot **null-seq, jump 0** — the `baselinePending` bootstrap ex1/ex2 already use, so the
+two clocks are never compared — and the WS window widened to **jump 650 ± 110**. Replaying the same
+capture: **4 resets and 5 requests (0.1/min)**, 3962/4569 accepted. The 583 `out_of_order` rejects
+that appear are the redundant REST bodies nobody asked for, correctly dropped.
+
+**NO job-2 change was needed for any of this.** Both causes were job-1 stamping; job 2 is
+exchange-agnostic and read the values off the event, exactly as designed.
+
+**Why:** a wall clock is not a sequence, and two endpoints' wall clocks are not the same sequence.
+Any future feed whose "sequence" is a timestamp should be assumed non-contiguous until measured.
+**How to apply:** before trusting a jump/tolerance for a clock-sequenced feed, pull a few thousand
+live frames and plot the interval distribution — the 2026-08-22 `600 ± 10` came from two captured
+frames 22 ms apart and was wrong in both directions. And a REST body that answers a resync must be
+null-seq unless its clock is provably the same one the deltas use. See [[project_pair_extractor]].

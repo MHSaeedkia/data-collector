@@ -43,6 +43,11 @@ public class TypeValidatorJob {
                 String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
                 String groupId = getEnv("KAFKA_GROUP_ID", "normalizer-type-validator");
                 String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
+                // How long to wait before re-asking NiFi for a snapshot that never arrived. One
+                // request per episode is not enough on its own: if the command is lost or nothing
+                // is consuming control-plane, the market stays dark until the job restarts.
+                long snapshotRetryMs = Long.parseLong(getEnv("SNAPSHOT_RETRY_MS",
+                                String.valueOf(TypeValidateFunction.DEFAULT_SNAPSHOT_RETRY_MS)));
 
                 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -57,7 +62,7 @@ public class TypeValidatorJob {
                 SingleOutputStreamOperator<RawOrderBookEvent> validated = env
                                 .fromSource(source, WatermarkStrategy.noWatermarks(), "raw-flink-source")
                                 .keyBy(new ExchangePairKey())
-                                .process(new TypeValidateFunction())
+                                .process(new TypeValidateFunction(snapshotRetryMs))
                                 .name("type-validate");
 
                 // Valid events -> ex{id}-p{id}-type-validated-raw-flink (same shared
