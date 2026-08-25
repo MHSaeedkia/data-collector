@@ -17,9 +17,9 @@ import java.util.regex.Pattern;
  *   Kafka input  p{id}-{side}            (AggregatedOrderBookEvent, subject aggregated-order-book-event)
  *     -> source (regex)
  *     -> map AdjustedOrderBook::from     (same book, nothing adjusted yet)
- *     -> map BuySellCommissionFunction   (price x 1.0035 on asks, x 0.9965 on bids)
- *     -> map OurProfitFunction           (then x 1.001 / x 0.999)
- *     -> map SlippageFunction            (then x 1.01  / x 0.99)
+ *     -> map BuySellCommissionFunction   (+0.35% of the ORIGINAL price on asks, -0.35% on bids)
+ *     -> map OurProfitFunction           (+/-0.1% of that same original)
+ *     -> map SlippageFunction            (+/-1%   of that same original)
  *     -> Kafka output  p{id}-{side}-adjusted   (subject adjusted-order-book-event)
  *
  * This is NOT a stage of the raw-normalization pipeline and does not live in flink/normalizer/. It
@@ -27,10 +27,16 @@ import java.util.regex.Pattern;
  * flink/merger does — job 6's output is untouched and every view is a separate topic consumers
  * choose between.
  *
- * <p><b>The three stages COMPOUND, in the order the user specified</b> — commission, then profit,
- * then slippage. Each multiplies the price the one before it produced, so the total on asks is
- * 1.0035 x 1.001 x 1.01 = <b>1.014548535</b>, not the 1.0145 that adding the rates would give. The
- * order is part of the contract, not an arrangement of convenience.
+ * <p><b>Every stage sizes its amount off the price the level ARRIVED with, not off the running
+ * price</b> (user, 2026-08-24, correcting the first implementation). So the three rates ADD:
+ * an ask ends at base x <b>1.0145</b>, not the 1.0035 x 1.001 x 1.01 = 1.014548535 that compounding
+ * would give. Each level keeps its untouched arrival price in {@code AdjustedLevel.basePrice} for
+ * exactly this reason.
+ *
+ * <p>A consequence worth knowing: <b>the chain order no longer affects the result</b>, because
+ * addition commutes. The stages still run commission → profit → slippage and that is what the
+ * Flink UI shows, but reordering them would produce identical prices — which was NOT true of the
+ * compounding version this replaced.
  *
  * <p>Each stage also writes the rate it applied onto the record, so the published event says what
  * was charged and not merely what the answer was. That is why the output has a schema of its own

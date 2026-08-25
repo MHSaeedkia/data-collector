@@ -23,27 +23,31 @@ final class Prices {
      * <p>This is the standard convention and it is what the stages were written against, but it was
      * never explicitly confirmed. If it is wrong, it is wrong HERE and nowhere else.
      */
-    static BigDecimal multiplier(String side, BigDecimal percent) {
-        // movePointLeft, not divide(100): a scale shift is exact and cannot throw, whereas divide
-        // needs an explicit rounding mode to be safe (memory/project_bigdecimal_rules.md).
-        BigDecimal fraction = percent.movePointLeft(2);
-        return "asks".equals(side)
-                ? BigDecimal.ONE.add(fraction)
-                : BigDecimal.ONE.subtract(fraction);
+    private static BigDecimal applySigned(String side, BigDecimal price, BigDecimal amount) {
+        return "asks".equals(side) ? price.add(amount) : price.subtract(amount);
     }
 
     /**
-     * Applies one stage's percentage to every level's price, in place.
+     * Applies one stage's percentage to every level, in place.
+     *
+     * <p><b>The amount is sized off the price the level ARRIVED with, then added to the running
+     * price</b> (user, 2026-08-24, correcting the first implementation). So three stages of 0.35 /
+     * 0.1 / 1 percent move an ask by base x 0.0145 in total — they SUM to 1.0145 rather than
+     * compounding to 1.014548535, because none of them ever sees another's output as its input.
+     *
+     * <p>One consequence worth knowing: <b>the chain order no longer changes the result.</b> The
+     * stages still run commission → profit → slippage, but addition commutes, so reordering them
+     * would produce identical prices. The order is now presentation, not arithmetic — which it was
+     * NOT under the compounding version.
      *
      * <p>Quantities are untouched: these stages move what a unit costs, not how many units are
-     * there. Prices are canonicalized on the way out, so the growing scale that exact multiplication
-     * produces ({@code 62650.00} x 1.0035 = {@code 62869.275000}) does not accumulate down the
-     * chain as trailing zeros.
+     * there. Prices are canonicalized on the way out so exact arithmetic's growing scale does not
+     * accumulate as trailing zeros down the chain.
      *
      * <p>Nothing is rounded to the market's tick size. Job 4 already applied
-     * {@code markets.price_precision} upstream, and multiplying re-introduces decimals past it —
-     * but re-truncating needs the per-market precision this job does not read, and picking a
-     * rounding direction is a decision with money in it. Left exact and flagged rather than guessed
+     * {@code markets.price_precision} upstream and this pushes past it — but re-truncating needs
+     * the per-market precision this job does not read, and picking a rounding direction is a
+     * decision with money in it. Left exact and flagged rather than guessed
      * (memory/project_adjustment.md).
      */
     static void applyPercent(AdjustedOrderBook book, BigDecimal percent) {
@@ -51,9 +55,12 @@ final class Prices {
         if (levels == null || levels.isEmpty()) {
             return;
         }
-        BigDecimal multiplier = multiplier(book.getSide(), percent);
+        // movePointLeft, not divide(100): a scale shift is exact and cannot throw, whereas divide
+        // needs an explicit rounding mode to be safe (memory/project_bigdecimal_rules.md).
+        BigDecimal fraction = percent.movePointLeft(2);
         for (AdjustedLevel level : levels) {
-            BigDecimal adjusted = new BigDecimal(level.getPrice()).multiply(multiplier);
+            BigDecimal amount = new BigDecimal(level.getBasePrice()).multiply(fraction);
+            BigDecimal adjusted = applySigned(book.getSide(), new BigDecimal(level.getPrice()), amount);
             level.setPrice(Decimals.canonicalize(adjusted));
         }
     }

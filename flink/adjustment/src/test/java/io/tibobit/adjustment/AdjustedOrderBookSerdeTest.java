@@ -87,7 +87,8 @@ class AdjustedOrderBookSerdeTest {
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) out.get("levels");
         assertThat(levels).hasSize(1);
-        assertThat(levels.get(0).get("price")).hasToString("63561.46571775");
+        // 62650.00 + 0.35% + 0.1% + 1% of the ORIGINAL = 62650 x 1.0145.
+        assertThat(levels.get(0).get("price")).hasToString("63558.425");
         assertThat(levels.get(0).get("quantity")).hasToString("0.50000000");
         assertThat(levels.get(0).get("exchange_id")).isEqualTo(6);
         assertThat(levels.get(0).get("simulation")).isEqualTo(1);
@@ -122,7 +123,7 @@ class AdjustedOrderBookSerdeTest {
         assertThat(read.get("slippage_percent")).hasToString("1");
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) read.get("levels");
-        assertThat(levels.get(0).get("price")).hasToString("63561.46571775");
+        assertThat(levels.get(0).get("price")).hasToString("63558.425");
         assertThat(levels.get(0).get("source_id")).hasToString("snapshot-A");
     }
 

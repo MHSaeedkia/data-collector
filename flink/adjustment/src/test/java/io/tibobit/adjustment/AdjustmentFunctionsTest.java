@@ -87,10 +87,38 @@ class AdjustmentFunctionsTest {
     // ---- the chain ---------------------------------------------------------------
 
     @Test
-    void theThreeStagesCompoundRatherThanAdd() {
-        // 1000 x 1.0035 x 1.001 x 1.01 = 1014.548535, NOT 1000 x 1.0145 = 1014.5.
-        assertThat(prices(wholeChain("asks"))).containsExactly("63561.46571775", "1014.548535");
-        assertThat(prices(wholeChain("bids"))).containsExactly("61744.61133225", "985.548465");
+    void theThreeStagesAddRatherThanCompound() {
+        // Every stage sizes its amount off the price the level ARRIVED with, so they SUM:
+        // 1000 + 3.5 + 1 + 10 = 1014.5, NOT 1000 x 1.0035 x 1.001 x 1.01 = 1014.548535.
+        assertThat(prices(wholeChain("asks"))).containsExactly("63558.425", "1014.5");
+        assertThat(prices(wholeChain("bids"))).containsExactly("61741.575", "985.5");
+    }
+
+    /**
+     * The direct consequence of sizing every amount off the original: no stage sees another's
+     * output, so addition commutes and the chain order cannot change the numbers. It did under the
+     * first (compounding) implementation, which is why this is worth pinning — if it ever fails,
+     * someone has reintroduced a dependency between the stages.
+     */
+    @Test
+    void reorderingTheStagesCannotChangeTheResult() {
+        AdjustedOrderBook forward = new SlippageFunction()
+                .map(new OurProfitFunction().map(new BuySellCommissionFunction().map(book("asks"))));
+        AdjustedOrderBook reversed = new BuySellCommissionFunction()
+                .map(new OurProfitFunction().map(new SlippageFunction().map(book("asks"))));
+
+        assertThat(prices(forward)).isEqualTo(prices(reversed));
+    }
+
+    /** Each stage's contribution is a fixed money amount off the base, not a share of the running price. */
+    @Test
+    void eachStagesAmountIsSizedOffTheOriginalPrice() {
+        AdjustedOrderBook afterFirst = new BuySellCommissionFunction().map(book("asks"));
+        assertThat(afterFirst.getLevels().get(1).getPrice()).isEqualTo("1003.5");   // 1000 + 3.5
+
+        AdjustedOrderBook afterSecond = new OurProfitFunction().map(afterFirst);
+        // +1, which is 0.1% of the ORIGINAL 1000 — not 0.1% of 1003.5 (which would be 1.0035).
+        assertThat(afterSecond.getLevels().get(1).getPrice()).isEqualTo("1004.5");
     }
 
     @Test
@@ -158,7 +186,16 @@ class AdjustmentFunctionsTest {
         AdjustedOrderBook book = AdjustedOrderBook.from(new AggregatedOrderBook(1, "asks", "id", 1L,
                 List.of(new AggregatedLevel(6, 0, "s", "0.07", "1"))));
 
-        // 0.07 x 1.001 = 0.07007 exactly. A double round-trip gives 0.07007000000000001.
+        // 0.07 + (0.07 x 0.001) = 0.070070 exactly. Doubles give 0.07007000000000001.
         assertThat(prices(new OurProfitFunction().map(book))).containsExactly("0.07007");
+    }
+
+    /** The base must survive every stage, or the second and third would size off a moved price. */
+    @Test
+    void theBasePriceIsNeverMovedByAStage() {
+        AdjustedOrderBook out = wholeChain("asks");
+
+        assertThat(out.getLevels()).extracting(AdjustedLevel::getBasePrice)
+                .containsExactly("62650.00", "1000");
     }
 }

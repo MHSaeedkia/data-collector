@@ -7,11 +7,13 @@ import java.math.BigDecimal;
 /**
  * Our profit — our own margin, applied on top of whatever the exchange quoted.
  *
- * <p>Moves every level's price by {@link #PERCENT}% and records the rate it used on the book, so
- * the published event says what was charged rather than only what the result was. Direction — up on
- * {@code asks}, down on {@code bids} — is decided once, in {@link Prices#multiplier}.
+ * <p>Adds {@link #PERCENT}% <b>of the price the level arrived with</b> to every level, and records
+ * the rate it used on the book so the published event says what was charged rather than only what
+ * the result was. The direction — up on {@code asks}, down on {@code bids} — and the fact that the
+ * amount is sized off the ORIGINAL price both live in one place, {@link Prices#applyPercent}.
  *
- * <p>Applied to the commission-adjusted price, not to the exchange's original — the stages compound in the order the job chains them.
+ * <p>Sized off the exchange's ORIGINAL price, not off the commission-adjusted one, so this margin
+ * is independent of whatever the commission stage charged.
  *
  * <p><b>The rate is a constant for now, and this field is where the database read replaces it</b>
  * (user, 2026-08-24: constants first, DB later). When it does, this becomes a

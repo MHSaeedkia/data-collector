@@ -39,13 +39,13 @@
 			"name": "our_profit_percent",
 			"type": "string",
 			"default": "0",
-			"doc": "Our own margin, applied after the commission, as a PERCENT."
+			"doc": "Our own margin, as a PERCENT. Sized off the original price like every other stage, so it is independent of the commission rather than applied on top of it."
 		},
 		{
 			"name": "slippage_percent",
 			"type": "string",
 			"default": "0",
-			"doc": "The slippage allowance, applied last, as a PERCENT. The three rates COMPOUND in the order commission -> profit -> slippage, so the total is their product, not their sum: 0.35 + 0.1 + 1 gives 1.014548535 on asks, not 1.0145."
+			"doc": "The slippage allowance, as a PERCENT. Every stage sizes its amount off the price the level ARRIVED with, never off the running price, so the three rates ADD rather than compound: 0.35 + 0.1 + 1 moves an ask by exactly 1.45% of the original. A consumer can therefore recover the original price as adjusted / 1.0145 on asks, or / 0.9855 on bids."
 		},
 		{
 			"name": "levels",

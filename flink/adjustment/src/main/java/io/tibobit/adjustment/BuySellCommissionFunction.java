@@ -7,11 +7,13 @@ import java.math.BigDecimal;
 /**
  * Buy/sell commission — the commission charged on a buy or a sell.
  *
- * <p>Moves every level's price by {@link #PERCENT}% and records the rate it used on the book, so
- * the published event says what was charged rather than only what the result was. Direction — up on
- * {@code asks}, down on {@code bids} — is decided once, in {@link Prices#multiplier}.
+ * <p>Adds {@link #PERCENT}% <b>of the price the level arrived with</b> to every level, and records
+ * the rate it used on the book so the published event says what was charged rather than only what
+ * the result was. The direction — up on {@code asks}, down on {@code bids} — and the fact that the
+ * amount is sized off the ORIGINAL price both live in one place, {@link Prices#applyPercent}.
  *
- * <p>First in the chain, so it is the only stage that sees the exchange's own price untouched. Everything after it compounds on this result.
+ * <p>First in the chain, but that no longer means anything arithmetically: it is sized off the
+ * original price exactly like the other two, so the three ADD to 1.45% rather than compounding.
  *
  * <p><b>The rate is a constant for now, and this field is where the database read replaces it</b>
  * (user, 2026-08-24: constants first, DB later). When it does, this becomes a

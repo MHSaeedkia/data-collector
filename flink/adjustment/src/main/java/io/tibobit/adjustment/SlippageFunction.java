@@ -7,11 +7,13 @@ import java.math.BigDecimal;
 /**
  * Slippage — the slippage allowance applied to the book.
  *
- * <p>Moves every level's price by {@link #PERCENT}% and records the rate it used on the book, so
- * the published event says what was charged rather than only what the result was. Direction — up on
- * {@code asks}, down on {@code bids} — is decided once, in {@link Prices#multiplier}.
+ * <p>Adds {@link #PERCENT}% <b>of the price the level arrived with</b> to every level, and records
+ * the rate it used on the book so the published event says what was charged rather than only what
+ * the result was. The direction — up on {@code asks}, down on {@code bids} — and the fact that the
+ * amount is sized off the ORIGINAL price both live in one place, {@link Prices#applyPercent}.
  *
- * <p>Last, so it compounds on a price the other two stages have already moved. If it should instead work off the exchange's original price, the chain has to change shape rather than its arithmetic.
+ * <p>Runs last, but is sized off the original price like the other two — so being last buys it
+ * nothing and costs it nothing. The chain order is presentation, not arithmetic.
  *
  * <p><b>The rate is a constant for now, and this field is where the database read replaces it</b>
  * (user, 2026-08-24: constants first, DB later). When it does, this becomes a

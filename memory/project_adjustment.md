@@ -1,6 +1,6 @@
 ---
 name: adjustment
-description: flink/adjustment/ — standalone Flink project reading job 6's p{id}-{side} and publishing p{id}-{side}-adjusted on its own subject; three COMPOUNDING price stages (commission 0.35%, profit 0.1%, slippage 1%) whose rates ride on the event; the asks-up/bids-down sign convention is assumed, not confirmed.
+description: flink/adjustment/ — standalone Flink project reading job 6's p{id}-{side} and publishing p{id}-{side}-adjusted on its own subject; three price stages (commission 0.35%, profit 0.1%, slippage 1%) each sized off the ORIGINAL price so they ADD to 1.45%, with the rates riding on the event; the asks-up/bids-down sign convention is assumed, not confirmed.
 metadata:
     type: project
 ---
@@ -63,15 +63,25 @@ deployed job is wired the way the source says.
 
 | Stage | Percent | Applied to |
 | --- | --- | --- |
-| `BuySellCommissionFunction` | 0.35 | the exchange's own price |
-| `OurProfitFunction` | 0.1 | the commission-adjusted price |
-| `SlippageFunction` | 1 | the profit-adjusted price |
+| `BuySellCommissionFunction` | 0.35 | the price the level ARRIVED with |
+| `OurProfitFunction` | 0.1 | the price the level ARRIVED with |
+| `SlippageFunction` | 1 | the price the level ARRIVED with |
 
-**They COMPOUND, they do not add.** On asks the total is 1.0035 × 1.001 × 1.01 = **1.014548535**,
-not the 1.0145 that summing the rates gives. That follows from the chain the user asked for, and
-`theThreeStagesCompoundRatherThanAdd` pins it with literal expected prices — worked out
-independently rather than recomputed from the rates, since a test that repeats the implementation's
-formula agrees with it by construction.
+**They ADD, they do not compound** (user correction, 2026-08-24, same day the compounding version
+shipped). Every stage sizes its amount off the price the level **arrived with**, never off the
+running price, so an ask ends at base × **1.0145** — not the 1.0035 × 1.001 × 1.01 = 1.014548535
+the first implementation produced. `AdjustedLevel.basePrice` is what makes that possible: seeded
+from the arrival price in the constructor, never written by a stage, and deliberately not on the
+wire (the original is recoverable from the published price and rates).
+
+⚠ **The consequence that is easy to miss: the chain order no longer affects the result.** Addition
+commutes, so reordering the stages produces identical prices. The order is presentation — it is what
+the Flink UI shows — but it is no longer arithmetic, which it *was* under the compounding version.
+`reorderingTheStagesCannotChangeTheResult` pins that, and it is the test that fails if anyone
+reintroduces a dependency between stages.
+
+Expected prices in the tests are literals worked out independently, not recomputed from the rates:
+a test that repeats the implementation's formula agrees with it by construction.
 
 **The rates are constants in each function class** (`static final BigDecimal PERCENT`), which is
 where the DB read replaces them — user's sequencing, 2026-08-24: constants first, database later.
@@ -92,8 +102,8 @@ confirmed by the user**. If it is wrong it is wrong in that one method. Invertin
 
 `BigDecimal` from the wire string throughout ([[bigdecimal-rules]]); `movePointLeft(2)` converts
 percent to fraction rather than `divide(100)`, because a scale shift is exact and cannot throw.
-Prices are canonicalized on the way out so the scale that exact multiplication grows
-(`62650.00` × 1.0035 = `62869.275000`) does not accumulate as trailing zeros down the chain.
+Prices are canonicalized on the way out so exact arithmetic's growing scale does not accumulate as
+trailing zeros down the chain.
 `arithmeticIsExactNotFloatingPoint` fails if anyone reaches for a double.
 
 **Nothing is rounded to the market's tick size.** Job 4 applied `markets.price_precision` upstream
@@ -101,8 +111,9 @@ and multiplying re-introduces decimals past it, but re-truncating needs the per-
 this job does not read, and picking a rounding DIRECTION is a decision with money in it (down
 favours the buyer on asks and us on bids). Left exact and flagged rather than guessed.
 
-16 tests. Three mutations confirmed to bite: inverting the sign (7 fail), swapping BigDecimal for
-double (4 fail), and the serializer dropping a rate (2 fail).
+19 tests. Four mutations confirmed to bite: inverting the sign (7 fail), swapping BigDecimal for
+double (4 fail), the serializer dropping a rate (2 fail), and **reverting to compounding by sizing
+the amount off the running price instead of the base (4 fail)**.
 
 **The model mirrors the schema in FULL, and here that is load-bearing.** The merger's
 `AggregatedOrderBook` is a reader — it models only what it consumes. This job re-encodes the same
@@ -171,7 +182,7 @@ and `run-normalizer-jobs` stay normalizer-only and leave it down, exactly like t
 
 ## Status
 
-16 tests green, `mvn package` clean, shaded jar carries the right `Main-Class` and **zero**
+19 tests green, `mvn package` clean, shaded jar carries the right `Main-Class` and **zero**
 `org/apache/flink` or `org/apache/avro` entries (everything is `provided`, as intended).
 **NOT run live** — no stack was up, no smoke test, no e2e scenario. Also not wired into
 [[staleness-exporter]] (which does not watch `-merged` either), `e2e/`, or `web/`.
