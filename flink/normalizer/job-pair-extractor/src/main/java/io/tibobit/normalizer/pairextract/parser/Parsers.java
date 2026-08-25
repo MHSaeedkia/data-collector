@@ -22,6 +22,8 @@ public final class Parsers {
                 5, new BitgetParser(),
                 6, new BybitParser(),
                 7, new OmpfinexParser(),
-                8, new OkxParser());
+                8, new OkxParser(),
+                9, new LBankParser());
+
     }
 }
