@@ -190,3 +190,33 @@ which is what `projectName` resolves against.
   edits with it. Recovered from VS Code Local History
   (`~/Library/Application Support/Code/User/History/`), which is the fallback worth remembering: it
   snapshots on save and survives a `git checkout`, unlike anything in git.
+
+---
+
+# `make run-all-jobs` slot leak — real JobManager bug, not per-job (2026-08-25)
+
+Hit while deploying [[project_adjustment]]'s commission DB-read change. **The failure is unrelated
+to any specific job's code** — worth remembering because it looks like it must be, and wastes time
+chasing the wrong thing. Symptom: every normalizer job (and sometimes merger/adjustment too) fails
+instantly on submit with `NoResourceAvailableException: Could not acquire the minimum required
+resources`, even though `taskmanager.numberOfTaskSlots: 8` matches the 8 jobs `ALL_JOBS` submits
+(6 normalizer + merger + adjustment, one slot each).
+
+**Root cause: a genuine slot leak, confirmed two ways.** `curl localhost:7070/taskmanagers` showed
+`freeSlots: 0` while only 2 jobs were actually `RUNNING` (should have left 6 free). Restarting only
+`taskmanager` didn't fix it — `freeSlots` came back as 2, not 8, with every job terminal. The
+JobManager itself was holding stale slot bookkeeping. Restarting `taskmanager` a second time (this
+time reconnecting to a fresh JobManager) logged the taskmanager itself freeing six `ALLOCATED`
+`TaskSlot`s tied to job IDs from runs several cycles earlier — slots the JobManager had lost track
+of but the TaskManager was still sitting on.
+
+**Fix**: `docker compose restart taskmanager && docker compose restart jobmanager`, wait for the
+taskmanager to reconnect (`curl localhost:7070/taskmanagers` shows `freeSlots: 8`), then re-run
+`make run-all-jobs`. Order matters — taskmanager-only was NOT sufficient in this instance.
+
+This is the same class of issue the e2e harness already flagged in [[project_e2e_harness]] ("the
+cancel→delete→create→submit teardown has a race under sustained load or the JobManager leaks
+across ~20 submit cycles") — here it surfaced after 3 back-to-back `make run-all-jobs` attempts
+within ~3 minutes on a stack that had been up 3 hours. Not root-caused further (Flink/Pekko RPC
+internals); the restart is a working mitigation, not a fix. **If `NoResourceAvailableException`
+shows up again, check `freeSlots` vs actual `RUNNING` jobs before assuming a code regression.**

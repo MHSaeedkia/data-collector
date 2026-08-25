@@ -2,7 +2,7 @@
 	"type": "record",
 	"name": "AdjustedOrderBookEvent",
 	"namespace": "io.tibobit.orderbook",
-	"doc": "flink/adjustment's output on p{pair_id}-{side}-adjusted: job 6's aggregated book with every level's price moved by the commission, profit and slippage stages, and the rates that were applied carried alongside so a consumer can see what was done to the price. Levels are field-for-field identical to AggregatedLevel — only the record gained fields.",
+	"doc": "flink/adjustment's output on p{pair_id}-{side}-adjusted: job 6's aggregated book with every level's price moved by the commission, profit and slippage stages, and the rates that were applied carried alongside so a consumer can see what was done to the price. All three rates are PER-LEVEL (2026-08-25) — looked up per (exchange_id, pair_id), because one book unions levels from multiple exchanges and a record-wide rate can't represent a rate that varies by exchange.",
 	"fields": [
 		{
 			"name": "pair_id",
@@ -28,12 +28,6 @@
 				"type": "long",
 				"logicalType": "timestamp-millis"
 			}
-		},
-		{
-			"name": "buy_sell_commission_percent",
-			"type": "string",
-			"default": "0",
-			"doc": "The buy/sell commission applied, as a PERCENT (e.g. \"0.35\" means 0.35%, a multiplier of 1.0035 on asks and 0.9965 on bids). A string for the same reason price and quantity are: it feeds exact BigDecimal arithmetic, and a float rate would reintroduce the error the whole pipeline avoids. Still ONE rate for the whole record (unlike our_profit_percent/slippage_percent below) — commission is plausibly per-exchange too, but that move hasn't been made yet."
 		},
 		{
 			"name": "levels",
@@ -70,6 +64,12 @@
 							"type": "string",
 							"default": "0",
 							"doc": "The slippage allowance applied to THIS level, as a PERCENT. Same per-(exchange_id, pair_id) lookup as our_profit_percent, for the same reason: it can vary by exchange even for the same market."
+						},
+						{
+							"name": "buy_sell_commission_percent",
+							"type": "string",
+							"default": "0",
+							"doc": "The buy/sell commission applied to THIS level, as a PERCENT (e.g. \"0.35\" means 0.35%, a multiplier of 1.0035 on asks and 0.9965 on bids). Moved here from the record level (2026-08-25) for the same reason our_profit_percent/slippage_percent are per-level: one book unions levels from multiple exchanges, and the commission can differ per exchange for the same market."
 						},
 						{
 							"name": "price",

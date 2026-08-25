@@ -3,7 +3,6 @@
 	"side": "asks",
 	"id": "77777777-7777-4777-8777-777777777777",
 	"event_time": "2025-06-23T12:00:00.000Z",
-	"buy_sell_commission_percent": "0.35",
 	"levels": [
 		{
 			"exchange_id": 1,
@@ -11,6 +10,7 @@
 			"source_id": "66666666-6666-4666-8666-666666666666",
 			"our_profit_percent": "0.1",
 			"slippage_percent": "1",
+			"buy_sell_commission_percent": "0.35",
 			"price": "98650.48725",
 			"quantity": "0.42"
 		},
@@ -20,6 +20,7 @@
 			"source_id": "6666aaaa-6666-4666-8666-666666666666",
 			"our_profit_percent": "0.1",
 			"slippage_percent": "2",
+			"buy_sell_commission_percent": "0.4",
 			"price": "98650.48725",
 			"quantity": "0.10"
 		}

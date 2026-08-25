@@ -144,43 +144,45 @@ slot: 6 normalizer + merger + adjustment = **8/8**. The next job, or any paralle
 needs the taskmanager reconfigured. [[price-merger]] recorded 7/8 as "the 8th is the last one" —
 this is that one.
 
-## Step 4 — profit/slippage moved onto the level, read from the DB (2026-08-25, DONE)
+## Step 4 — all three rates moved onto the level, read from the DB (2026-08-25, DONE)
 
-**Granularity settled by the user 2026-08-25**: both `our_profit_percent` and `slippage_percent` are
-flat percent per `(exchange_id, market_id)` — NOT per-market-only (the user's first framing), because
-slippage genuinely differs by exchange for the same market (their own example: ex1/market1 = 1%,
-ex2/market1 = 2%). Not depth-tiered either — flat percent is confirmed as the real target. See
-[[project_db_schema]] for the columns, defaults, and the "why not a separate table" reasoning.
+**Granularity settled by the user 2026-08-25, in two parts**: `our_profit_percent`/`slippage_percent`
+first (flat percent per `(exchange_id, market_id)` — NOT per-market-only, the user's first framing,
+because slippage genuinely differs by exchange for the same market, their own example: ex1/market1 =
+1%, ex2/market1 = 2%; not depth-tiered either). **Then, same day, the user asked for "exactly the same
+job for buy/sell commission"** — confirmed per exchange+market too, not per-exchange-only, so it
+followed the identical path. See [[project_db_schema]] for the columns, defaults, and the "why not a
+separate table" reasoning.
 
-**This forced a schema change that wasn't originally scoped**: `our_profit_percent`/
-`slippage_percent` used to be RECORD-level fields on `adjusted_order_book_event.avsc`, applied
-uniformly to every level via one `Prices.applyPercent(book, PERCENT)` call. That is provably wrong
-once rates vary per exchange, because one book is job 6's UNION across exchanges — `AdjustedLevel`
-already carries its own `exchange_id` per level for exactly this reason. **Both fields moved from
-the record to the nested `AdjustedLevel` record** (confirmed with the user before implementing,
-since it's a breaking Avro change). `buy_sell_commission_percent` stays record-level and a hardcoded
-constant — deliberately untouched, out of scope of this pass (memory already flagged commission as
-plausibly per-exchange too, which is a separate, harder problem not asked for here).
+**This forced a schema change that wasn't originally scoped**: all three rate fields used to be
+RECORD-level on `adjusted_order_book_event.avsc` (commission always was; profit/slippage until the
+first half of this step), applied uniformly to every level. That is provably wrong once rates vary per
+exchange, because one book is job 6's UNION across exchanges — `AdjustedLevel` already carries its own
+`exchange_id` per level for exactly this reason. **All three fields now live on the nested
+`AdjustedLevel` record**; `AdjustedOrderBook` carries none of them any more.
 
-**Read path**: `AdjustmentFactors` (POJO: `profitPercent`, `slippagePercent`, both `BigDecimal` —
-mirrors `RebaseFactors`) + `AdjustmentFactorsLoader` (mirrors `RebaseFactorsLoader` exactly: one
-query, `SELECT exchange_id, market_id, our_profit_percent, slippage_percent FROM exchange_markets
-WHERE market_id IS NOT NULL`, keyed `{exchange_id}|{market_id}`). `OurProfitFunction`/
-`SlippageFunction` became `RichMapFunction`s each holding their own `RefreshingLookup<String,
-AdjustmentFactors>` — **two independent lookups, one per stage**, each polling exchange_markets on
-its own schedule (`REFRESH_INTERVAL_MS`, default 60s, same env var name as job 3). Deliberately not
-shared: mirrors the one-lookup-per-operator ownership job 3 already has, and Flink ships each
-operator's constructor args as its own serialized closure anyway, so sharing one instance wouldn't
-actually reduce anything at runtime — it would just look shared in the source.
+**Read path**: `AdjustmentFactors` (POJO: `profitPercent`, `slippagePercent`, `commissionPercent`, all
+`BigDecimal` — mirrors `RebaseFactors`) + `AdjustmentFactorsLoader` (mirrors `RebaseFactorsLoader`
+exactly: one query, `SELECT exchange_id, market_id, our_profit_percent, slippage_percent,
+buy_sell_commission_percent FROM exchange_markets WHERE market_id IS NOT NULL`, keyed
+`{exchange_id}|{market_id}`). `BuySellCommissionFunction`/`OurProfitFunction`/`SlippageFunction` are
+all `RichMapFunction`s, each holding its own `RefreshingLookup<String, AdjustmentFactors>` — **three
+independent lookups, one per stage**, each polling exchange_markets on its own schedule
+(`REFRESH_INTERVAL_MS`, default 60s, same env var name as job 3). Deliberately not shared: mirrors the
+one-lookup-per-operator ownership job 3 already has, and Flink ships each operator's constructor args
+as its own serialized closure anyway, so sharing one instance wouldn't actually reduce anything at
+runtime — it would just look shared in the source.
 
-**`Prices` gained `applyPerLevelPercent`** alongside the original `applyPercent` (kept for
-commission): takes a `BiFunction<Integer,Integer,BigDecimal> (pairId, exchangeId) -> percent` and a
+**`Prices.applyPercent` (the record-wide version) is GONE** — once commission joined profit/slippage
+per-level, nothing called it any more, so it was deleted rather than left as dead code.
+`applyPerLevelPercent` is now the ONLY arithmetic method: takes a
+`BiFunction<Integer,Integer,BigDecimal> (pairId, exchangeId) -> percent` and a
 `BiConsumer<AdjustedLevel,String>` rate-writer, so the sign convention and arithmetic still live in
-exactly one place for both the record-level and per-level cases.
+exactly one place for all three stages.
 
 **Fallback when exchange_markets has no row for a level's `(exchange, pair)`**: falls back to
-`DEFAULT_PERCENT` — the value that used to be hardcoded (0.1 / 1), a `static final BigDecimal` on
-each function class. This job has no dead-letter side output the way job 3 does for
+`DEFAULT_PERCENT` — the value that used to be hardcoded (0.35 / 0.1 / 1), a `static final BigDecimal`
+on each function class. This job has no dead-letter side output the way job 3 does for
 `no_rebase_row` (it's a `MapFunction` chain, not a `ProcessFunction`), and silently charging 0%
 would under-charge rather than merely go stale — so falling back to the old constant was judged
 safer than either introducing a new side-output topic (bigger change than asked) or charging
@@ -189,23 +191,25 @@ nothing. Not discussed with the user explicitly; worth confirming if it ever mat
 already resolved this exchange+pair from the same table upstream of the aggregated book this job
 reads).
 
-**Files touched**: `schemas/adjusted_order_book_event.avsc` + its `_example.json` (breaking change:
-two fields moved record → nested level record), `AdjustedLevel`/`AdjustedOrderBook`/`Prices`/
-`AdjustedOrderBookSerializer`/`AdjustmentJob` (wiring: `POSTGRES_URL`/`POSTGRES_USER`/
-`POSTGRES_PASSWORD`/`REFRESH_INTERVAL_MS` env vars, same names as job 3), plus three NEW files —
-`AdjustmentFactors`, `AdjustmentFactorsLoader`, and a **copied** `RefreshingLookup` (this module is
-self-contained, doesn't depend on normalizer-common — same trade as `AvroSchemaLoader`/`Decimals`;
-keep the two copies in sync by hand if either changes). `pom.xml` gained the postgres driver at
-**default (compile) scope, NOT `provided`** — see the deploy-failure note below; `provided` was
-tried first and is wrong for this specific dependency.
+**Files touched**: `schemas/adjusted_order_book_event.avsc` + its `_example.json` (breaking change,
+twice the same day: first profit/slippage record→level, then commission record→level too — the
+record now carries ZERO rate fields), `AdjustedLevel`/`AdjustedOrderBook`/`Prices`/
+`BuySellCommissionFunction`/`AdjustedOrderBookSerializer`/`AdjustmentJob` (wiring: `POSTGRES_URL`/
+`POSTGRES_USER`/`POSTGRES_PASSWORD`/`REFRESH_INTERVAL_MS` env vars, same names as job 3), plus three
+NEW files from the first half — `AdjustmentFactors`, `AdjustmentFactorsLoader`, and a **copied**
+`RefreshingLookup` (this module is self-contained, doesn't depend on normalizer-common — same trade as
+`AvroSchemaLoader`/`Decimals`; keep the two copies in sync by hand if either changes). `pom.xml`
+carries the postgres driver at **default (compile) scope, NOT `provided`** — see the deploy-failure
+note below; `provided` was tried first and is wrong for this specific dependency.
 
-**Tests**: `AdjustmentFunctionsTest` (14→16, two new: `differentExchangesInTheSameBookGetDifferentRates`
-proves the redesign's whole point — one book, two exchanges, two different DB rates, in ONE book —
-and `aMissingRowFallsBackToTheDefaultPercent` pins the fallback) + `AdjustedOrderBookSerdeTest` (5,
-updated for the moved fields + `theModelCoversEveryFieldOfTheSchema`'s new field lists). Every
-existing test that predates the DB read opens its function with an EMPTY lookup map, which
-deliberately triggers the SAME fallback constants the old hardcoded values were — so none of the
-pre-existing numeric literals needed to change. Verified: `mvn -o clean test` — 21/21 green.
+**Tests**: `AdjustmentFunctionsTest` (14→16→18: `differentExchangesInTheSameBookGetDifferentRates` +
+`aMissingRowFallsBackToTheDefaultPercent` from the profit/slippage half, then
+`commissionAlsoVariesPerExchangeInTheSameBook` + `aMissingRowFallsBackToTheDefaultCommissionPercent`
+mirroring both for commission) + `AdjustedOrderBookSerdeTest` (5, updated for the moved fields +
+`theModelCoversEveryFieldOfTheSchema`'s new field lists, twice). Every existing test that predates the
+DB read opens its function with an EMPTY lookup map, which deliberately triggers the SAME fallback
+constants the old hardcoded values were — so none of the pre-existing numeric literals needed to
+change. Verified: `mvn -o clean test` — 23/23 green.
 
 ⚠ **LIVE DEPLOY FAILED, then fixed, same day (2026-08-25)**: first submission crashed every task
 attempt on startup with `ClassNotFoundException: org.postgresql.Driver` (`NoRestartBackoffTimeStrategy`
@@ -227,6 +231,25 @@ re-reads the `.avsc` file directly, no script edit needed) BEFORE resubmitting `
 the serializer caches the write schema on first use. Also needs the server's `exchange_markets`
 `ALTER TABLE` (see [[project_db_schema]]) run before the job starts, or every level falls back to
 `DEFAULT_PERCENT` and the DB read is silently a no-op.
+
+**✅ VERIFIED LIVE end-to-end, 2026-08-25** — `make run-all-jobs` was run against the real stack
+after both the profit/slippage AND commission changes landed. `orderbook-adjustment` came up
+`RUNNING` and stayed healthy with no exceptions in the taskmanager log (confirmed via
+`docker logs taskmanager | grep -i adjustment`), which proves the `buy_sell_commission_percent`
+column actually exists on this server's `exchange_markets` and the three-lookup DB read works
+live, not just in the test suite. A separate, unrelated infra problem surfaced during this same
+verification — see [[flink-deploy-tooling]] for the slot-leak fix (taskmanager+jobmanager
+restart), which is a platform-wide issue and not specific to this job.
+
+**02_seed.sql header bug, found and fixed same day**: the earlier profit/slippage `sed` edit
+had TWO `-e` clauses in one invocation; the second failed to compile (unbalanced parens),
+which aborts the WHOLE sed command before touching the file — so the INSERT column-list header
+never got `our_profit_percent, slippage_percent` appended, even though a later, separate fix DID
+append the two values to every row's tuple. Result: 8 named columns, 10 values per row —
+`02_seed.sql` was broken SQL and had already been committed. Caught and fixed while adding the
+commission column (same header line, one more pass). Lesson: after a multi-`-e` sed that reports
+an error, verify ALL clauses landed — a compile-time failure in one clause silently drops every
+clause in that invocation, not just the broken one.
 
 ## OPEN — the lineage question, deliberately not decided
 

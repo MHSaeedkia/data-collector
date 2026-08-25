@@ -19,19 +19,25 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Both wire boundaries, against the CANONICAL schemas in schemas/ (copied onto the test classpath
- * by the pom), without a live Schema Registry: the aggregated record coming IN, and the adjusted
- * record — a different schema and a different subject since step 3 — going OUT.
+ * Both wire boundaries, against the CANONICAL schemas in schemas/ (copied onto
+ * the test classpath by the pom), without a live Schema Registry: the
+ * aggregated record coming IN, and the adjusted record — a different schema and
+ * a different subject since step 3 — going OUT.
  *
- * <p>Fixture values are deliberately non-default, because a field the model forgot would come back
- * as its schema default and a fixture built from defaults would agree with the bug.
+ * <p>
+ * Fixture values are deliberately non-default, because a field the model forgot
+ * would come back as its schema default and a fixture built from defaults would
+ * agree with the bug.
  */
 class AdjustedOrderBookSerdeTest {
 
     private static final Schema AGGREGATED = AvroSchemaLoader.load("/avro/aggregated_order_book_event.avsc");
     private static final Schema ADJUSTED = AvroSchemaLoader.load("/avro/adjusted_order_book_event.avsc");
 
-    /** Strings are deliberately Utf8, exactly as Avro hands them back off the wire. */
+    /**
+     * Strings are deliberately Utf8, exactly as Avro hands them back off the
+     * wire.
+     */
     private static GenericRecord aggregatedRecord() {
         Schema levelSchema = AGGREGATED.getField("levels").schema().getElementType();
         GenericRecord level = new GenericRecordBuilder(levelSchema)
@@ -54,11 +60,13 @@ class AdjustedOrderBookSerdeTest {
     private static AdjustedOrderBook throughTheChain() throws Exception {
         AdjustedOrderBook book = AdjustedOrderBook.from(
                 AggregatedOrderBookDeserializer.fromGenericRecord(aggregatedRecord()));
+        BuySellCommissionFunction commission = new BuySellCommissionFunction(new RefreshingLookup<>(Map::of, 60_000L));
+        commission.open(null);
         OurProfitFunction profit = new OurProfitFunction(new RefreshingLookup<>(Map::of, 60_000L));
         profit.open(null);
         SlippageFunction slippage = new SlippageFunction(new RefreshingLookup<>(Map::of, 60_000L));
         slippage.open(null);
-        return slippage.map(profit.map(new BuySellCommissionFunction().map(book)));
+        return slippage.map(profit.map(commission.map(book)));
     }
 
     @Test
@@ -85,9 +93,8 @@ class AdjustedOrderBookSerdeTest {
         assertThat(out.get("event_time")).isEqualTo(1750680000000L);
 
         // The whole point of step 3: the event says what was charged, not just the result.
-        // Commission stays record-level; profit/slippage moved onto the level (2026-08-25).
-        assertThat(out.get("buy_sell_commission_percent")).hasToString("0.35");
-
+        // All three rates are per-level (2026-08-25) — a book unions levels from multiple
+        // exchanges, so none of them can be a record-wide field any more.
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) out.get("levels");
         assertThat(levels).hasSize(1);
@@ -99,9 +106,13 @@ class AdjustedOrderBookSerdeTest {
         assertThat(levels.get(0).get("source_id")).hasToString("snapshot-A");
         assertThat(levels.get(0).get("our_profit_percent")).hasToString("0.1");
         assertThat(levels.get(0).get("slippage_percent")).hasToString("1");
+        assertThat(levels.get(0).get("buy_sell_commission_percent")).hasToString("0.35");
     }
 
-    /** {@code side} is an Avro ENUM; a plain String there NPEs in the encoder at first emit. */
+    /**
+     * {@code side} is an Avro ENUM; a plain String there NPEs in the encoder at
+     * first emit.
+     */
     @Test
     void sideIsWrittenAsAnEnumSymbolNotAString() throws Exception {
         GenericRecord out = AdjustedOrderBookSerializer.toGenericRecord(throughTheChain(), ADJUSTED);
@@ -109,8 +120,9 @@ class AdjustedOrderBookSerdeTest {
     }
 
     /**
-     * A real Avro binary round-trip. {@code GenericData.validate} is a shape check and would still
-     * pass for a record the encoder rejects, so the bytes are actually written and read back.
+     * A real Avro binary round-trip. {@code GenericData.validate} is a shape
+     * check and would still pass for a record the encoder rejects, so the bytes
+     * are actually written and read back.
      */
     @Test
     void theAdjustedRecordSurvivesABinaryRoundTrip() throws Exception {
@@ -125,27 +137,28 @@ class AdjustedOrderBookSerdeTest {
                 .read(null, DecoderFactory.get().binaryDecoder(out.toByteArray(), null));
 
         assertThat(read.get("pair_id")).isEqualTo(3);
-        assertThat(read.get("buy_sell_commission_percent")).hasToString("0.35");
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) read.get("levels");
         assertThat(levels.get(0).get("price")).hasToString("63558.425");
         assertThat(levels.get(0).get("source_id")).hasToString("snapshot-A");
         assertThat(levels.get(0).get("slippage_percent")).hasToString("1");
+        assertThat(levels.get(0).get("buy_sell_commission_percent")).hasToString("0.35");
     }
 
     /**
-     * The adjusted schema must stay a superset of what this job writes. If someone adds a field to
-     * the avsc and not to the model, the record still validates (Avro fills the default) — so this
-     * checks the field LIST explicitly, which is the only thing that catches it.
+     * The adjusted schema must stay a superset of what this job writes. If
+     * someone adds a field to the avsc and not to the model, the record still
+     * validates (Avro fills the default) — so this checks the field LIST
+     * explicitly, which is the only thing that catches it.
      */
     @Test
     void theModelCoversEveryFieldOfTheSchema() {
         assertThat(ADJUSTED.getFields().stream().map(Schema.Field::name))
-                .containsExactly("pair_id", "side", "id", "event_time",
-                        "buy_sell_commission_percent", "levels");
+                .containsExactly("pair_id", "side", "id", "event_time", "levels");
         assertThat(ADJUSTED.getField("levels").schema().getElementType()
                 .getFields().stream().map(Schema.Field::name))
                 .containsExactly("exchange_id", "simulation", "source_id",
-                        "our_profit_percent", "slippage_percent", "price", "quantity");
+                        "our_profit_percent", "slippage_percent", "buy_sell_commission_percent",
+                        "price", "quantity");
     }
 }

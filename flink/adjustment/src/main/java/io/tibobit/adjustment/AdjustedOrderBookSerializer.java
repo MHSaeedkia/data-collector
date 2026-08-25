@@ -11,18 +11,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Encodes an {@link AdjustedOrderBook} to Confluent-wire-format Avro bytes, schema
- * schemas/adjusted_order_book_event.avsc, subject {@code adjusted-order-book-event}.
+ * Encodes an {@link AdjustedOrderBook} to Confluent-wire-format Avro bytes,
+ * schema schemas/adjusted_order_book_event.avsc, subject
+ * {@code adjusted-order-book-event}.
  *
- * <p><b>Its own subject, as of step 3.</b> The pass-through version reused
- * {@code aggregated-order-book-event}, which was right while the record was byte-identical to job
- * 6's. It is not any more: the adjusted event carries the three rates that were applied, so it is a
- * different shape and needs a schema of its own. That is a NEW subject, not an evolution of the
- * aggregated one — job 6's contract with {@code web/} is frozen and must not grow fields because a
- * downstream job wanted them.
+ * <p>
+ * <b>Its own subject, as of step 3.</b> The pass-through version reused
+ * {@code aggregated-order-book-event}, which was right while the record was
+ * byte-identical to job 6's. It is not any more: the adjusted event carries the
+ * three rates that were applied, so it is a different shape and needs a schema
+ * of its own. That is a NEW subject, not an evolution of the aggregated one —
+ * job 6's contract with {@code web/} is frozen and must not grow fields because
+ * a downstream job wanted them.
  *
- * <p>The write schema is fetched from the Schema Registry at first use, never from a local copy —
- * so {@code scripts/warmup.sh} has to register the subject before this job can emit anything.
+ * <p>
+ * The write schema is fetched from the Schema Registry at first use, never from
+ * a local copy — so {@code scripts/warmup.sh} has to register the subject
+ * before this job can emit anything.
  */
 public class AdjustedOrderBookSerializer implements SerializationSchema<AdjustedOrderBook> {
 
@@ -60,6 +65,7 @@ public class AdjustedOrderBookSerializer implements SerializationSchema<Adjusted
                     .set("source_id", level.getSourceId())
                     .set("our_profit_percent", level.getOurProfitPercent())
                     .set("slippage_percent", level.getSlippagePercent())
+                    .set("buy_sell_commission_percent", level.getBuySellCommissionPercent())
                     .set("price", level.getPrice())
                     .set("quantity", level.getQuantity())
                     .build());
@@ -72,7 +78,6 @@ public class AdjustedOrderBookSerializer implements SerializationSchema<Adjusted
                 .set("side", new GenericData.EnumSymbol(sideSchema, book.getSide()))
                 .set("id", book.getId())
                 .set("event_time", book.getEventTime())
-                .set("buy_sell_commission_percent", book.getBuySellCommissionPercent())
                 .set("levels", levels)
                 .build();
     }

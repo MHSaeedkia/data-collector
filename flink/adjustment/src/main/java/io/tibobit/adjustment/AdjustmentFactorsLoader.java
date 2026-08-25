@@ -8,11 +8,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Loads {@code our_profit_percent}/{@code slippage_percent} from exchange_markets as
- * {@code "{exchange_id}|{pair_id}" → AdjustmentFactors}, keyed the way this job sees levels
- * (a level's own {@code exchange_id} against the book's {@code pair_id} — market_id IS the
- * pipeline's pair_id, same as job 3's RebaseFactorsLoader). Plugged into RefreshingLookup so a
- * rate edit is picked up without a job restart.
+ * Loads
+ * {@code our_profit_percent}/{@code slippage_percent}/{@code buy_sell_commission_percent}
+ * from exchange_markets as
+ * {@code "{exchange_id}|{pair_id}" → AdjustmentFactors}, keyed the way this job
+ * sees levels (a level's own {@code exchange_id} against the book's
+ * {@code pair_id} — market_id IS the pipeline's pair_id, same as job 3's
+ * RebaseFactorsLoader). Plugged into RefreshingLookup so a rate edit is picked
+ * up without a job restart.
  */
 public class AdjustmentFactorsLoader implements RefreshingLookup.Loader<String, AdjustmentFactors> {
 
@@ -30,15 +33,14 @@ public class AdjustmentFactorsLoader implements RefreshingLookup.Loader<String, 
     public Map<String, AdjustmentFactors> load() throws Exception {
         // Same child-first classloader dance as ExchangeMarketsLoader / RebaseFactorsLoader.
         Class.forName("org.postgresql.Driver");
-        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password);
-             Statement statement = connection.createStatement();
-             ResultSet rs = statement.executeQuery(
-                     "SELECT exchange_id, market_id, our_profit_percent, slippage_percent"
-                             + " FROM exchange_markets WHERE market_id IS NOT NULL")) {
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password); Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(
+                "SELECT exchange_id, market_id, our_profit_percent, slippage_percent,"
+                + " buy_sell_commission_percent"
+                + " FROM exchange_markets WHERE market_id IS NOT NULL")) {
             Map<String, AdjustmentFactors> factors = new HashMap<>();
             while (rs.next()) {
                 factors.put(key(rs.getInt(1), rs.getInt(2)),
-                        new AdjustmentFactors(rs.getBigDecimal(3), rs.getBigDecimal(4)));
+                        new AdjustmentFactors(rs.getBigDecimal(3), rs.getBigDecimal(4), rs.getBigDecimal(5)));
             }
             return factors;
         }

@@ -13,12 +13,13 @@ package io.tibobit.adjustment;
  * arrived with. It exists so every stage can size its amount off the original price rather than the
  * running one, and it is deliberately not published.
  *
- * <p>{@code ourProfitPercent}/{@code slippagePercent} live HERE, per level, not on {@code
- * AdjustedOrderBook} — unlike {@code buySellCommissionPercent}, which stays record-level. A book is
- * job 6's union across exchanges, and profit/slippage are looked up per {@code (exchange_id,
- * market_id)} (2026-08-25, user decision), so two levels in the same book can carry different
- * rates. Default {@code "0"} until the owning stage sets it, mirroring how the record-level rate
- * fields used to default before step 3 ran.
+ * <p>{@code ourProfitPercent}/{@code slippagePercent}/{@code buySellCommissionPercent} all live
+ * HERE, per level, not on {@code AdjustedOrderBook} — all three are looked up per
+ * {@code (exchange_id, market_id)} (2026-08-25 for profit/slippage, 2026-08-25 for commission too),
+ * so two levels in the same book can carry three different rates. A book is job 6's UNION across
+ * exchanges, which is why a record-wide rate was never correct for any of the three. Default
+ * {@code "0"} until the owning stage sets it, mirroring how the record-level rate fields used to
+ * default before step 3 ran.
  */
 public class AdjustedLevel {
 
@@ -27,6 +28,7 @@ public class AdjustedLevel {
     private String sourceId = "";
     private String ourProfitPercent = "0";
     private String slippagePercent = "0";
+    private String buySellCommissionPercent = "0";
     private String price;
     private String basePrice;
     private String quantity;
@@ -63,12 +65,15 @@ public class AdjustedLevel {
     public String getSlippagePercent() { return slippagePercent; }
     public void setSlippagePercent(String slippagePercent) { this.slippagePercent = slippagePercent; }
 
+    public String getBuySellCommissionPercent() { return buySellCommissionPercent; }
+    public void setBuySellCommissionPercent(String v) { this.buySellCommissionPercent = v; }
+
     public String getPrice() { return price; }
     public void setPrice(String price) { this.price = price; }
 
     /**
      * The price this level arrived with, before any stage touched it. Every stage sizes its amount
-     * from THIS, never from {@link #getPrice()} — see {@link Prices#applyPercent}.
+     * from THIS, never from {@link #getPrice()} — see {@link Prices#applyPerLevelPercent}.
      *
      * <p>Not on the wire: the published event carries the adjusted price and the three rates, and
      * the original is recoverable from those. It is a getter/setter pair rather than a final field
