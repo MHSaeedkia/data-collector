@@ -17,10 +17,16 @@ import java.util.regex.Pattern;
  *   Kafka input  p{id}-{side}            (AggregatedOrderBookEvent, subject aggregated-order-book-event)
  *     -> source (regex)
  *     -> map AdjustedOrderBook::from     (same book, nothing adjusted yet)
- *     -> map BuySellCommissionFunction   (+0.35% of the ORIGINAL price on asks, -0.35% on bids)
- *     -> map OurProfitFunction           (+/-0.1% of that same original)
- *     -> map SlippageFunction            (+/-1%   of that same original)
+ *     -> map BuySellCommissionFunction   (flat +/-0.35% of the ORIGINAL price, one rate per record)
+ *     -> map OurProfitFunction           (+/- our_profit_percent of that same original, PER LEVEL)
+ *     -> map SlippageFunction            (+/- slippage_percent   of that same original, PER LEVEL)
  *     -> Kafka output  p{id}-{side}-adjusted   (subject adjusted-order-book-event)
+ *
+ * <p>Profit and slippage rates come from {@code exchange_markets.our_profit_percent}/
+ * {@code slippage_percent} (2026-08-25) via a {@link RefreshingLookup} keyed
+ * {@code (exchange_id, pair_id)} — PER LEVEL, not per record, because a book unions levels from
+ * multiple exchanges and the user confirmed both rates genuinely vary by exchange for the same
+ * market. Commission is still a flat constant, unchanged in this pass.
  *
  * This is NOT a stage of the raw-normalization pipeline and does not live in flink/normalizer/. It
  * reads that pipeline's finished output and publishes a parallel view of it, exactly as
@@ -67,8 +73,20 @@ public class AdjustmentJob {
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
         String groupId = getEnv("KAFKA_GROUP_ID", "orderbook-adjustment");
         String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
+        String postgresUrl = getEnv("POSTGRES_URL", "jdbc:postgresql://postgres:5432/markets");
+        String postgresUser = getEnv("POSTGRES_USER", "postgres");
+        String postgresPassword = getEnv("POSTGRES_PASSWORD", "postgres");
+        long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // One lookup per stage, same as job 3/4's per-operator ownership of a RefreshingLookup —
+        // each stage polls exchange_markets independently rather than sharing one instance across
+        // operators, which is what job 3 does too.
+        RefreshingLookup<String, AdjustmentFactors> profitFactors = new RefreshingLookup<>(
+                new AdjustmentFactorsLoader(postgresUrl, postgresUser, postgresPassword), refreshIntervalMs);
+        RefreshingLookup<String, AdjustmentFactors> slippageFactors = new RefreshingLookup<>(
+                new AdjustmentFactorsLoader(postgresUrl, postgresUser, postgresPassword), refreshIntervalMs);
 
         KafkaSource<AggregatedOrderBook> source = KafkaSource.<AggregatedOrderBook>builder()
                 .setBootstrapServers(bootstrapServers)
@@ -86,9 +104,9 @@ public class AdjustmentJob {
                 .name("to-adjusted")
                 .map(new BuySellCommissionFunction())
                 .name("buy-sell-commission")
-                .map(new OurProfitFunction())
+                .map(new OurProfitFunction(profitFactors))
                 .name("our-profit")
-                .map(new SlippageFunction())
+                .map(new SlippageFunction(slippageFactors))
                 .name("slippage")
                 .sinkTo(KafkaSink.<AdjustedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)

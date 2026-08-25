@@ -12,12 +12,21 @@ package io.tibobit.adjustment;
  * <p>It carries one field the schema does NOT have — {@link #getBasePrice()}, the price this level
  * arrived with. It exists so every stage can size its amount off the original price rather than the
  * running one, and it is deliberately not published.
+ *
+ * <p>{@code ourProfitPercent}/{@code slippagePercent} live HERE, per level, not on {@code
+ * AdjustedOrderBook} — unlike {@code buySellCommissionPercent}, which stays record-level. A book is
+ * job 6's union across exchanges, and profit/slippage are looked up per {@code (exchange_id,
+ * market_id)} (2026-08-25, user decision), so two levels in the same book can carry different
+ * rates. Default {@code "0"} until the owning stage sets it, mirroring how the record-level rate
+ * fields used to default before step 3 ran.
  */
 public class AdjustedLevel {
 
     private int exchangeId;
     private int simulation;
     private String sourceId = "";
+    private String ourProfitPercent = "0";
+    private String slippagePercent = "0";
     private String price;
     private String basePrice;
     private String quantity;
@@ -47,6 +56,12 @@ public class AdjustedLevel {
 
     public String getSourceId() { return sourceId; }
     public void setSourceId(String sourceId) { this.sourceId = sourceId; }
+
+    public String getOurProfitPercent() { return ourProfitPercent; }
+    public void setOurProfitPercent(String ourProfitPercent) { this.ourProfitPercent = ourProfitPercent; }
+
+    public String getSlippagePercent() { return slippagePercent; }
+    public void setSlippagePercent(String slippagePercent) { this.slippagePercent = slippagePercent; }
 
     public String getPrice() { return price; }
     public void setPrice(String price) { this.price = price; }

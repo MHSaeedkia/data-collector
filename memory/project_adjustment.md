@@ -1,6 +1,6 @@
 ---
 name: adjustment
-description: flink/adjustment/ — standalone Flink project reading job 6's p{id}-{side} and publishing p{id}-{side}-adjusted on its own subject; three price stages (commission 0.35%, profit 0.1%, slippage 1%) each sized off the ORIGINAL price so they ADD to 1.45%, with the rates riding on the event; the asks-up/bids-down sign convention is assumed, not confirmed.
+description: flink/adjustment/ — standalone Flink project reading job 6's p{id}-{side} and publishing p{id}-{side}-adjusted on its own subject; three price stages (commission, profit, slippage) each sized off the ORIGINAL price so they ADD rather than compound; commission is still a flat 0.35% constant, profit/slippage are read from exchange_markets PER LEVEL (2026-08-25, since rates vary per exchange); the asks-up/bids-down sign convention is assumed, not confirmed.
 metadata:
     type: project
 ---
@@ -83,9 +83,10 @@ reintroduces a dependency between stages.
 Expected prices in the tests are literals worked out independently, not recomputed from the rates:
 a test that repeats the implementation's formula agrees with it by construction.
 
-**The rates are constants in each function class** (`static final BigDecimal PERCENT`), which is
-where the DB read replaces them — user's sequencing, 2026-08-24: constants first, database later.
-Each stage writes the rate it used onto the record itself, so the event and the arithmetic cannot
+**Commission's rate is still a constant** (`static final BigDecimal PERCENT` in
+`BuySellCommissionFunction`), unchanged and out of scope of the DB move below. **Profit and
+slippage are no longer constants** — see "Step 4" below. Each stage writes the rate it used onto
+the record (commission) or the level (profit, slippage) so the event and the arithmetic cannot
 disagree; there is no second place holding "what we said we charged".
 
 ### ⚠ The sign convention — the single most important line in this job
@@ -143,25 +144,89 @@ slot: 6 normalizer + merger + adjustment = **8/8**. The next job, or any paralle
 needs the taskmanager reconfigured. [[price-merger]] recorded 7/8 as "the 8th is the last one" —
 this is that one.
 
-## OPEN — moving the rates into the database
+## Step 4 — profit/slippage moved onto the level, read from the DB (2026-08-25, DONE)
 
-The user's stated next step. **No table has a column for any of these today** (`exchange_markets`
-carries rebase/precision/staleness/depth-aggregation; `markets` the four precision columns), so it
-is a schema change plus a `RefreshingLookup`, the way jobs 3 and 4 read rebase factors and
-precisions.
+**Granularity settled by the user 2026-08-25**: both `our_profit_percent` and `slippage_percent` are
+flat percent per `(exchange_id, market_id)` — NOT per-market-only (the user's first framing), because
+slippage genuinely differs by exchange for the same market (their own example: ex1/market1 = 1%,
+ex2/market1 = 2%). Not depth-tiered either — flat percent is confirmed as the real target. See
+[[project_db_schema]] for the columns, defaults, and the "why not a separate table" reasoning.
 
-The unresolved part is **granularity, and it differs per stage**:
+**This forced a schema change that wasn't originally scoped**: `our_profit_percent`/
+`slippage_percent` used to be RECORD-level fields on `adjusted_order_book_event.avsc`, applied
+uniformly to every level via one `Prices.applyPercent(book, PERCENT)` call. That is provably wrong
+once rates vary per exchange, because one book is job 6's UNION across exchanges — `AdjustedLevel`
+already carries its own `exchange_id` per level for exactly this reason. **Both fields moved from
+the record to the nested `AdjustedLevel` record** (confirmed with the user before implementing,
+since it's a breaking Avro change). `buy_sell_commission_percent` stays record-level and a hardcoded
+constant — deliberately untouched, out of scope of this pass (memory already flagged commission as
+plausibly per-exchange too, which is a separate, harder problem not asked for here).
 
-- A commission is charged by the **exchange**, and levels carry `exchange_id` — so it is plausibly
-  per-exchange, which would make it a per-LEVEL rate and the current per-record field a lie the
-  moment two exchanges with different fees appear in one book.
-- **Our profit** is ours, so per-market or global is plausible and a per-record field is fine.
-- **Slippage** is usually a function of DEPTH, so a flat percent may not survive contact with the
-  real requirement at all.
+**Read path**: `AdjustmentFactors` (POJO: `profitPercent`, `slippagePercent`, both `BigDecimal` —
+mirrors `RebaseFactors`) + `AdjustmentFactorsLoader` (mirrors `RebaseFactorsLoader` exactly: one
+query, `SELECT exchange_id, market_id, our_profit_percent, slippage_percent FROM exchange_markets
+WHERE market_id IS NOT NULL`, keyed `{exchange_id}|{market_id}`). `OurProfitFunction`/
+`SlippageFunction` became `RichMapFunction`s each holding their own `RefreshingLookup<String,
+AdjustmentFactors>` — **two independent lookups, one per stage**, each polling exchange_markets on
+its own schedule (`REFRESH_INTERVAL_MS`, default 60s, same env var name as job 3). Deliberately not
+shared: mirrors the one-lookup-per-operator ownership job 3 already has, and Flink ships each
+operator's constructor args as its own serialized closure anyway, so sharing one instance wouldn't
+actually reduce anything at runtime — it would just look shared in the source.
 
-Settle granularity before writing the migration: it decides whether the rate fields stay on the
-record or move onto the level, which is a schema change either way but a much worse one to do
-twice.
+**`Prices` gained `applyPerLevelPercent`** alongside the original `applyPercent` (kept for
+commission): takes a `BiFunction<Integer,Integer,BigDecimal> (pairId, exchangeId) -> percent` and a
+`BiConsumer<AdjustedLevel,String>` rate-writer, so the sign convention and arithmetic still live in
+exactly one place for both the record-level and per-level cases.
+
+**Fallback when exchange_markets has no row for a level's `(exchange, pair)`**: falls back to
+`DEFAULT_PERCENT` — the value that used to be hardcoded (0.1 / 1), a `static final BigDecimal` on
+each function class. This job has no dead-letter side output the way job 3 does for
+`no_rebase_row` (it's a `MapFunction` chain, not a `ProcessFunction`), and silently charging 0%
+would under-charge rather than merely go stale — so falling back to the old constant was judged
+safer than either introducing a new side-output topic (bigger change than asked) or charging
+nothing. Not discussed with the user explicitly; worth confirming if it ever matters in practice
+(should be rare — same "near-guaranteed to exist" argument `RebaseFactorsLoader` makes, since job 1
+already resolved this exchange+pair from the same table upstream of the aggregated book this job
+reads).
+
+**Files touched**: `schemas/adjusted_order_book_event.avsc` + its `_example.json` (breaking change:
+two fields moved record → nested level record), `AdjustedLevel`/`AdjustedOrderBook`/`Prices`/
+`AdjustedOrderBookSerializer`/`AdjustmentJob` (wiring: `POSTGRES_URL`/`POSTGRES_USER`/
+`POSTGRES_PASSWORD`/`REFRESH_INTERVAL_MS` env vars, same names as job 3), plus three NEW files —
+`AdjustmentFactors`, `AdjustmentFactorsLoader`, and a **copied** `RefreshingLookup` (this module is
+self-contained, doesn't depend on normalizer-common — same trade as `AvroSchemaLoader`/`Decimals`;
+keep the two copies in sync by hand if either changes). `pom.xml` gained the postgres driver at
+**default (compile) scope, NOT `provided`** — see the deploy-failure note below; `provided` was
+tried first and is wrong for this specific dependency.
+
+**Tests**: `AdjustmentFunctionsTest` (14→16, two new: `differentExchangesInTheSameBookGetDifferentRates`
+proves the redesign's whole point — one book, two exchanges, two different DB rates, in ONE book —
+and `aMissingRowFallsBackToTheDefaultPercent` pins the fallback) + `AdjustedOrderBookSerdeTest` (5,
+updated for the moved fields + `theModelCoversEveryFieldOfTheSchema`'s new field lists). Every
+existing test that predates the DB read opens its function with an EMPTY lookup map, which
+deliberately triggers the SAME fallback constants the old hardcoded values were — so none of the
+pre-existing numeric literals needed to change. Verified: `mvn -o clean test` — 21/21 green.
+
+⚠ **LIVE DEPLOY FAILED, then fixed, same day (2026-08-25)**: first submission crashed every task
+attempt on startup with `ClassNotFoundException: org.postgresql.Driver` (`NoRestartBackoffTimeStrategy`
+→ job goes straight to FAILED, no retry). Cause: the postgres dependency was declared `provided`,
+copying the scope of the OTHER dependencies in this pom without checking whether it applies to
+postgres too. It doesn't — **`/opt/flink/lib/` on this Flink image does NOT carry the postgres
+driver**, per `flink/normalizer/pom.xml`'s own comment on the identical dependency ("NOT in the
+Flink image lib, so compile scope: it must ship inside each DB-reading job module's shaded jar"),
+and job-rebaser/job-pair-extractor both declare it with no scope (defaults to `compile`) for that
+reason. Fixed by dropping `<scope>provided</scope>` so the driver shades into the jar; confirmed
+`org/postgresql/Driver.class` present in `target/adjustment-1.0-SNAPSHOT.jar` via `unzip -l`
+before redeploying. **Lesson for the next new dependency in this pom: check what
+`flink/normalizer/Dockerfile` actually installs into `/opt/flink/lib/` before marking anything
+`provided` — don't copy a neighboring dependency's scope on assumption.**
+
+⚠ **Deploy order, same trap as every other schema change on this platform**: re-register
+`adjusted-order-book-event` (content changed even though the subject name didn't — `warmup.sh`
+re-reads the `.avsc` file directly, no script edit needed) BEFORE resubmitting `job-adjustment` —
+the serializer caches the write schema on first use. Also needs the server's `exchange_markets`
+`ALTER TABLE` (see [[project_db_schema]]) run before the job starts, or every level falls back to
+`DEFAULT_PERCENT` and the DB read is silently a no-op.
 
 ## OPEN — the lineage question, deliberately not decided
 

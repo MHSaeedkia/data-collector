@@ -2,6 +2,8 @@ package io.tibobit.adjustment;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 
 /**
  * The one place a percentage is turned into a price move, shared by all three adjustment stages so
@@ -62,6 +64,35 @@ final class Prices {
             BigDecimal amount = new BigDecimal(level.getBasePrice()).multiply(fraction);
             BigDecimal adjusted = applySigned(book.getSide(), new BigDecimal(level.getPrice()), amount);
             level.setPrice(Decimals.canonicalize(adjusted));
+        }
+    }
+
+    /**
+     * The per-LEVEL counterpart to {@link #applyPercent}, for a rate that is looked up by
+     * {@code (exchange_id, market_id)} rather than shared by the whole record — our_profit_percent
+     * and slippage_percent, since 2026-08-25. A book is job 6's union across exchanges, so two
+     * levels in the same book can get two different rates.
+     *
+     * <p>{@code rateForExchangeAndPair} takes {@code (pairId, exchangeId)} and returns the percent
+     * to apply to that one level — the caller decides what a missing lookup row means (a fallback,
+     * in both current callers). {@code rateSetter} writes the percent this level actually got back
+     * onto the level, exactly like {@link #applyPercent} does at record scope, so the published
+     * event always says what was charged.
+     */
+    static void applyPerLevelPercent(AdjustedOrderBook book,
+            BiFunction<Integer, Integer, BigDecimal> rateForExchangeAndPair,
+            BiConsumer<AdjustedLevel, String> rateSetter) {
+        List<AdjustedLevel> levels = book.getLevels();
+        if (levels == null || levels.isEmpty()) {
+            return;
+        }
+        for (AdjustedLevel level : levels) {
+            BigDecimal percent = rateForExchangeAndPair.apply(book.getPairId(), level.getExchangeId());
+            BigDecimal fraction = percent.movePointLeft(2);
+            BigDecimal amount = new BigDecimal(level.getBasePrice()).multiply(fraction);
+            BigDecimal adjusted = applySigned(book.getSide(), new BigDecimal(level.getPrice()), amount);
+            level.setPrice(Decimals.canonicalize(adjusted));
+            rateSetter.accept(level, percent.toPlainString());
         }
     }
 }

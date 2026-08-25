@@ -8,10 +8,14 @@ import java.util.List;
  * {@code p{pair_id}-{side}-adjusted}. Mirrors schemas/adjusted_order_book_event.avsc field for
  * field.
  *
- * <p>It carries the three rates as well as the adjusted prices, because seeing what was DONE to a
- * price is the point of publishing it: a bare adjusted number is unauditable. Each stage fills in
- * its own rate as it applies it, so the record and the arithmetic can never disagree — there is no
- * second place holding "what we said we charged".
+ * <p>It carries the commission rate as well as the adjusted prices, because seeing what was DONE to
+ * a price is the point of publishing it: a bare adjusted number is unauditable. The commission
+ * stage fills in its rate as it applies it, so the record and the arithmetic can never disagree —
+ * there is no second place holding "what we said we charged".
+ *
+ * <p><b>Profit and slippage rates are NOT here</b> — they live on {@link AdjustedLevel} instead,
+ * because they are looked up per {@code (exchange_id, market_id)} and one book unions levels from
+ * multiple exchanges. Only commission is still one rate for the whole record.
  *
  * <p>Rates are percent strings ({@code "0.35"} = 0.35%), not doubles, for the same reason prices
  * are strings: they feed exact BigDecimal arithmetic (memory/project_bigdecimal_rules.md).
@@ -23,8 +27,6 @@ public class AdjustedOrderBook {
     private String id = "";
     private long eventTime;
     private String buySellCommissionPercent = "0";
-    private String ourProfitPercent = "0";
-    private String slippagePercent = "0";
     private List<AdjustedLevel> levels;
 
     public AdjustedOrderBook() {
@@ -78,19 +80,11 @@ public class AdjustedOrderBook {
     public String getBuySellCommissionPercent() { return buySellCommissionPercent; }
     public void setBuySellCommissionPercent(String v) { this.buySellCommissionPercent = v; }
 
-    public String getOurProfitPercent() { return ourProfitPercent; }
-    public void setOurProfitPercent(String v) { this.ourProfitPercent = v; }
-
-    public String getSlippagePercent() { return slippagePercent; }
-    public void setSlippagePercent(String v) { this.slippagePercent = v; }
-
     public List<AdjustedLevel> getLevels() { return levels; }
     public void setLevels(List<AdjustedLevel> levels) { this.levels = levels; }
 
     @Override
     public String toString() {
-        return "p" + pairId + " " + side
-                + " (commission " + buySellCommissionPercent + "%, profit " + ourProfitPercent
-                + "%, slippage " + slippagePercent + "%) " + levels;
+        return "p" + pairId + " " + side + " (commission " + buySellCommissionPercent + "%) " + levels;
     }
 }

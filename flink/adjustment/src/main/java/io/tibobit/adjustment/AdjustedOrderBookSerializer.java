@@ -58,6 +58,8 @@ public class AdjustedOrderBookSerializer implements SerializationSchema<Adjusted
                     .set("exchange_id", level.getExchangeId())
                     .set("simulation", level.getSimulation())
                     .set("source_id", level.getSourceId())
+                    .set("our_profit_percent", level.getOurProfitPercent())
+                    .set("slippage_percent", level.getSlippagePercent())
                     .set("price", level.getPrice())
                     .set("quantity", level.getQuantity())
                     .build());
@@ -71,8 +73,6 @@ public class AdjustedOrderBookSerializer implements SerializationSchema<Adjusted
                 .set("id", book.getId())
                 .set("event_time", book.getEventTime())
                 .set("buy_sell_commission_percent", book.getBuySellCommissionPercent())
-                .set("our_profit_percent", book.getOurProfitPercent())
-                .set("slippage_percent", book.getSlippagePercent())
                 .set("levels", levels)
                 .build();
     }

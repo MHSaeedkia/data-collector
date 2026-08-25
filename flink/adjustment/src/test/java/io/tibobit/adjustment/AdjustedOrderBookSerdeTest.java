@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -50,10 +51,14 @@ class AdjustedOrderBookSerdeTest {
                 .build();
     }
 
-    private static AdjustedOrderBook throughTheChain() {
+    private static AdjustedOrderBook throughTheChain() throws Exception {
         AdjustedOrderBook book = AdjustedOrderBook.from(
                 AggregatedOrderBookDeserializer.fromGenericRecord(aggregatedRecord()));
-        return new SlippageFunction().map(new OurProfitFunction().map(new BuySellCommissionFunction().map(book)));
+        OurProfitFunction profit = new OurProfitFunction(new RefreshingLookup<>(Map::of, 60_000L));
+        profit.open(null);
+        SlippageFunction slippage = new SlippageFunction(new RefreshingLookup<>(Map::of, 60_000L));
+        slippage.open(null);
+        return slippage.map(profit.map(new BuySellCommissionFunction().map(book)));
     }
 
     @Test
@@ -70,7 +75,7 @@ class AdjustedOrderBookSerdeTest {
     }
 
     @Test
-    void theAdjustedRecordCarriesTheRatesAndTheAdjustedPrice() {
+    void theAdjustedRecordCarriesTheRatesAndTheAdjustedPrice() throws Exception {
         GenericRecord out = AdjustedOrderBookSerializer.toGenericRecord(throughTheChain(), ADJUSTED);
 
         assertThat(GenericData.get().validate(ADJUSTED, out)).isTrue();
@@ -80,9 +85,8 @@ class AdjustedOrderBookSerdeTest {
         assertThat(out.get("event_time")).isEqualTo(1750680000000L);
 
         // The whole point of step 3: the event says what was charged, not just the result.
+        // Commission stays record-level; profit/slippage moved onto the level (2026-08-25).
         assertThat(out.get("buy_sell_commission_percent")).hasToString("0.35");
-        assertThat(out.get("our_profit_percent")).hasToString("0.1");
-        assertThat(out.get("slippage_percent")).hasToString("1");
 
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) out.get("levels");
@@ -93,11 +97,13 @@ class AdjustedOrderBookSerdeTest {
         assertThat(levels.get(0).get("exchange_id")).isEqualTo(6);
         assertThat(levels.get(0).get("simulation")).isEqualTo(1);
         assertThat(levels.get(0).get("source_id")).hasToString("snapshot-A");
+        assertThat(levels.get(0).get("our_profit_percent")).hasToString("0.1");
+        assertThat(levels.get(0).get("slippage_percent")).hasToString("1");
     }
 
     /** {@code side} is an Avro ENUM; a plain String there NPEs in the encoder at first emit. */
     @Test
-    void sideIsWrittenAsAnEnumSymbolNotAString() {
+    void sideIsWrittenAsAnEnumSymbolNotAString() throws Exception {
         GenericRecord out = AdjustedOrderBookSerializer.toGenericRecord(throughTheChain(), ADJUSTED);
         assertThat(out.get("side")).isInstanceOf(GenericData.EnumSymbol.class);
     }
@@ -120,11 +126,11 @@ class AdjustedOrderBookSerdeTest {
 
         assertThat(read.get("pair_id")).isEqualTo(3);
         assertThat(read.get("buy_sell_commission_percent")).hasToString("0.35");
-        assertThat(read.get("slippage_percent")).hasToString("1");
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) read.get("levels");
         assertThat(levels.get(0).get("price")).hasToString("63558.425");
         assertThat(levels.get(0).get("source_id")).hasToString("snapshot-A");
+        assertThat(levels.get(0).get("slippage_percent")).hasToString("1");
     }
 
     /**
@@ -136,9 +142,10 @@ class AdjustedOrderBookSerdeTest {
     void theModelCoversEveryFieldOfTheSchema() {
         assertThat(ADJUSTED.getFields().stream().map(Schema.Field::name))
                 .containsExactly("pair_id", "side", "id", "event_time",
-                        "buy_sell_commission_percent", "our_profit_percent", "slippage_percent", "levels");
+                        "buy_sell_commission_percent", "levels");
         assertThat(ADJUSTED.getField("levels").schema().getElementType()
                 .getFields().stream().map(Schema.Field::name))
-                .containsExactly("exchange_id", "simulation", "source_id", "price", "quantity");
+                .containsExactly("exchange_id", "simulation", "source_id",
+                        "our_profit_percent", "slippage_percent", "price", "quantity");
     }
 }

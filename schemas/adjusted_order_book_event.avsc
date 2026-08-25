@@ -33,19 +33,7 @@
 			"name": "buy_sell_commission_percent",
 			"type": "string",
 			"default": "0",
-			"doc": "The buy/sell commission applied, as a PERCENT (e.g. \"0.35\" means 0.35%, a multiplier of 1.0035 on asks and 0.9965 on bids). A string for the same reason price and quantity are: it feeds exact BigDecimal arithmetic, and a float rate would reintroduce the error the whole pipeline avoids."
-		},
-		{
-			"name": "our_profit_percent",
-			"type": "string",
-			"default": "0",
-			"doc": "Our own margin, as a PERCENT. Sized off the original price like every other stage, so it is independent of the commission rather than applied on top of it."
-		},
-		{
-			"name": "slippage_percent",
-			"type": "string",
-			"default": "0",
-			"doc": "The slippage allowance, as a PERCENT. Every stage sizes its amount off the price the level ARRIVED with, never off the running price, so the three rates ADD rather than compound: 0.35 + 0.1 + 1 moves an ask by exactly 1.45% of the original. A consumer can therefore recover the original price as adjusted / 1.0145 on asks, or / 0.9855 on bids."
+			"doc": "The buy/sell commission applied, as a PERCENT (e.g. \"0.35\" means 0.35%, a multiplier of 1.0035 on asks and 0.9965 on bids). A string for the same reason price and quantity are: it feeds exact BigDecimal arithmetic, and a float rate would reintroduce the error the whole pipeline avoids. Still ONE rate for the whole record (unlike our_profit_percent/slippage_percent below) — commission is plausibly per-exchange too, but that move hasn't been made yet."
 		},
 		{
 			"name": "levels",
@@ -70,6 +58,18 @@
 							"type": "string",
 							"default": "",
 							"doc": "id of the job-5 snapshot this level came from, carried through unchanged from the aggregated level."
+						},
+						{
+							"name": "our_profit_percent",
+							"type": "string",
+							"default": "0",
+							"doc": "Our own margin applied to THIS level, as a PERCENT. Looked up per (exchange_id, pair_id) from exchange_markets — not a record-level rate, because one book unions levels from multiple exchanges and the margin can differ per exchange for the same market. A string for exact BigDecimal arithmetic, like price and quantity."
+						},
+						{
+							"name": "slippage_percent",
+							"type": "string",
+							"default": "0",
+							"doc": "The slippage allowance applied to THIS level, as a PERCENT. Same per-(exchange_id, pair_id) lookup as our_profit_percent, for the same reason: it can vary by exchange even for the same market."
 						},
 						{
 							"name": "price",

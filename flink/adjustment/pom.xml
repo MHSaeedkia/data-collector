@@ -25,6 +25,7 @@
         <flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
         <avro.version>1.11.4</avro.version>
         <confluent.schema.registry.client.version>7.5.3</confluent.schema.registry.client.version>
+        <postgresql.version>42.7.3</postgresql.version>
         <junit.version>5.10.2</junit.version>
         <assertj.version>3.25.3</assertj.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
@@ -40,14 +41,23 @@
     </repositories>
 
     <dependencies>
-        <!-- Everything below is `provided`: the job runs on the same Flink image as the normalizer
-             (flink/normalizer/Dockerfile), which already carries these in /opt/flink/lib/. Nothing
-             here needs to ship inside the shaded jar — this job never touches postgres. -->
+        <!-- Everything below except postgresql is `provided`: the job runs on the same Flink
+             image as the normalizer (flink/normalizer/Dockerfile), which already carries these
+             in /opt/flink/lib/, so they don't need to ship inside the shaded jar. -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-streaming-java</artifactId>
             <version>${flink.version}</version>
             <scope>provided</scope>
+        </dependency>
+        <!-- Postgres JDBC driver — NOT in the Flink image lib (see normalizer/pom.xml's own
+             comment on this). Default scope (compile), so it ships inside THIS job's shaded
+             jar. `provided` here was tried first and failed live: ClassNotFoundException on
+             org.postgresql.Driver at job startup (2026-08-25). -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
