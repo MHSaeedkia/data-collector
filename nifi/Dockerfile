@@ -1,4 +1,4 @@
-FROM apache/nifi:2.9.0
+FROM apache/nifi:2.11.0
 
 # PostgreSQL JDBC driver — required by DBCPConnectionPool controller service
 # Set "Database Driver Location(s)" to: /opt/nifi/nifi-current/drivers/postgresql-42.7.11.jar

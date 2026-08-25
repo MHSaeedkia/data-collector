@@ -57,8 +57,14 @@ echo "    Uploaded: ${JAR_ID}"
 # 3. Submit job
 echo "==> Submitting job..."
 SINCE=$(date +%s)
-SUBMIT_RESP=$(curl -s -X POST "${FLINK_API}/jars/${JAR_ID}/run")
+
+PARALLELISM="${PARALLELISM:-1}"
+
+SUBMIT_RESP=$(curl -s -X POST \
+  "${FLINK_API}/jars/${JAR_ID}/run?parallelism=${PARALLELISM}")
+
 JOB_ID=$(echo "$SUBMIT_RESP" | jq -r '.jobid')
+
 if [[ -z "$JOB_ID" || "$JOB_ID" == "null" ]]; then
     echo "ERROR: Job submission failed:"
     echo "$SUBMIT_RESP" | jq . 2>/dev/null || echo "$SUBMIT_RESP"
