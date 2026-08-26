@@ -16,16 +16,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Tests the ONE rule every parser shares: NiFi injects {@code simulation} at the raw payload ROOT
  * (0 = live, 1 = simulation, other values undefined) and job 1 lifts it onto the event. It lives in
- * its own class rather than being repeated across the seven parser tests because the rule is not
+ * its own class rather than being repeated across the eight parser tests because the rule is not
  * per-exchange wire format — it is the same field in the same place for all of them.
  *
- * <p>There are two carriers, because there are two payload shapes. The six object-root exchanges get
- * the flag as a root FIELD. ex3/wallex's root is an array, so NiFi appends a trailing
+ * <p>There are two carriers, because there are two payload shapes. The eight object-root exchanges
+ * get the flag as a root FIELD. ex3/wallex's root is an array, so NiFi appends a trailing
  * {@code {"simulation": N}} element instead. Same field, same meaning, different place.
  *
  * <p>Each case takes a captured fixture (sample-raw-data.md), attaches the flag the way NiFi would,
  * and checks it comes out on every event the parser emits — "every" matters for ex5/ex8, whose
  * {@code data} array can produce more than one event from a single payload.
+ *
+ * <p>ex7/ompfinex is the one exchange in the map with no case here, because it still has no
+ * captured fixture to attach the flag to.
  */
 class SimulationFlagTest {
 
@@ -74,6 +77,7 @@ class SimulationFlagTest {
             "6, ex6-rest-snapshot.json",
             "8, ex8-snapshot.json",
             "8, ex8-update.json",
+            "9, ex9-snapshot.json",
     })
     void flagReachesEveryEvent(int exchangeId, String fixture) throws Exception {
         List<ParsedBookEvent> parsed = parse(parserFor(exchangeId), withSimulation(fixture, 1));
@@ -93,6 +97,7 @@ class SimulationFlagTest {
             "6, ex6-snapshot.json",
             "6, ex6-rest-snapshot.json",
             "8, ex8-update.json",
+            "9, ex9-snapshot.json",
     })
     void missingFlagIsZero(int exchangeId, String fixture) throws Exception {
         List<ParsedBookEvent> parsed = parse(parserFor(exchangeId), Fixtures.bytes(fixture));
