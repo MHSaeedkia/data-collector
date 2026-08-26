@@ -671,3 +671,86 @@ undeclared-`WantControlCommands` scenarios really asking for nothing. It does **
 open production risk, because every source hand-builds `U == prev seq`: whether a REST snapshot
 fetched mid-stream is contiguous with the next live delta. It also does not exercise the
 micros÷1000 conversion (all six set `IgnoreEventTime`). See [[project_pair_extractor]] § ex7.
+
+## 2026-08-26 — ex9/lbank scenarios 55–59
+
+`data_ex9.go`, five scenarios, appended to the TAIL of `scenarios.go` per the rule scenario 48
+set and ex7 re-established: `55-ex9-snapshot-stream`, `56-ex9-stale-snapshot-replay`,
+`57-ex9-duplicate-timestamp`, `58-ex9-noise-frames`, `59-ex9-precision-dust`. All on ex9/pair 1
+(lbank market `btc_usdt`, rebase 0/0, precision 2/8). Diff is purely additive — 11 lines in
+`scenarios.go`, no existing entry touched.
+
+**The block is shaped by what ex9 CANNOT do, and that is the point.** ex9 is snapshot-only with a
+null sequence, so there is no `sequence_gap` case, no `no_baseline` case, and no
+`update-before-snapshot` case to write — those all live in job 2's update branch a null-seq feed
+never enters. It also means **every ex9 scenario asserts an EMPTY control stream**, which is the
+real assertion in four of the five: ex9 must never ask NiFi for a snapshot. The one reject reason
+reachable is `out_of_order`, and `56` is the only scenario that expects a dead letter.
+
+**No scenario sets `IgnoreEventTime`, deliberately** — and that is what makes this block worth
+more than ex7's. ex9 is the only exchange whose wire timestamp is an ISO-8601 local date-time with
+no zone marker, read as UTC, and the three frames of `55` are spaced so each snapshot lands on a
+DIFFERENT RFC3339 second (`08:00:00Z`, `08:00:01Z`, `08:00:03Z`). A timezone or parse error in
+`LBankParser` therefore fails the suite instead of hiding behind a blanked field — the exact hole
+[[project_pair_extractor]] records against ex7's micros÷1000 conversion.
+
+**What each scenario is for:**
+
+- `55` — the defining property of a snapshot feed: each frame REPLACES the book, so a level
+  present in one frame and absent from the next is deleted with no qty-`"0"` marker anywhere.
+  Also the end-to-end UTC assertion above.
+- `56` — the whole justification for having no sequence id. A replayed older book is caught by
+  event time alone (`out_of_order`), the newer book survives, and frame 04 proves the rejection
+  did not wedge the key. ex1's REST-replay guard, reached by an exchange that has nothing but
+  null-seq frames.
+- `57` — pins the deliberate edge (user decision 2026-08-26): the guard is `<`, so frames sharing
+  a `TS` are ALL accepted and the book follows the last one in. `03` walks the book back to `01`'s
+  levels with no rejection anywhere. Tightening the guard to `<=` breaks this test — which is the
+  point, because that guard is shared with ex3 and the ex1/ex2 REST snapshots.
+- `58` — the drop surface: ping, subscribe ack, `incrDepth` (a book whose levels hang off a
+  different key), a HALF book (dropped whole, never emitted with one side null), a book with no
+  `TS`, an unknown market, **the right market in the wrong case (`BTC_USDT`)**, and JSON-number
+  levels. None dead-lettered, none touching the book.
+- `59` — job 4's 2/8 truncation on an lbank feed, including the truncate-price → group → sum RAW
+  quantities → truncate-sum order (two 0.000000006 asks survive as 0.00000001; a lone 0.000000009
+  does not). Frame 02 shows a dust level simply ABSENT from the next snapshot rather than arriving
+  as a delete.
+
+### VERIFIED LIVE 2026-08-26 — all five ex9 scenarios PASS
+
+`55` 39s, `56` 29s, `57` 37s, `58` 37s, `59` 39s — **5 run, 5 passed, 0 failed**, against the local
+docker stack on `feat/add-lbank`, first attempt, no retries.
+
+**Run WITHOUT `stack.Provision`** (`-provision-stack=false`), deliberately: it does
+`docker compose down -v` and the stack held 17 h of live NiFi state. **Unlike the ex7 first run
+this did NOT hit the trimmed-seed trap** — the trimmed seed WAS the ex9 slice. Checked read-only
+before starting, and this is the check to repeat before ever skipping `Provision` again: postgres
+held exactly one exchange (`9 lbank`) and one `exchange_markets` row (`9|btc_usdt → 1`, rebase
+0/0), `markets.id 1` was precision 2/8, the full `ex9-p1-*` topic set existed, `ex9-raw` held 2
+records, and no Flink jobs were running. Cost of the run: those 2 records.
+
+**`main.go` runs the whole `Scenarios` list with no filter**, and the other 54 scenarios would all
+have failed on `dropped-unknown-market` against that one-exchange DB. Worked around with a
+throwaway `package main` inside the module (`e2e/tmp_ex9_runner/`, filtering on
+`strings.Contains(sc.Name, "-ex9-")`, deleted after the run) rather than by editing `main.go` or
+`scenarios.go`. **A `-only` / `-filter` flag on `main.go` is the obvious missing feature** — every
+single-exchange run since ex5 has needed some variant of this.
+
+**What the green run establishes end to end**, none of it previously observed: the zone-less
+ISO-8601 `TS` → UTC epoch conversion through all six jobs (55's three snapshots land on three
+DIFFERENT RFC3339 seconds — no scenario blanks event time, so a timezone or parse error fails the
+suite rather than hiding); snapshot-replaces-book semantics with no qty-`"0"` delete anywhere;
+job 2's null-seq `out_of_order` guard firing on a replayed older book AND the key surviving it
+(56 frame 04); equal-`TS` frames being ACCEPTED and walking the book backwards (57); all eight
+drop paths in 58 including the wrong-case `BTC_USDT`; job 4's truncate-price → group → sum-raw →
+truncate-sum order on an lbank feed (59); and — in all five — that ex9 asks the control plane for
+**nothing**.
+
+**Not yet done**: a live mutation check, the way scenario 31 got one. Shifting one `TS` should
+make `56` fail; until that is run, the suite is proven to pass but not proven to bite.
+
+**⚠ Local `mvn` needs `-Djacoco.skip=true` on this machine** when running tests by hand: the only
+JDK installed is 26, jacoco 0.8.12 cannot instrument class-file major version 70, and every
+surefire fork dies. **The harness itself is unaffected** — `flink.build` runs
+`mvn clean package -q -DskipTests`, so jacoco never instruments anything. This is a LOCAL
+toolchain problem, not a repo one — do not "fix" it by editing the pom.
