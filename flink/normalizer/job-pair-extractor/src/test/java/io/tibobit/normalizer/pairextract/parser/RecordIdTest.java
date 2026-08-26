@@ -17,8 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Tests the second rule every parser shares: NiFi injects {@code id} on the raw payload — the
  * uuid it minted when it wrote that payload — and job 1 lifts it onto the event as its
  * {@code source_ids}. Same shape of rule as {@link SimulationFlagTest}, same two carriers (root
- * field for the six object-root exchanges, the trailing metadata object for ex3/wallex), so it lives
- * in its own class for the same reason: it is not per-exchange wire format.
+ * field for the eight object-root exchanges, the trailing metadata object for ex3/wallex), so it
+ * lives in its own class for the same reason: it is not per-exchange wire format.
  *
  * <p>The one thing that differs from the simulation flag is what ABSENCE means. A missing
  * {@code simulation} is benign and reads as 0 (live). A missing {@code id} is not benign — it
@@ -64,6 +64,7 @@ class RecordIdTest {
             "6, ex6-rest-snapshot.json",
             "8, ex8-snapshot.json",
             "8, ex8-update.json",
+            "9, ex9-snapshot.json",
     })
     void idReachesEveryEvent(int exchangeId, String fixture) throws Exception {
         List<ParsedBookEvent> parsed =
@@ -90,6 +91,7 @@ class RecordIdTest {
             "6, ex6-snapshot.json",
             "6, ex6-rest-snapshot.json",
             "8, ex8-update.json",
+            "9, ex9-snapshot.json",
     })
     void missingIdLeavesNoSource(int exchangeId, String fixture) throws Exception {
         List<ParsedBookEvent> parsed = parse(parserFor(exchangeId), Fixtures.bytes(fixture));
@@ -126,7 +128,7 @@ class RecordIdTest {
     /**
      * ex3's pre-change 2-element frame still parses, but now yields no source — so in practice it
      * gets dropped downstream. Kept as an explicit test because it is the one case where ex3 behaves
-     * differently from the six object-root exchanges' "absent field" path.
+     * differently from the eight object-root exchanges' "absent field" path.
      */
     @ParameterizedTest
     @CsvSource({"ex3-buy-depth.json", "ex3-sell-depth.json"})

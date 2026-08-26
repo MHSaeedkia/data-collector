@@ -25,6 +25,7 @@
 | `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture); **+ a REST snapshot stream captured 2026-08-24** (`result` object, `a`/`b`, string levels, injected `action`/`pair`) — **null-seq**: `result.u` is on a DIFFERENT counter from the WS `data.u` |
 | `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
 | `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
+| `ex9-raw` | lbank    | ✅ captured 2026-08-25 (snapshot only — every frame is a full book; **no sequence field anywhere on the wire**, so null-seq/jump 0, ordered by `TS` alone) |
 
 ---
 
@@ -45,7 +46,7 @@ missing `simulation` is by contrast benign and simply reads as `0`.
 
 Both ride in the same place, which depends only on the shape of the payload root:
 
-- **ex1, ex2, ex4, ex5, ex6, ex8 — object root** ⇒ injected as **root fields**, alongside whatever
+- **ex1, ex2, ex4, ex5, ex6, ex7, ex8, ex9 — object root** ⇒ injected as **root fields**, alongside whatever
   the exchange already sends. For the Centrifugo payloads (ex1/ex2 WS, ex4) that means the OUTER
   object, next to `push` — not inside `data`.
 - **ex3/wallex — array root** ⇒ there is no root field to inject into, so both go in a **trailing
@@ -847,3 +848,93 @@ Parsing notes (job 1):
   timestamp (`ts`, jump 300).
 - The inner `ts` is the ONLY timestamp on the message (string epoch-millis) — it is both
   the event time and the sequence id.
+
+## ex9-raw — lbank
+
+**Captured 2026-08-25** (four consecutive WebSocket frames, supplied by the user). `LBankParser`
+landed on `feat/add-lbank` (commit `977e770`) and the rest of the pipeline followed on 2026-08-26.
+
+**Regime: SNAPSHOT ONLY.** Every frame carries the whole book under `depth`. There is no delta
+channel, no `action`/`type`-style regime discriminator to read, and nothing for job 2 to make
+contiguous — an accepted frame replaces the book outright. This makes ex9 the **second
+snapshot-only exchange** after ex3/wallex, and unlike ex3 it sends BOTH sides in every frame, so
+no side is ever null.
+
+**⚠ There is no sequence field anywhere on the wire.** Not a counter, not an update id, not a
+`lastUpdateId`. **User decision 2026-08-26: `sequence_id` is NULL and `sequence_jump` is 0** —
+`TS` is deliberately NOT re-used as a sequence the way ex5's and ex8's `ts` are, because a
+timestamp-as-sequence imposes a publish cadence the exchange never promised (ex5 needed a
+`650 ± 110` window for exactly that reason, and got a resync loop out of it). A null sequence
+puts ex9 on job 2's **event-time branch**, where the whole test is "not older than the last
+accepted frame" — which is all a full-snapshot feed needs.
+
+Verbatim frame (levels trimmed from **50 per side** to 3; the four captured frames all carried
+exactly 50 and 50):
+
+```json
+{
+  "id": "e2b1c9f4-7a35-4d68-91c0-5f3ba8e47d21",
+  "simulation": 1,
+  "depth": {
+    "asks": [
+      ["79654.45", "1.04718"],
+      ["79654.46", "0.00083"],
+      ["79654.47", "0.00016"]
+    ],
+    "bids": [
+      ["79654.44", "2.89166"],
+      ["79654.43", "0.00083"],
+      ["79654.42", "0.00016"]
+    ]
+  },
+  "SERVER": "V3",
+  "count": 200,
+  "limit": 50,
+  "type": "fdepth",
+  "pair": "btc_usdt",
+  "TS": "2026-08-25T17:46:51.723"
+}
+```
+
+- **Market key**: the top-level `pair` — **lowercase with an underscore** (`btc_usdt`), the only
+  exchange in the set that spells it that way (ex1/ex2/ex5/ex6 send `BTCUSDT`, ex8 `BTC-USDT`,
+  ex4/ex7 a numeric string). It matches `exchange_markets.market` verbatim, and **nothing in job 1
+  normalizes case** — the lookup key is `"{exchange_id}|{market}"`, so a case change on either
+  side drops 100% of ex9 silently.
+- **`TS` is the event time and the ONLY ordering field.** ISO-8601 local date-time with
+  **millisecond precision and NO zone marker** — the only exchange in the set whose timestamp is
+  not epoch millis. **User-confirmed 2026-08-26: it is UTC**, and the parser reads it with
+  `ZoneOffset.UTC`. If that is ever revised, `LBankParser`'s one `ZoneOffset` is the whole change;
+  an 8-hour error would be invisible in the levels and would only surface as a staleness alarm.
+- **Sides are `asks` / `bids`** under `depth`, `[price, qty]` **string** pairs ✅ (no JSON-number
+  hazard). Asks price-ASCENDING, bids price-DESCENDING — best-first on both sides, the ex1/ex6
+  convention, not ramzinex's both-descending.
+- **Both side keys are always present** in all four captures. The parser **requires both** and
+  drops the whole frame if either is missing — the ex7 rule, not ex6/ex8's null side. That is
+  safe here precisely because the feed is snapshot-only: a half-frame would silently wipe a side.
+- **No qty-`"0"` deletes**, and there cannot be: a snapshot IS the book, so a level that
+  disappeared is simply absent from the next frame.
+- **`type` is `"fdepth"`** — futures depth — in all four captures. **The parser does NOT whitelist
+  it** (user decision 2026-08-26): frames are selected by SHAPE (`pair` + textual `TS` +
+  `depth.asks` + `depth.bids` as arrays), because lbank's other channels (pings, subscribe acks,
+  ticks, and the incremental `incrDepth` book, whose levels hang off a differently-named key) all
+  fail that check already. If the spot `depth` channel is ever subscribed, it parses with no
+  change. ⚠ The corollary: a future lbank channel that happens to carry `pair`, `TS` and a
+  `depth` object WOULD be misread as a book.
+- **`SERVER` / `count` / `limit` are ignored.** `limit` (50) matches the level count; `count`
+  (200) does not match anything in the frame and its meaning is unverified.
+
+**⚠ The captures arrived NEWEST-FIRST** (`51.723`, `51.221`, `50.723`, `50.216`), which is an
+artifact of how they were pasted, not evidence about wire order. Nothing in the set proves lbank
+never re-sends an older book — that is exactly what job 2's `out_of_order` guard is there for.
+
+**⚠ Equal timestamps are ACCEPTED, not rejected** (user decision 2026-08-26). Job 2's null-seq
+guard is `event_time < lastEventTime`, strictly older — so two frames sharing a `TS` both pass
+and the book is simply re-emitted unchanged. On a feed that publishes every ~500 ms this is a
+duplicate snapshot, which is harmless; it is written down here because it is a decision, not an
+oversight.
+
+Fixture: `flink/normalizer/job-pair-extractor/src/test/resources/fixtures/ex9-snapshot.json`
+(this frame, without the NiFi fields — those are injected by the shared tests). Hand-built
+payloads in this shape live in `e2e/scenario/data_ex9.go`; they are fixtures for the pipeline's
+arithmetic, **not captures**.

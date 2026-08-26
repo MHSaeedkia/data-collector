@@ -26,11 +26,19 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * order by, so out-of-order is detected by <b>event time</b> instead — a
  * null-seq snapshot older than the last accepted event is rejected
  * {@code out_of_order} (an old ex1 REST snapshot replayed after newer WS deltas
- * must not overwrite the newer book). Two exchanges land here: ex3 wallex
- * (never sends updates) and the ex1 nobitex REST snapshot (a resync whose
- * Centrifugo offset is unknown). An accepted one sets {@code baselinePending}
- * so that the next update on the key adopts its offset as a fresh baseline (see
- * [[pair-extractor]]); for ex3 that flag is never consumed.</li>
+ * must not overwrite the newer book). Three exchanges land here: ex3 wallex
+ * (never sends updates), ex9 lbank (a full-snapshot feed with no counter on the
+ * wire at all — added 2026-08-26, and like ex3 it never sends updates), and the
+ * ex1 nobitex REST snapshot (a resync whose Centrifugo offset is unknown). An
+ * accepted one sets {@code baselinePending} so that the next update on the key
+ * adopts its offset as a fresh baseline (see [[pair-extractor]]); for ex3 and
+ * ex9 that flag is never consumed.
+ *
+ * <p>Note the comparison is {@code <}, not {@code <=}: a frame whose event time
+ * EQUALS the last accepted one is accepted and re-emitted (user decision
+ * 2026-08-26). Only a strictly older frame is out of order. That matters most
+ * for ex9, whose duplicate-timestamp frames are therefore a re-emitted book
+ * rather than a dead letter.</li>
  * <li><b>Snapshot</b> ({@code type == "snapshot"}): a fresh baseline, but
  * out-of-order/duplicate dropped — reject {@code stale_or_duplicate} if
  * {@code sequence_id <= lastSeq}. Otherwise it re-syncs the book: store

@@ -92,4 +92,15 @@ var Scenarios = []struct {
 	{"52-ex7-no-baseline", Ex7NoBaseline},
 	{"53-ex7-noise-frames", Ex7NoiseFrames},
 	{"54-ex7-one-sided-update", Ex7OneSidedUpdate},
+
+	// LBank (added 2026-08-26). Appended for the same reason 48 and 49 were. ex9 is the
+	// second SNAPSHOT-ONLY exchange after ex3/wallex and the first with a real wire clock
+	// but no sequence field at all, so its cases are about the event-time ordering guard
+	// rather than about contiguity: there is no gap case and no no-baseline case to write,
+	// and every one of these asserts an EMPTY control stream. See data_ex9.go.
+	{"55-ex9-snapshot-stream", Ex9SnapshotStream},
+	{"56-ex9-stale-snapshot-replay", Ex9StaleSnapshotReplay},
+	{"57-ex9-duplicate-timestamp", Ex9DuplicateTimestamp},
+	{"58-ex9-noise-frames", Ex9NoiseFrames},
+	{"59-ex9-precision-dust", Ex9PrecisionDust},
 }
