@@ -214,6 +214,13 @@ of but the TaskManager was still sitting on.
 taskmanager to reconnect (`curl localhost:7070/taskmanagers` shows `freeSlots: 8`), then re-run
 `make run-all-jobs`. Order matters — taskmanager-only was NOT sufficient in this instance.
 
+> **STALE as of 2026-08-29** — [[flink-production-hardening]]'s M2b replaced the single `taskmanager`
+> container with `taskmanager-1..4` at 3 slots each, so `docker compose restart taskmanager` now
+> names a container that does not exist and `freeSlots` should be **12**, not 8. The sequence becomes
+> `docker compose restart taskmanager-1 taskmanager-2 taskmanager-3 taskmanager-4 && docker compose
+> restart jobmanager`. Whether the leak still reproduces the same way across four TaskManagers is
+> **untested** — the root cause was JobManager-side slot bookkeeping, so it probably does.
+
 This is the same class of issue the e2e harness already flagged in [[project_e2e_harness]] ("the
 cancel→delete→create→submit teardown has a race under sustained load or the JobManager leaks
 across ~20 submit cycles") — here it surfaced after 3 back-to-back `make run-all-jobs` attempts

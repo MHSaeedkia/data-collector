@@ -33,26 +33,42 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
 
 ### Apply in this order, one at a time
 
-- [ ] **M1 — explicit restart strategy** (jobmanager `FLINK_PROPERTIES`, 5 lines). `disable` is the
+- [x] **M1 — explicit restart strategy** (jobmanager `FLINK_PROPERTIES`, 5 lines). `disable` is the
       default *only because* checkpointing is off; setting the key overrides it. **Biggest single
       win and it does not wait on the checkpointing decision** — today the first exception in any job
       kills it permanently. Backoff deliberately longer than Flink's defaults (10 s → 5 min) because
-      with no checkpoints every restart costs a full resync. Verify: kill a job, watch it come back
-- [ ] **M7 — `restart: unless-stopped` + a `logging:` block** on `jobmanager` and every
-      `taskmanager` (they have none today; logs grow unbounded). Trivial, no behaviour change
-- [ ] **M2a — set TaskManager memory on the existing single TM.** Image default is `1728m` ⇒ roughly
+      with no checkpoints every restart costs a full resync. **APPLIED 2026-08-29.**
+      ⚠ **Verification still owed: kill a job and watch it come back.** Not observed
+- [x] **M7 — `restart: unless-stopped` + a `logging:` block** on `jobmanager` and every
+      `taskmanager` (they have none today; logs grow unbounded). Trivial, no behaviour change.
+      **APPLIED 2026-08-29** — json-file, 100m x 5, on the JM and all four TMs only
+- [x] **M2a — set TaskManager memory on the existing single TM.** Image default is `1728m` ⇒ roughly
       **384 MB of task heap shared by all 8 jobs**. Set `process.size`, `managed.fraction: 0.1`, and
       `env.java.opts.taskmanager` for a heap dump on OOM. ⚠ **never set `env.java.opts.all`** — the
       image uses that key for the Java 21 `--add-opens` list. Verify: read the TM startup log's own
-      memory breakdown and the JVM options line
-- [ ] **M2b — split into 4 TaskManagers × 3 slots** (from 1 × 8). ⚠ **revised from 4 × 2**: with 8
+      memory breakdown and the JVM options line. **APPLIED 2026-08-29.** ⚠ **Verification still
+      owed: read the TM startup log and confirm both the `--add-opens` list AND the heap-dump flags
+      appear in the JVM options line** — if `--add-opens` is missing, the key was set wrong
+- [x] **M2b — split into 4 TaskManagers × 3 slots** (from 1 × 8). ⚠ **revised from 4 × 2**: with 8
       jobs, 4 × 2 = 8 slots is exactly full and leaves no room for a 9th job or any parallelism
       increase — the situation the adjustment note already flagged. 4 × 3 = 12 keeps ~2 jobs per JVM
       (the blast-radius point) with 4 slots spare. ⚠ container `deploy.resources.limits.memory` must
       **exceed** `process.size` or the kernel OOM-killer masks the failure. Size to the real box —
-      host RAM was never inspected
+      host RAM was never inspected. **APPLIED 2026-08-29** as `taskmanager-1..4`, 9g container
+      limits, host metrics ports 9250-9253; the commented-out `taskmanager-2` block is gone.
+      ⚠ **BLOCKER BEFORE DEPLOY: 4 × 8g + the JM is ~34g of Flink alone and host RAM is still
+      uninspected.** Check free RAM on the box; if it does not fit, scale `process.size` and the
+      container limit together. ⚠ **Verification owed: 12 free slots, and the 8 jobs spread across
+      four TMs rather than piling onto one**
+- [ ] **Fallout from M2b, already partly handled.** `flink/run-job.sh` hard-coded
+      `docker logs ... taskmanager` in 3 places — **fixed in the same change** with a
+      `TASKMANAGERS=(...)` array and a `tm_logs` helper that reads all four. Still open:
+      [[flink-deploy-tooling]]'s slot-leak procedure (`docker compose restart taskmanager`,
+      `freeSlots: 8`) is stale — now flagged in that file, but not re-tested across four TMs
+- [ ] **Loose end — `jobmanager.memory.process.size: 2g`.** It sits in the report's section 07
+      jobmanager block but belongs to no M-item, so it was deliberately NOT applied. Decide with M3
 - [ ] **S5 — TaskManager healthcheck** (`curl :9250/metrics`). They have none, so a hung JVM stays
-      "up" forever. Do it while the TM blocks are already open
+      "up" forever. **Now four blocks to edit, not one** — the TM blocks are already open
 - [ ] **M4 — stop silent sink loss via producer config.** ⚠ `AT_LEAST_ONCE` is **inert** without
       checkpointing (it flushes *on checkpoint* — the docs' own wording), so the fix is
       `acks=all` + `enable.idempotence=true` + `retries` + `delivery.timeout.ms` via

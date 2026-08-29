@@ -7,8 +7,9 @@ metadata:
 
 # Taking the Flink cluster to production
 
-Report of 2026-08-26, revised 2026-08-29 after review with the user. Review only — **no project file
-has been changed yet**. A formatted copy is published at
+Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a and M2b are
+APPLIED** (2026-08-29, uncommitted on `docs/flink-production-hardening`) — see "What has landed"
+below; everything else is still review-only. A formatted copy is published at
 <https://claude.ai/code/artifact/0bab2c11-7c5a-4928-b2cc-78a1aaacdc15>; nothing here depends on that
 link. The ordered apply-one-by-one list is in `todo.md` under `## flink (production readiness)`,
 keyed by the same refs.
@@ -16,6 +17,48 @@ keyed by the same refs.
 **Scope** `docker-compose.yml` jobmanager + taskmanager, `flink/` · **Jobs** 8 (6 normalizer + merger + adjustment) · **Image** flink:2.2.0-scala_2.12-java21
 
 > **Job count corrected 2026-08-29.** The review was written against 7 jobs; merging `origin/main` brought in `flink/adjustment` (PR #10), making it **8**, and `ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)` confirms it. The cluster runs **8/8 task slots, completely full**. M2's slot arithmetic and M9's job-count alert are corrected throughout; `flink/adjustment` was **not read** for this review, so whether it has the same sink/state characteristics as the other seven is unverified.
+
+## What has landed (2026-08-29)
+
+Applied to `docker-compose.yml` in apply-order, verified only by `docker compose config --quiet`
+(exit 0) — **nothing has been deployed or observed running**:
+
+- **M1** — the five `restart-strategy.exponential-delay.*` keys on `jobmanager`.
+- **M7** — `restart: unless-stopped` and a `json-file` 100m x 5 `logging:` block on the JobManager
+  and every TaskManager. Deliberately *not* applied to any other service.
+- **M2a** — `process.size: 8g`, `managed.fraction: 0.1`, `env.java.opts.taskmanager` on the single
+  TaskManager, slots left at 8.
+- **M2b** — replaced the single `taskmanager` with **`taskmanager-1..4`, 3 slots each (12 total)**,
+  each with `deploy.resources.limits.memory: 9g`, host metrics ports 9250-9253. The commented-out
+  `taskmanager-2` block was removed, having become the real `taskmanager-2`. Note the container
+  metrics port stays 9250 in all four and only the *host* port varies — the report's section 07
+  said "each with its own metrics port", which turned out to be unnecessary.
+
+**Deviations from section 07, deliberate:** section 07's jobmanager block also carries
+`jobmanager.memory.process.size: 2g`, which belongs to no M-item and was **not** applied — it is a
+loose end, decide it with M3. The `-1..4` blocks are written out explicitly rather than sharing a
+YAML anchor, matching this file's existing fully-explicit style.
+
+**Blast radius that M2b created and that was fixed with it:** `flink/run-job.sh` hard-coded
+`docker logs ... taskmanager` in three places for its failure diagnostics. Renaming the container
+would have made every one of them print "No such container" at exactly the moment someone is
+debugging a failed submit. It now has a `TASKMANAGERS=(taskmanager-1 .. -4)` array and a `tm_logs`
+helper that reads all four and prefixes each line with its source. **[[flink-deploy-tooling]]'s
+slot-leak procedure is now stale** — `docker compose restart taskmanager` names a container that no
+longer exists; the sequence is four restarts then the JobManager.
+
+**Unverified, and it needs a human before deploy:** four TaskManagers at 8 g plus the JobManager is
+~34 g of Flink alone, before Kafka/Postgres/NiFi/the rest. **Host RAM was never inspected** — this
+session had no access to the target box. A comment above the TaskManager blocks says so. If it does
+not fit, scale `process.size` and the container `memory:` limit *together*, keeping the limit above
+`process.size`.
+
+**Verification still owed on all four**, none of it possible from here: kill a job and watch it come
+back (M1); read the TaskManager startup log's own memory breakdown and confirm both the `--add-opens`
+list and the heap-dump flags appear in the JVM options line (M2a); confirm 12 free slots and that the
+8 jobs spread across the four TaskManagers rather than piling onto one (M2b).
+
+---
 
 ## Two standing decisions (user, 2026-08-29)
 
