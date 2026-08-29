@@ -4,7 +4,8 @@ FLINK_RUN := ./flink/run-job.sh
 # `latest`, so a job started after its upstream would miss whatever the upstream produced in between.
 NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job-type-validator job-pair-extractor
 # merger sits downstream of job-aggregator (it reads p{id}-{side}), so it goes before the whole chain.
-ALL_JOBS := merger $(NORMALIZER_JOBS)
+# adjustment and merger both read job 6's p{id}-{side}, so both are downstream of it and go first.
+ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)
 
 # Full raw pipeline: the 5 upstream normalizer jobs plus the terminal aggregator that unions their
 # per-exchange books, all on the one Flink cluster in docker-compose.yml.
