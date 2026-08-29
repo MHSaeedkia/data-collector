@@ -50,6 +50,28 @@ services:
         networks:
             - data-collector-net
 
+    # taskmanager-2:
+    #     build: ./flink/normalizer
+    #     container_name: taskmanager-2
+    #     hostname: taskmanager-2
+    #     restart: on-failure
+    #     command: taskmanager
+    #     ports:
+    #         - "9251:9250"
+    #     depends_on:
+    #         jobmanager:
+    #             condition: service_healthy
+    #     environment:
+    #         FLINK_PROPERTIES: |
+    #             jobmanager.rpc.address: jobmanager
+    #             taskmanager.numberOfTaskSlots: 8
+    #             metrics.reporters: prom
+    #             metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    #             metrics.reporter.prom.port: 9250
+    #     volumes:
+    #         - data-collector-taskmanager-2-logs:/opt/flink/log
+    #     networks:
+    #         - data-collector-net
     kafka:
         image: confluentinc/cp-kafka:7.8.0
         container_name: kafka
@@ -340,6 +362,7 @@ volumes:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
     data-collector-taskmanager-logs:
+    data-collector-taskmanager-2-logs:
     data-collector-redis-data:
 
 networks:

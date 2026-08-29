@@ -78,21 +78,20 @@ Fixtures: `ex2-snapshot.json` is now the REST payload; the old WS message moved 
 
 ## Decisions made at implementation (were open in todo.md)
 
-- **ex9 lbank is SEEDED BUT NOT IMPLEMENTED** (teammate commit `195a735`, 2026-07-20 — DB seed +
-  `markets.csv` only; a repo-wide grep for `lbank` hits nothing else). Job 1 drops every ex9
-  message via the same `dropped-no-parser` counter as ex7, so the gap is SILENT — no dead-letter,
-  no error, just absent data. Needs wire samples → `sample-raw-data.md` § ex9 → an `LbankParser`.
-  Wire symbols are lowercase-underscore (`btc_usdt`) and the lookup key is an exact case-sensitive
-  `"{exchange_id}|{market}"`, so a case mismatch would also drop silently. lbank reuses okx's
-  `market_id`s, so jobs 3–6 already resolve and need nothing. Tasks in todo.md M9.
+- ~~**ex9 lbank is SEEDED BUT NOT IMPLEMENTED**~~ **RESOLVED 2026-08-26** — see the dated ex9
+  section at the end of this file. The 2026-07-20 seed (teammate commit `195a735`) sat unparsed
+  until `LBankParser` landed 2026-08-25 (`977e770`) and the rest of the pipeline followed. The
+  prediction recorded here held on both counts: wire symbols ARE lowercase-underscore
+  (`btc_usdt`), and lbank DOES reuse okx's `market_id`s, so jobs 3–6 needed nothing.
 - **ex7-raw stays in the source pattern**; scope lives ONLY in `Parsers.byExchangeId()`
   and `PairExtractFunction` drops unparsered exchanges via the `dropped-no-parser`
   counter. Rationale: one place to change when ex7 lands; also safely absorbs any future
   `ex{n}-raw` topic (warmup.sh is DB-driven, so new subscribed exchanges get topics).
-  **This paid off 2026-08-24**: landing ompfinex cost exactly one map entry (`7, new
-  OmpfinexParser()`) and no job, source-pattern or topic change anywhere. The map is now
-  1–8; ex9 lbank is the only remaining drop-with-counter exchange. See the dated ex7
-  section at the end of this file.
+  **This paid off twice**: landing ompfinex (2026-08-24) and lbank (2026-08-25) each cost
+  exactly one map entry and no job, source-pattern or topic change anywhere. The map is now
+  **1–9, i.e. every seeded exchange**, so `dropped-no-parser` no longer fires for anything in
+  the DB — only for a future `ex{n}-raw` topic nobody has added to the map. See the dated ex7
+  and ex9 sections at the end of this file.
 - **Offsets: `latest`** (consistent with the aggregator — live feed, no replay).
 - **event_time stamping per exchange** (job 2 and audits read this): ex1 `data.lastUpdate`,
   ex2 `data.event_time` (ISO-8601 → epoch millis), ex5 inner string `ts` (which is ALSO its
@@ -380,3 +379,90 @@ scenario sets `IgnoreEventTime`, so a factor-1000 error would leave the suite gr
 and ex7 is absent from the two cross-parser convention tests, `SimulationFlagTest` and
 `RecordIdTest`, which enumerate ex1–6+8. The parser *does* call `Json.simulation`/`Json.sourceIds`
 correctly, so it would pass those — nothing pins it.
+
+## 2026-08-26 — ex9/lbank LANDED, closing the last seeded-but-unparsed exchange
+
+A teammate implemented `LBankParser` on `feat/add-lbank` (commit `977e770`, 2026-08-25 — parser +
+one line in `Parsers.byExchangeId()`, nothing else). Everything around it — javadoc, unit tests,
+fixtures, `sample-raw-data.md` § ex9, five e2e scenarios — landed 2026-08-26 after a review of the
+parser and four wire samples supplied by the user. **The parser's LOGIC was not changed**: the
+review raised three questions and the user's answers confirmed all three of its existing choices.
+
+**The regime: SNAPSHOT ONLY.** Every frame is a whole book under `depth`. No delta channel, no
+`action`/`type` regime discriminator to read, nothing to make contiguous. ex9 is the **second
+snapshot-only exchange** after ex3/wallex — and the pair are not alike: ex3 sends one SIDE per
+message with the other null and has no wire clock at all, while ex9 always sends both sides and
+has a real timestamp. So ex9 is the first exchange that is **snapshot-only AND event-time-ordered
+for real** — ex3's guard can never fire, because its event time is job-1 processing time which
+only moves forward.
+
+**⚠ NO sequence field exists anywhere on the wire** — not a counter, not an update id, not a
+`lastUpdateId`. **User decision 2026-08-26: `sequence_id = null`, `sequence_jump = 0`.** The
+tempting alternative was `TS`-as-sequence, the way ex5 and ex8 use their `ts`; it was rejected
+because a timestamp-as-sequence imposes a publish cadence the exchange never promised, and that is
+precisely what cost ex5 a live resync loop and forced the platform's only nonzero
+`sequence_jump_tolerance`. A null sequence puts ex9 on job 2's **event-time branch**, where the
+whole test is "not older than the last accepted frame" — the user's words: *"it is providing all
+the snapshots, so just verifying that timestamp is not out of order is good enough."* That is
+sound for a full-snapshot feed, because an accepted frame replaces the book outright, so there is
+nothing for a sequence number to protect that ordering does not already cover.
+
+**Consequences worth holding onto:**
+
+- ex9 can reach exactly ONE reject reason, `out_of_order`, and can emit **NO control command
+  ever** — job 2 only asks for a snapshot on `no_baseline` or `sequence_gap`, and both live in the
+  update branch a null-seq feed never enters. The e2e scenarios all assert an EMPTY control
+  stream, which is what makes a spurious request a failure rather than something nobody looks at.
+- `baselinePending` is set on every accepted ex9 frame and **never consumed** — exactly ex3's
+  situation. Harmless, but it means the flag's name is now misleading for two of the three
+  exchanges that set it.
+- **No job-2 change was needed.** The null-seq guard was built exchange-agnostic for ex1 in July
+  and ex9 inherited it whole — the third exchange to do so, after ex2 and ex3.
+
+**⚠ Equal timestamps are ACCEPTED, not rejected** (user decision 2026-08-26). The guard is
+`event_time < lastEventTime`, STRICTLY older. Two ex9 frames sharing a `TS` therefore both pass
+and the book follows the last one in — which on a ~500 ms feed means a duplicate snapshot is
+re-emitted rather than deduplicated. This is deliberate and is pinned by the
+`Ex9DuplicateTimestamp` scenario. **Do not "fix" it for ex9 alone**: the guard is shared with ex3
+and the ex1/ex2 REST snapshots, so tightening it to `<=` is a three-exchange change.
+
+**⚠ `TS` is the platform's ONLY non-epoch-millis timestamp** — an ISO-8601 local date-time with
+millisecond precision and **no zone marker** (`"2026-08-25T17:46:51.723"`). **User-confirmed
+2026-08-26 that it is UTC**; the parser reads it with `ZoneOffset.UTC` and one unit test pins the
+exact epoch value. This is the parser's single unverifiable-from-the-payload assumption: lbank
+documents `TS` as *server* time, and if that ever turns out to be UTC+8 every ex9 event_time is
+8 hours in the future — **invisible in the levels, and it would surface only as a staleness
+alarm**. One `ZoneOffset` is the whole change if it is revised.
+
+**Frame selection is by SHAPE, not by `type`** (user decision 2026-08-26). All four captures say
+`"type":"fdepth"` — futures depth — but the parser requires `pair` + textual `TS` +
+`depth.asks`/`depth.bids` as arrays and ignores `type` entirely. Rationale accepted by the user:
+lbank's other channels (pings, subscribe acks, ticks, and the incremental `incrDepth` book, whose
+levels hang off a differently-named key) already fail that check, so whitelisting the value would
+add a second thing to keep in sync for no coverage today — and the spot `depth` channel would then
+parse with no change. **The corollary is the risk**: a future lbank channel carrying `pair`, `TS`
+and a `depth` object WOULD be misread as a book.
+
+**Both side keys are REQUIRED** — the ex7 rule, not ex6/ex8's null side. Unlike ex7 this is
+clearly correct rather than a bet: on a snapshot feed a half-frame would silently WIPE a side,
+because job 5 clears a side when `type == "snapshot"`. All four captures carry both.
+
+**The market key is the case trap the 2026-07-20 note predicted.** `pair` is lowercase with an
+underscore (`btc_usdt`) — the only exchange that spells it that way (ex1/ex2/ex5/ex6 send
+`BTCUSDT`, ex8 `BTC-USDT`, ex4/ex7 a numeric string). It matches `exchange_markets.market`
+verbatim and **nothing in job 1 normalizes case**, so a change on either side drops 100% of ex9
+silently. Pinned twice: a unit assertion on the parser and source 08 of `Ex9NoiseFrames`, which
+sends `BTC_USDT` and expects nothing out.
+
+**What ex9 has that ex7 still does not**: a captured `sample-raw-data.md` § ex9, an
+`ex9-snapshot.json` fixture, an `LBankParserTest` (6 tests), rows in both cross-parser convention
+tests (`SimulationFlagTest`, `RecordIdTest`), and five e2e scenarios. ex7 is now the ONLY parser
+with none of that — see the 2026-08-24 section above.
+
+**VERIFIED: 269 Java tests green (was 259), and all five e2e scenarios PASS LIVE** (2026-08-26,
+first attempt, 29–39 s each) against the local docker stack, run without `stack.Provision`. So
+unlike ex7 at the same stage, every wire claim in `LBankParser`'s javadoc is reproducible — the
+UTC conversion included, since no ex9 scenario blanks event time. **Still unproven**: whether the
+suite BITES (no live mutation check yet, unlike scenario 31), and whether `TS` is really UTC —
+that one is unfalsifiable from the payload and needs a wall-clock comparison at capture time.
+See [[e2e-harness]].

@@ -169,7 +169,8 @@ class PairExtractFunctionTest {
     }
 
     /**
-     * Given a message from an exchange with no registered parser (ex9 lbank), When it
+     * Given a message from an exchange with no registered parser (no seeded exchange is in
+     * that state since ex9 lbank landed 2026-08-25 — this is the future-topic case), When it
      * flows through, Then it is dropped without crashing.
      */
     @Test
