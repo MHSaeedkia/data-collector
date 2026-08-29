@@ -13,6 +13,7 @@ RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-e
 ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
 REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
 CONTROL_COMMAND_SCHEMA_SUBJECT="${CONTROL_COMMAND_SCHEMA_SUBJECT:-control-command}"
+ADJUSTED_ORDER_BOOK_SCHEMA_SUBJECT="${ADJUSTED_ORDER_BOOK_SCHEMA_SUBJECT:-adjusted-order-book-event}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGGREGATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/aggregated_order_book_event.avsc"
@@ -21,6 +22,7 @@ RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
 ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
 REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
 CONTROL_COMMAND_SCHEMA_FILE="$SCRIPT_DIR/../schemas/control_command.avsc"
+ADJUSTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/adjusted_order_book_event.avsc"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required but not installed."; exit 1; }
@@ -60,6 +62,10 @@ register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_
 register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
 register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$CONTROL_COMMAND_SCHEMA_SUBJECT" "AVRO" "$CONTROL_COMMAND_SCHEMA_FILE"
+# flink/adjustment's output. The e2e harness registers every schemas/*.avsc on its own, so a
+# missing line HERE is invisible to a green e2e run and only shows up as the adjustment job dying
+# at its first emit — exactly how control-command was broken for two days.
+register_schema "$ADJUSTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$ADJUSTED_ORDER_BOOK_SCHEMA_FILE"
 
 # --- Kafka Topics ---
 
@@ -134,13 +140,16 @@ done <<< "$distinct_exchanges"
 # Output topics — one per pair+side. Two parallel views of the same cross-exchange book:
 #   p{id}-{side}          normalizer job 6 — levels UNIONED, each keeping its own exchange_id
 #   p{id}-{side}-merged   flink/merger     — levels SUMMED, one per price, exchange_ids as a list
-# The -merged family is created here (not in the merger project) for the same reason as every other
-# topic: its source reads from `latest`, so the topic must exist before the job starts.
+#   p{id}-{side}-adjusted flink/adjustment — job 6's record, adjusted (step 1: passed through)
+# The -merged and -adjusted families are created here (not in their own projects) for the same
+# reason as every other topic: their sources read from `latest`, so the topic must exist before the
+# job starts. Auto-creation would also give them the broker default retention, not this one.
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
         create_topic "p${pair_id}-${side}" "$OUTPUT_RETENTION_MS"
         create_topic "p${pair_id}-${side}-merged" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}-adjusted" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 

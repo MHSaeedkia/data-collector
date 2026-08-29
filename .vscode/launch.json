@@ -16,6 +16,14 @@
 	"configurations": [
 		{
 			"type": "java",
+			"name": "flink: adjustment",
+			"request": "launch",
+			"mainClass": "io.tibobit.adjustment.AdjustmentJob",
+			"projectName": "adjustment",
+			"envFile": "${workspaceFolder}/.vscode/flink-local.env"
+		},
+		{
+			"type": "java",
 			"name": "flink: merger",
 			"request": "launch",
 			"mainClass": "io.tibobit.merger.MergerJob",
