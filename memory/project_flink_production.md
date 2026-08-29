@@ -13,8 +13,9 @@ has been changed yet**. A formatted copy is published at
 link. The ordered apply-one-by-one list is in `todo.md` under `## flink (production readiness)`,
 keyed by the same refs.
 
-**Scope** `docker-compose.yml` jobmanager + taskmanager, `flink/` · **Jobs** 7 (6 normalizer +
-merger) · **Image** flink:2.2.0-scala_2.12-java21
+**Scope** `docker-compose.yml` jobmanager + taskmanager, `flink/` · **Jobs** 8 (6 normalizer + merger + adjustment) · **Image** flink:2.2.0-scala_2.12-java21
+
+> **Job count corrected 2026-08-29.** The review was written against 7 jobs; merging `origin/main` brought in `flink/adjustment` (PR #10), making it **8**, and `ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)` confirms it. The cluster runs **8/8 task slots, completely full**. M2's slot arithmetic and M9's job-count alert are corrected throughout; `flink/adjustment` was **not read** for this review, so whether it has the same sink/state characteristics as the other seven is unverified.
 
 ## Two standing decisions (user, 2026-08-29)
 
@@ -34,11 +35,11 @@ Each row is the current, verified behaviour of the stack as committed — not a 
 | Failure | What actually happens now | Why | Addressed by |
 |---|---|---|---|
 | **A job throws** | The job goes to `FAILED` and stays there forever. The other six keep running, so the pipeline silently loses one stage. Nothing alerts. | Default `restart-strategy.type` is `disable` when checkpointing is not enabled. | **M1** |
-| **TaskManager dies** | Docker restarts the container, but all seven jobs had tasks on it, so all seven fail — and per the row above, none come back. Cluster healthy, pipeline dead. | One TaskManager with 8 slots hosts every job. | **M1 + M2** |
+| **TaskManager dies** | Docker restarts the container, but all eight jobs had tasks on it, so all eight fail — and per the row above, none come back. Cluster healthy, pipeline dead. | One TaskManager with 8 slots hosts every job. | **M1 + M2** |
 | **JobManager dies** | Docker restarts it and it comes up as an *empty* cluster. Every submission is gone. Recovery is a human running `make run-all-jobs`. | `high-availability.type` defaults to `NONE` — no persistent job-graph store. | **M3** |
-| **Any restart at all** | All keyed state is gone (books, `lastSeq`), sources resume at `latest`, and every delta market hits `no_baseline` and resyncs. | No checkpoints; all seven jobs use `OffsetsInitializer.latest()`. | **Accepted** — see 03 |
+| **Any restart at all** | All keyed state is gone (books, `lastSeq`), sources resume at `latest`, and every delta market hits `no_baseline` and resyncs. | No checkpoints; all eight jobs use `OffsetsInitializer.latest()`. | **Accepted** — see 03 |
 | **Broker hiccup on write** | Records are dropped. No exception, no metric, no dead letter — the book downstream is wrong until the next snapshot touches that level. | `KafkaSink`'s default is `DeliveryGuarantee.NONE`; no job overrides it or sets producer acks. | **M4** |
-| **State outgrows heap** | The TaskManager JVM OOMs, which is the "TaskManager dies" row — all seven jobs go down together. | Image default `taskmanager.memory.process.size: 1728m`; `hashmap` backend keeps every book on heap. | **M2** |
+| **State outgrows heap** | The TaskManager JVM OOMs, which is the "TaskManager dies" row — all eight jobs go down together. | Image default `taskmanager.memory.process.size: 1728m`; `hashmap` backend keeps every book on heap. | **M2** |
 | **Host reboot** | Containers come back, the cluster is empty, jobs need resubmitting by hand. | Same as JobManager death. | **M3 + M7** |
 | **Logs accumulate** | JobManager and TaskManager JSON logs grow without bound on the docker host. | The Flink services set no `logging:` block. | **M7** |
 
@@ -75,25 +76,26 @@ backoff buys time, the alert is what actually gets it fixed.
 A restarted job starts with empty state and its source at `latest`, then re-baselines through the
 normal `no_baseline` → snapshot path. That is the intended semantic, not a defect.
 
-### M2 — Real memory, and stop running seven jobs in one JVM
+### M2 — Real memory, and stop running eight jobs in one JVM
 
 The image ships `taskmanager.memory.process.size: 1728m` and compose does not override it. Working
 the documented split backwards from 1728 MB — metaspace 256 MB, JVM overhead ~192 MB, managed 0.4 of
 the remainder, network 0.1, framework heap 128 MB — leaves on the order of **384 MB of task heap
-shared by all seven jobs**. That is arithmetic; the real number is printed in the TaskManager startup
+shared by all eight jobs**. That is arithmetic; the real number is printed in the TaskManager startup
 log and is worth reading before sizing.
 
 ```yaml
 # taskmanager FLINK_PROPERTIES
-taskmanager.numberOfTaskSlots: 2
+taskmanager.numberOfTaskSlots: 3
 taskmanager.memory.process.size: 8g
 taskmanager.memory.managed.fraction: 0.1   # hashmap backend barely uses managed memory
 env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
 ```
 
-Then **four TaskManagers with 2 slots each** instead of one with 8. Seven jobs at parallelism 1 need
-seven slots; spreading them over four JVMs means one OOM takes down roughly two jobs rather than the
-entire pipeline. The commented-out `taskmanager-2` block is the right shape — copy to `-3` and `-4`,
+Then **four TaskManagers with 3 slots each** instead of one with 8. **Eight** jobs at parallelism 1
+need eight slots, so the cluster is at 8/8 today and 4 x 2 would still be exactly full — 4 x 3 = 12
+leaves four spare for a ninth job or a parallelism increase. Spreading them over four JVMs means one
+OOM takes down roughly two jobs rather than the entire pipeline. The commented-out `taskmanager-2` block is the right shape — copy to `-3` and `-4`,
 each with its own metrics port.
 
 Worth splitting into two steps when applying: **M2a** set memory on the existing single TaskManager
@@ -111,7 +113,7 @@ Worth splitting into two steps when applying: **M2a** set memory on the existing
 
 ### M3 — JobManager HA, so a restart recovers the submissions
 
-Without an HA store nothing remembers that seven jobs were submitted. With ZooKeeper the JobManager
+Without an HA store nothing remembers that eight jobs were submitted. With ZooKeeper the JobManager
 re-reads its job graphs on boot and resubmits them unattended.
 
 **HA does not require checkpointing, and stays consistent with the postponement:** with no checkpoint
@@ -233,7 +235,7 @@ Add Prometheus, Alertmanager and Grafana, then start with:
 
 | Alert | Signal | Catches |
 |---|---|---|
-| Job count wrong | running jobs `!= 7` for 2 min | Baseline rows 1, 2, 3 — the whole class |
+| Job count wrong | running jobs `!= 8` for 2 min | Baseline rows 1, 2, 3 — the whole class |
 | TaskManagers missing | registered TMs `< 4` | A TaskManager died and did not come back |
 | Restart loop | `numRestarts` rising | A poison record cycling — and, here, resyncing |
 | Consumer lag | source `records_lag_max` | A stage falling behind the feed |
@@ -383,9 +385,9 @@ book on the task heap. If M2's sizing proves insufficient as subscribed markets 
 
 ## 06 · Later
 
-- **L1 — Application mode, one cluster per job.** A session cluster gives seven jobs a shared fate
+- **L1 — Application mode, one cluster per job.** A session cluster gives eight jobs a shared fate
   through shared JVMs. Application mode gives each its own JobManager and TaskManagers: real
-  isolation, independent scaling and deploys. Costs seven clusters and a `run-job.sh` rewrite; M2's
+  isolation, independent scaling and deploys. Costs eight clusters and a `run-job.sh` rewrite; M2's
   four TaskManagers buy most of the isolation for a fraction of the work. Also the natural home for
   route 1 in section 03.
 - **L2 — Standby JobManager and a three-node ZooKeeper.** M3 gives job recovery; it does not remove
@@ -474,7 +476,7 @@ taskmanager-1:
     environment:
         FLINK_PROPERTIES: |
             jobmanager.rpc.address: jobmanager
-            taskmanager.numberOfTaskSlots: 2      # M2 — was 8
+            taskmanager.numberOfTaskSlots: 3      # M2 — was 8
             taskmanager.memory.process.size: 8g
             taskmanager.memory.managed.fraction: 0.1
 
@@ -520,8 +522,8 @@ improves on today's single 1728 m. **Host RAM has not been inspected.**
 
 | Ref | Change | Applies to |
 |---|---|---|
-| **M4** | `acks=all`, `enable.idempotence=true`, `retries`, `delivery.timeout.ms` via `setProperty` | Every `KafkaSink`, including job 2's dead-letter sink |
-| **S7** | Log the build SHA from `main()` | All 7 |
+| **M4** | `acks=all`, `enable.idempotence=true`, `retries`, `delivery.timeout.ms` via `setProperty` | Every `KafkaSink` across all 8 jobs, including job 2's dead-letter sink |
+| **S7** | Log the build SHA from `main()` | All 8 |
 
 `.uid()` (M5) and the offsets change (S1) are **not** in this round — parked in 03 and closed in 04
 respectively.
@@ -563,7 +565,7 @@ See [[flink-deploy-tooling]] for what these scripts and targets actually do.
   JobManager `1600m`, 1 slot, `parallelism.default: 1`, `failover-strategy: region`, and the
   `env.java.opts.all` flag list.
 - No job calls `enableCheckpointing`, `uid` or `setDeliveryGuarantee`, or sets a state backend; all
-  seven use `OffsetsInitializer.latest()`. `BookBuildFunction` reads `sequence_id` only to stamp
+  eight use `OffsetsInitializer.latest()`. `BookBuildFunction` reads `sequence_id` only to stamp
   output (line 93) — no monotonicity guard downstream of job 2.
 
 **Unverified — check before or while applying**
