@@ -150,6 +150,22 @@ What landed with it, and what this review fixed on top:
   `CheckpointingConfigurer` existed, on every sink this branch upgraded, were rewritten to describe the
   current EXACTLY_ONCE/transactional behavior.
 
+**FIX (2026-08-31, found live) — the new checkpoint volume came up root-owned, so every job
+restarted forever.** After the shared-volume fix above, the user ran the stack and all 6 jobs sat in
+`RESTARTING`. Root cause, confirmed by decompiling `CheckpointingOptions` in the actual 2.2.0 jar:
+`TOLERABLE_FAILURE_NUMBER` defaults to `0` (a single failed checkpoint fails the job), and
+`flink/normalizer/Dockerfile` ends `USER flink` (the official image's non-root user) but never created
+`/opt/flink/checkpoints` — so when Docker initialized the brand-new named volume by copying the
+image's directory at that path, there was nothing there and it came up **root-owned**. The `flink`
+user couldn't write into it, the first checkpoint (10s after start) failed, the job failed, backoff,
+repeat — indefinitely, on all 6 jobs equally since they share the one volume. Fixed by pre-creating
+`/opt/flink/checkpoints` with `chown flink:flink` in the Dockerfile *before* `USER flink`, so Docker
+copies correct ownership into the volume on first mount. ⚠ the volume as already created on the user's
+box was still root-owned and needed a one-off `chown -R flink:flink` (via a root-user container against
+the same volume) — the Dockerfile fix only prevents this on a *fresh* volume, it does not repair one
+that already exists. NOT yet confirmed fixed live (user was given the remediation command, result
+unseen from this session).
+
 **Still not done** (out of scope for this pass — flag before relying on them): **M5** (`.uid()` on
 every operator — needed before a checkpoint can be restored across a topology-changing redeploy, and
 nobody added it here), **S2** (`pipeline.max-parallelism`), **S6** (stop-with-savepoint deploys), and

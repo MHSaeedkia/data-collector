@@ -33,4 +33,10 @@ RUN apt-get update -qq && apt-get install -y -q --no-install-recommends maven \
       -q \
  && apt-get purge -y maven && apt-get autoremove -y -q \
  && rm -rf /root/.m2 /tmp/confluent-deps-pom.xml /var/lib/apt/lists/*
+
+# Pre-create with flink:flink ownership — Docker copies this into a fresh named
+# volume on first mount, so without it /opt/flink/checkpoints comes up root-owned
+# and the non-root flink user below can't write checkpoints (every checkpoint
+# fails, and Flink's default tolerable-failure-number is 0, so the job fails too).
+RUN mkdir -p /opt/flink/checkpoints && chown flink:flink /opt/flink/checkpoints
 USER flink

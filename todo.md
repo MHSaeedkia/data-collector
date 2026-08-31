@@ -27,6 +27,12 @@ Reviewed 2026-08-26, scope agreed with the user 2026-08-29. **Nothing applied ye
     what landed and what this review fixed (`isolation.level=read_committed`, a shared checkpoint
     volume, and reverting a restart-strategy override back to M1's cluster policy). **M5/S2/M6/S6/L4
     are still NOT done** — they were not part of this pass and remain open below.
+  - **⚠ Live symptom 2026-08-31: all 6 jobs stuck `RESTARTING` after this landed.** Root cause found —
+    the new checkpoint volume came up root-owned (Dockerfile never created `/opt/flink/checkpoints`
+    before `USER flink`), so every checkpoint write failed and Flink's default 0-tolerance failed the
+    job outright. Dockerfile fixed to pre-create it with `chown flink:flink`; the user's *existing*
+    volume still needs a one-off `chown -R flink:flink` (command given, not yet confirmed run/fixed —
+    verify before treating this as closed). Details in [[project_flink_production]]
 - **NiFi out of scope** — not managed from our side, development-only in this compose file. Do not
   change it and do not propose changes to it
 - **S1 CLOSED** — keep `OffsetsInitializer.latest()`. Downstream-first submission ordering in the
