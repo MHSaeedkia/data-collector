@@ -1,14 +1,11 @@
 package io.tibobit.normalizer.checkpointingConfigurer;
 
+import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.ExternalizedCheckpointRetention;
-import org.apache.flink.configuration.RestartStrategyOptions;
 import org.apache.flink.core.execution.CheckpointingMode;
-import org.apache.flink.runtime.state.storage.FileSystemCheckpointStorage;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-
-import java.time.Duration;
 
 public final class CheckpointingConfigurer {
 
@@ -23,17 +20,20 @@ public final class CheckpointingConfigurer {
 
         CheckpointConfig config = env.getCheckpointConfig();
         config.setCheckpointingConsistencyMode(CheckpointingMode.EXACTLY_ONCE);
-        config.setCheckpointStorage(new FileSystemCheckpointStorage(checkpointDir));
+        // CheckpointConfig has no setCheckpointStorage(CheckpointStorage) in Flink 2.x
+        // (removed along with the StateBackend/CheckpointStorage fluent API) — storage
+        // is config-key driven now.
+        Configuration storageConfig = new Configuration();
+        storageConfig.set(CheckpointingOptions.CHECKPOINT_STORAGE, "filesystem");
+        storageConfig.set(CheckpointingOptions.CHECKPOINTS_DIRECTORY, checkpointDir);
+        config.configure(storageConfig);
         config.setMinPauseBetweenCheckpoints(intervalMs / 5);
         config.setCheckpointTimeout(120_000);      
         config.setMaxConcurrentCheckpoints(1);
         config.setExternalizedCheckpointRetention(ExternalizedCheckpointRetention.RETAIN_ON_CANCELLATION);
-
-        Configuration restartConfig = new Configuration();
-        restartConfig.set(RestartStrategyOptions.RESTART_STRATEGY, "fixed-delay");
-        restartConfig.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_ATTEMPTS, 5);
-        restartConfig.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_DELAY, Duration.ofSeconds(10));
-        env.getConfig().configure(restartConfig, null);
+        // Restart strategy is intentionally left to the cluster-wide config
+        // (docker-compose.yml sets restart-strategy.type: exponential-delay with
+        // unlimited retries) rather than overridden here.
     }
 
     private static String getEnv(String key, String fallback) {
