@@ -20,14 +20,44 @@ Exchanges (nobitex, bitpin, wallex)
 
 ## Services
 
-| Service          | Port (host)     | Purpose                         |
-| ---------------- | --------------- | ------------------------------- |
-| NiFi             | 8443 (HTTPS UI) | Data ingestion & normalization  |
-| Flink JobManager | 7070            | Stream processing UI & REST API |
-| Kafka            | 9092            | Message broker (KRaft mode)     |
-| Schema Registry  | 8082            | Avro schema management          |
-| Kafka UI         | 8080            | Kafka web UI                    |
-| PostgreSQL       | 5432            | Market metadata store           |
+| Service          | Port (host)     | Purpose                         | Where     |
+| ---------------- | --------------- | ------------------------------- | --------- |
+| NiFi             | 8443 (HTTPS UI) | Data ingestion & normalization  | both      |
+| Flink JobManager | 7070            | Stream processing UI & REST API | both      |
+| Kafka            | 9092            | Message broker (KRaft mode)     | both      |
+| Schema Registry  | 8082            | Avro schema management          | both      |
+| Kafka UI         | 8080            | Kafka web UI                    | both      |
+| PostgreSQL       | 5432            | Market metadata store           | both      |
+| Flink History    | 7071            | Archived jobs from past runs    | prod only |
+| ZooKeeper        | —               | Flink JobManager HA store       | prod only |
+| Prometheus       | 9090            | Scrapes Flink + exporters       | prod only |
+| Alertmanager     | 9093            | Alert routing (no receiver yet) | prod only |
+| Grafana          | 3001            | Dashboards (3000 is `web`)      | prod only |
+
+Dev runs one TaskManager with 8 slots; prod runs four with 3 slots each.
+
+## Two compose files
+
+`docker-compose.yml` is the **development** stack — plain, fast to bring up, what you run on a
+laptop. `docker-compose.prod.yml` is a **separate, hardened copy** for production: restart
+strategy, memory sizing, four TaskManagers, JobManager HA, a HistoryServer, monitoring, and
+pinned image tags. Its header lists every difference and why.
+
+They are two independent files, not a base and an override — an override cannot remove a service
+or a volume, and the two stacks differ by more than they share in the Flink section. **Adding or
+rewiring a service means editing both by hand.**
+
+```bash
+docker compose up -d                              # dev
+make prod-deploy                                  # prod: up --build, warmup, submit, verify
+```
+
+⚠ The first production deploy of this branch **must** build (`make prod-up` / `prod-deploy` already
+do). `flink/normalizer/Dockerfile` pre-creates and chowns `/opt/flink/ha` and `/opt/flink/archive`;
+without that the HA and archive volumes come up root-owned and HA silently has nowhere to write.
+
+⚠ No prod target ever runs `down -v`. `make refresh-normalizer` does, and it would delete the Kafka
+log dirs and the Postgres data dir — it is a **dev-only** target.
 
 ## Markets
 
@@ -52,6 +82,7 @@ docker compose -f docker-compose.yml up -d
 ```
 
 Services start in dependency order. NiFi takes ~90 seconds to become healthy.
+For the production stack see [Two compose files](#two-compose-files) above.
 
 ### NiFi credentials
 
@@ -87,12 +118,14 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 
 ```
 .
-├── docker-compose.yml         # full stack; Flink cluster builds flink/normalizer
+├── docker-compose.yml         # DEV stack; Flink cluster builds flink/normalizer
+├── docker-compose.prod.yml    # PROD stack; separate hardened copy — see its header
 ├── flink/
 │   ├── run-job.sh             # builds + submits any job below; run with no arg to list them
 │   ├── run-local.sh           # runs one job in-process instead — no Flink cluster at all
 │   ├── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
 │   └── merger/                # sums the aggregated book's levels per price (p{id}-{side}-merged)
+├── monitoring/                # Prometheus scrape config + alert rules, Alertmanager, Grafana (prod only)
 ├── nifi/
 │   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
 ├── postgres/

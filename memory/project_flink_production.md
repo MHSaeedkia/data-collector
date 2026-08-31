@@ -7,8 +7,8 @@ metadata:
 
 # Taking the Flink cluster to production
 
-Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5 and M4 are
-APPLIED** (2026-08-29, on `docs/flink-production-hardening`) — see "What has landed"
+Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5, M4, M3, S4 and M9
+are APPLIED** (2026-08-29 / 2026-08-31, on `docs/flink-production-hardening`); **M8 is DROPPED** — see "What has landed"
 below; everything else is still review-only. A formatted copy is published at
 <https://claude.ai/code/artifact/0bab2c11-7c5a-4928-b2cc-78a1aaacdc15>; nothing here depends on that
 link. The ordered apply-one-by-one list is in `todo.md` under `## flink (production readiness)`,
@@ -18,10 +18,18 @@ keyed by the same refs.
 
 > **Job count corrected 2026-08-29.** The review was written against 7 jobs; merging `origin/main` brought in `flink/adjustment` (PR #10), making it **8**, and `ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)` confirms it. The cluster runs **8/8 task slots, completely full**. M2's slot arithmetic and M9's job-count alert are corrected throughout; `flink/adjustment` was **not read** for this review, so whether it has the same sink/state characteristics as the other seven is unverified.
 
-## What has landed (2026-08-29)
+## What has landed (2026-08-29 … 2026-08-31)
 
-Applied to `docker-compose.yml` in apply-order, verified only by `docker compose config --quiet`
-(exit 0) — **nothing has been deployed or observed running**:
+**⚠ Read this first: as of 2026-08-31 none of the hardening below is in `docker-compose.yml`
+any more.** It all lives in **`docker-compose.prod.yml`**, a separate file. `docker-compose.yml`
+was restored byte-for-byte to `f023a47`, the last commit before M1, and is the **development**
+stack. Where an item below says "applied to `docker-compose.yml`", read `docker-compose.prod.yml`.
+See "The dev/prod compose split" at the end of this section for why, and for what it costs.
+
+The agreed round is **complete**: M1, M7, M2a, M2b, S5, M4, M3, S4, M9, S7. M8 dropped.
+
+Applied in apply-order, verified only by `docker compose config --quiet` (exit 0) — **nothing has
+been deployed or observed running**:
 
 - **M1** — the five `restart-strategy.exponential-delay.*` keys on `jobmanager`.
 - **M7** — `restart: unless-stopped` and a `json-file` 100m x 5 `logging:` block on the JobManager
@@ -44,6 +52,90 @@ Applied to `docker-compose.yml` in apply-order, verified only by `docker compose
   `rejected` **and** `controlCommands` sinks (the todo said "job 2's dead-letter sink"; there are
   three extra sinks, not one). Verified by compiling all three Maven projects and running the
   suites: **105 + 16 + 23 = 144 tests, all passing**.
+
+**M8 was applied on 2026-08-31 and reverted the same day** — the port binding is back to a bare
+`"7070:8081"`. See the standing decisions below for why; section 07's `192.168.150.104:7070:8081`
+line is superseded and should not be applied.
+
+- **M3** (2026-08-31) — a `zookeeper:3.9` service plus `high-availability.{type,zookeeper.quorum,
+  storageDir,cluster-id}` and a shared `data-collector-flink-ha` volume. Host-agnostic by
+  construction, so it satisfies the 2026-08-31 constraint: `zookeeper:2181` is a compose service
+  name on the internal network and the storage dir is a container path. New volumes:
+  `data-collector-flink-ha`, `-zk-data`, `-zk-datalog`. Pure insertion, 125 lines, nothing removed.
+
+  **Two deliberate deviations from section 07, both believed necessary:**
+  1. **The HA keys are on all four TaskManagers, not just the JobManager.** With HA on, the leader
+     publishes a random session id to ZooKeeper and fences RPC with it; a TaskManager left on the
+     default `NONE` uses the standalone leader id and should be rejected at registration. In an
+     ordinary standalone deployment this falls out of every node sharing one `flink-conf.yaml` —
+     compose is what splits config per service, which is why section 07 reads as if only the JM
+     needs it. **Reasoned from Flink's fencing model, not observed.** If the cluster comes up with
+     0 registered TaskManagers, this is the first thing to check — but the failure mode of the
+     *other* choice is the same symptom, so trying it is cheap either way.
+  2. **The `flink-ha` volume is mounted on the TaskManagers too**, not only the JobManager as
+     section 07 says. The HA storage dir doubles as the blob store, which is how a TaskManager
+     fetches job jars when the JobManager is unreachable; in a real cluster it is one shared
+     filesystem visible to every node.
+
+  **M3 as first applied was broken and was fixed on 2026-08-31 while doing S4** — see the S4 entry:
+  `/opt/flink/ha` does not exist in the image, so the named volume mounted there came up `root:root`
+  and the JobManager, which runs as uid 9999, could not write it. The fix is in
+  `flink/normalizer/Dockerfile`, not in compose.
+
+  **The healthcheck is `zkServer.sh status`, not section 07's `echo ruok | nc`.** `nc` is not
+  guaranteed present in `zookeeper:3.9` and there was no internet to check; `zkServer.sh` ships with
+  ZooKeeper and the image's own entrypoint uses it. Costs a JVM per probe, hence `timeout: 10s`.
+
+  **Two operational consequences of M3 that did not exist before, neither yet handled:**
+  - **Resubmission now duplicates.** Once HA recovers the 8 jobs on its own, a human running
+    `make run-all-jobs` out of habit gets **16 running jobs**, all consuming and producing. Check
+    `/jobs` before submitting anything.
+  - **Recovery ignores submission order.** HA restores all 8 job graphs at once in no particular
+    order, but sources use `OffsetsInitializer.latest()` and downstream-first submission ordering is
+    load-bearing (S1). A recovered upstream job can emit before its downstream consumer is running,
+    and those records are gone. This is inside the re-baseline semantics the user already accepted,
+    but it is a *new* place that semantic gets exercised — automatically, unattended.
+
+- **S4** (2026-08-31) — `jobmanager.archive.fs.dir: file:///opt/flink/archive` on the JobManager,
+  a new `historyserver` service on the same `./flink/normalizer` build (`command: history-server`),
+  and a shared `data-collector-flink-archive` volume. 57 lines in compose, pure insertion.
+
+  **The volume-ownership bug, found here and fixed for both S4 and M3.** Docker creates a missing
+  mount destination as `root:root`, and this image runs as **uid 9999 (`flink`)**. Neither
+  `/opt/flink/ha` (M3) nor `/opt/flink/archive` (S4) exists in `flink:2.2.0-scala_2.12-java21`, so
+  both named volumes came up unwritable by the process that has to write them. **Verified by probe,
+  not reasoned**: `touch` into a fresh volume at `/opt/flink/archive` returned `Permission denied`,
+  and the same probe against an image that pre-creates and `chown`s the directories returned
+  `WRITE OK`. The fix is four lines appended to `flink/normalizer/Dockerfile`
+  (`mkdir -p` + `chown flink:flink` for both paths, as root, then back to `USER flink`).
+  **Consequence: the next deploy must rebuild the Flink image** — `up -d` alone reuses the old one
+  and M3's HA silently has nowhere to write. `/opt/flink/log` was never affected because it exists
+  in the image already, which is why M7's log volumes worked.
+
+  **Deviations from section 05/07, all deliberate:**
+  1. **Published on host port 7071, not 8082.** 8082 — the HistoryServer's own default — is
+     schema-registry on this host and 8081 is NiFi. Container side stays 8082. A port choice, not an
+     address, so the host-agnostic decision is unaffected.
+  2. **No `depends_on: jobmanager`.** The failure this exists for *is* a dead or unhealthy
+     JobManager, which is exactly when the archive has to stay readable. It only reads a directory
+     and never joins the cluster, so it also gets **none** of the M3 HA keys.
+  3. **`historyserver.web.address: 0.0.0.0` and `.web.port: 8082` set explicitly.** In-container
+     binds, not host binds; the published port is unreachable if the address ever defaults to
+     loopback. Unverified which way the default goes in 2.2.0, so it is pinned rather than assumed.
+  4. **Same build as the cluster** rather than the bare `flink` image — already built locally, so it
+     adds no pull. The connector jars it inherits are dead weight and harmless.
+
+  **What S4 does not cover: only jobs that reach a *terminal* state are archived.** A job caught in
+  M1's exponential-delay restart loop is running, not terminal, so it never appears in the
+  HistoryServer no matter how many times it has failed. Repeated-restart diagnosis is M9's
+  `numRestarts` alert plus the container log, not this. S4 is for jobs that died and stayed dead.
+
+**`jobmanager.memory.process.size: 2g`: decided 2026-08-31, NOT applied — loose end closed.** It
+appears in section 07's jobmanager block, belongs to no M-item, and carries no attribution or
+measurement. The image default is 1600m and nothing shows it is short; M3 adds only a ZK client and
+the job-graph store to the JobManager. With the file now committed to running on 5+ dev and test
+environments, raising a memory floor without evidence is the wrong direction. Revisit only with a
+measured JobManager heap number.
 
 **What M4 does and does not buy.** It closes: transient broker-side failures (infinite `retries`
 bounded by `delivery.timeout.ms`), acceptance of an under-replicated write (`acks=all`), and
@@ -79,6 +171,133 @@ session had no access to the target box. A comment above the TaskManager blocks 
 not fit, scale `process.size` and the container `memory:` limit *together*, keeping the limit above
 `process.size`.
 
+**M9 — Prometheus, Alertmanager and Grafana *(applied 2026-08-31)*.** `monitoring/` holds all the
+config, bind-mounted read-only; compose gains `prometheus` (host **9090**), `alertmanager` (**9093**)
+and `grafana` (**3001**, because 3000 is the `web` service) plus three named volumes. Six scrape
+targets — the JobManager on 9249, the four TaskManagers on 9250, and the three existing exporters —
+all named as compose services, so this satisfies the host-agnostic rule without exception.
+
+*The metric names are the point of this entry.* They were not taken from documentation. A throwaway
+`flink:2.2.0-scala_2.12-java21` JobManager and TaskManager were booted on a scratch network, the
+bundled `TopSpeedWindowing` example submitted to force job- and task-scope metrics into existence,
+and both endpoints scraped. Then a real `prom/prometheus:v2.53.0` was pointed at that pair with the
+actual rules file. Result: all ten rules reported `health: "ok"` with no `lastError`, and
+`FlinkJobCountWrong` and `FlinkTaskManagersMissing` were observed *firing* with correctly rendered
+annotations ("Flink is running 1 jobs, expected 8"). Three things that scrape revealed and that no
+reference would have:
+
+- **Flink exposes everything as a Prometheus `gauge`**, counters included — `numRestarts` among them.
+  `increase()` still works, because Prometheus ignores TYPE metadata at query time, but it emits a
+  "metric might not be a counter" warning that is expected and not a fault
+- **TaskManager series carry `host` as the container IP with dots turned into underscores**
+  (`host="172_20_0_3"`), which changes on every recreate. Anything that groups TaskManagers must use
+  Prometheus's own `instance` label instead
+- **`numRestarts` is JobManager-scope, not TaskManager-scope** (`flink_jobmanager_job_numRestarts`,
+  labelled with `job_name`), so the restart rules read from 9249
+
+Four deliberate deviations from the table in section 02, each because the table would not have
+worked as written:
+
+1. **`FlinkJobManagerDown` (`up == 0`) was added**, and it is listed first for a reason: a dead
+   JobManager is the *quietest* failure in the whole set, because `numRunningJobs != 8` cannot fire
+   when the series does not exist. It inhibits the derived alerts in Alertmanager so a failover pages
+   once instead of six times
+2. **"numRestarts rising" became two rules** — any restart in 15 min (warning), more than five in an
+   hour (critical). M1 converted a poison record from a job that dies into a job that restarts
+   forever; that job stays `RUNNING`, so the job-count alert stays clear, and it never reaches a
+   terminal state, so S4's HistoryServer never sees it either. These two rules are the only thing
+   that does
+3. **Back-pressure reads `backPressuredTimeMsPerSecond`, not the `isBackPressured` gauge** the report
+   named. The gauge is a 0/1 instantaneous sample and a 15 s scrape interval will mostly miss it; the
+   other is milliseconds accumulated between scrapes and is what a threshold can be set against
+4. **Nothing was written for the three exporters.** They are scraped and queryable, but their
+   thresholds were never part of this review and inventing them ships noise
+
+**Two honest gaps.** First, `records_lag_max` is the **one metric name in the file that is not
+verified** — the probe cluster had no Kafka source, so
+`flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max` comes from the
+documented Flink 2.x convention. If it is wrong the rule is *silently dead*: a rule whose selector
+matches nothing never errors and never fires. Confirm on the first deploy with `curl -s
+localhost:9250/metrics | grep -i records_lag_max`. Second, **Alertmanager delivers nowhere.** The
+project has no agreed notification channel, so its default receiver is deliberately empty (the
+upstream `- name: 'null'` idiom) rather than pointed at a placeholder URL that would fail on every
+alert. Grouping and two inhibit rules are in place, so adding a receiver is a one-block edit. Alerts
+remain visible on Alertmanager's UI and Prometheus's `/alerts` meanwhile. Grafana ships with the
+Prometheus datasource provisioned and **no dashboards** — none have been authored, and an empty
+dashboards provider is just another directory to keep in sync.
+
+**What was and was not validated.** `promtool check config` passed on `prometheus.yml` and found the
+rules file (10 rules), and the live run above exercised them end to end. `alertmanager.yml` parses as
+YAML and matches the schema by inspection, but **`amtool check-config` was never run** — no
+`prom/alertmanager` image is cached locally. Related: `prom/prometheus:v2.53.0` is already local,
+while `prom/alertmanager:v0.27.0` and `grafana/grafana:11.1.0` **both need a pull** before the first
+`up`.
+
+**S7 (2026-08-31)** — the last item of the round. Pins: `redis_exporter:v1.86.0` and
+`kafka-exporter:v1.9.0` were **read off the locally cached images** (the OCI
+`org.opencontainers.image.version` label, and the binary's own `--version` respectively) rather than
+recalled; `kafka-ui:v0.7.2` could not be — that image carries neither a version label nor
+Spring's `build-info.properties` — so it is the one pin taken from memory of provectuslabs' last
+release, annotated as such in the file. It fails **loudly** if wrong (`manifest unknown` at `up`),
+which is why it was acceptable to ship unverified where M9's `records_lag_max` was not.
+SHA stamping went two places because either alone is insufficient: `Git-Commit` in each shaded
+jar's manifest (a `${git.sha}` property defaulting to `unknown`, plus `<manifestEntries>` in all 8
+module shade transformers — verified by building with and without `-Dgit.sha`), and the **filename
+the jar is uploaded under** (`curl -F 'jarfile=@x.jar;filename=y.jar'`), which is what Flink's
+`/jars` listing and UI actually display. The manifest is durable but needs the jar in hand; the
+upload name is visible from the cluster but is lost on a JobManager restart.
+
+---
+
+### The dev/prod compose split (2026-08-31)
+
+**Why.** Every item above was applied in place to `docker-compose.yml` — the file developers run on
+a laptop. That was the wrong home for it: production hardening (four 8 GB TaskManagers, ZooKeeper,
+a monitoring stack) makes the dev stack heavy and slow for no dev benefit. User's call: production
+gets its own file, developers get theirs back exactly as it was.
+
+**Shape.** `docker-compose.prod.yml` is a **full standalone copy**, not an override layered with
+`-f a.yml -f b.yml`. That was forced, not preferred: **a compose override can add and modify but
+cannot remove**, and prod has to drop dev's single `taskmanager` service in favour of
+`taskmanager-1..4`. An override would have left a fifth, unwanted TaskManager registering with the
+cluster. The price is duplication — **a service added to one file must be added to the other by
+hand** — and that warning is written into both headers and the README rather than left implicit.
+
+**Decisions inside the split, each with a reason that is not obvious from the diff:**
+
+- **`docker-compose.yml` was restored from `f023a47`, not hand-reverted.** `origin/main` had
+  already merged the branch at `e130d6f`, so main's copy *contains* M1/M7/M2a/M2b/S5 — it is not a
+  clean baseline. `f023a47` is the last commit that touched the file before M1. Verified with
+  `diff`; identical apart from a 3-line header.
+- **NiFi is in the prod file, byte-identical** (user's call). "Out of scope" has always meant *do
+  not modify it*, which is not the same as *remove it*; removing it would have left the prod stack
+  with no ingestion if prod does in fact run it from here.
+- **Volume names and the compose project name are unchanged across both files.** Deliberate: a
+  distinct project name would re-prefix every volume, and an existing box switching to the prod file
+  would come up with empty Kafka and Postgres volumes and no error. The two stacks are never meant
+  to run side by side on one host.
+- **S7's pins live only in the prod file.** Dev is allowed to float; "restore it as it was" wins.
+- **The shared `flink/normalizer/Dockerfile` was left alone.** Its HA/archive `mkdir`+`chown` is
+  inert in dev (the dirs exist, nothing is mounted on them) and load-bearing in prod, so one image
+  still serves both.
+- **`run-job.sh` now *discovers* TaskManager containers** (`docker ps` filtered on
+  `^taskmanager(-[0-9]+)?$`) instead of the `taskmanager-1..4` list M2b baked in. This is fallout
+  the split created — dev is back to one `taskmanager` — and it needs the empty-array guard,
+  because `"${arr[@]}"` on an empty array aborts under `set -u`.
+- **Makefile: prod targets added, dev targets untouched** (user's call). They differ on purpose in
+  three ways — no `down -v` anywhere in the prod path, no `git pull` (check out the ref you mean to
+  deploy), and `--build` unconditional (the Dockerfile ownership fix). `prod-verify` counts
+  `RUNNING` jobs against `ALL_JOBS` and fails the deploy on a mismatch.
+
+**What this closed:** H1 (the `down -v` target is now unambiguously dev-only), H3 (the deploy
+asserts its own job count), and the `--build` deploy note. **Half of H2** — no more `git pull` in
+the deploy path; prod still builds on the box. It also defuses the standing concern that 4 × 8 GB of
+TaskManager could not coexist with "runnable on 5+ dev/test envs": that sizing is now prod-only.
+**Still unverified: neither file has been brought up.** The split is a text-level change validated
+by `config --quiet` and by diffing the two service sets.
+
+---
+
 **Verification still owed on all four**, none of it possible from here: kill a job and watch it come
 back (M1); read the TaskManager startup log's own memory breakdown and confirm both the `--add-opens`
 list and the heap-dump flags appear in the JVM options line (M2a); confirm 12 free slots and that the
@@ -90,7 +309,7 @@ not that M4 works (M4).
 
 ---
 
-## Two standing decisions (user, 2026-08-29)
+## Three standing decisions (user, 2026-08-29 / 2026-08-31)
 
 - **Checkpointing is POSTPONED, not rejected.** Leave it off and the pipeline as it is for now.
   Section 03 records the reason and what would have to be true to revisit it. Everything that only
@@ -98,6 +317,16 @@ not that M4 works (M4).
 - **NiFi is out of scope entirely.** It is not managed from our side and its compose entry is
   development-only. Nothing in this document proposes a NiFi change, and NiFi is not part of any
   sizing, hazard or configuration item here.
+- **`docker-compose.yml` must stay host-agnostic — no host IPs, no host-specific bindings**
+  (user, 2026-08-31). This one file runs on **five-plus dev and test environments**, so a literal
+  like `192.168.150.104` is not merely unportable: the container **fails to start** on any host
+  that does not own that address (`bind: cannot assign requested address`). `127.0.0.1` is no
+  better — it makes the UI unreachable from anywhere but the box itself, which breaks the normal
+  dev workflow of hitting a shared test box from a laptop. **This is why M8 was dropped**, and it
+  binds every later item too: **M3** must not hard-code a ZooKeeper host address and **M9** must
+  not hard-code scrape targets or a Grafana root URL. If a per-host binding is ever wanted, it
+  belongs in a `docker-compose.override.yml` on that host or in an env var with a permissive
+  default — not in this file.
 
 ---
 
@@ -298,7 +527,7 @@ The same reasoning is worth a separate pass over the other published ports (`kaf
 `market-subscriptions` 8090 — already flagged unauthenticated in `todo.md`, Postgres 5432 on
 `postgres/postgres`, Redis 6379 with no password). Out of scope for this round.
 
-### M9 — Actually collect the metrics already exported
+### M9 — Actually collect the metrics already exported *(APPLIED 2026-08-31 — see "What has landed")*
 
 Both Flink processes run a Prometheus reporter, and there are `kafka-exporter`, `redis-exporter` and
 `lpa-staleness-exporter` alongside. Nothing scrapes any of them. Every failure in section 01 is
@@ -320,6 +549,11 @@ The two checkpoint alerts from the original report (`numberOfFailedCheckpoints`,
 
 Exact metric names differ between Flink versions and depend on the reporter's scope format. Build the
 rules against a live `curl localhost:9249/metrics`, not from a reference.
+
+**As applied**, this became `monitoring/` plus three compose services, and the table above changed in
+four places: a `FlinkJobManagerDown` rule was added ahead of everything else, "restart loop" became
+two rules, back-pressure uses `backPressuredTimeMsPerSecond` rather than the `isBackPressured` gauge,
+and one metric name — the Kafka one — is still unverified. The reasons are in the landed entry.
 
 ---
 
@@ -404,7 +638,7 @@ checkpoint**, worst case ≈ interval + checkpoint duration, average ≈ half th
 
 ## 05 · Should — after the section 02 items land
 
-### S4 — Run the HistoryServer
+### S4 — Run the HistoryServer *(APPLIED 2026-08-31 — see "What has landed")*
 
 When a job fails overnight and the JobManager restarts, the exception, the failing subtask and the
 metrics vanish with it. Archiving is what makes post-mortems possible. Works without checkpointing.
@@ -416,6 +650,11 @@ jobmanager.archive.fs.dir: file:///opt/flink/archive
 historyserver.archive.fs.dir: file:///opt/flink/archive
 historyserver.archive.fs.refresh-interval: 10000
 ```
+
+As applied this also needs `historyserver.web.address: 0.0.0.0` + `.web.port: 8082`, publishes on
+**host 7071** (8082 and 8081 are taken), takes no `depends_on`, and required the Dockerfile
+`mkdir`/`chown` for `/opt/flink/archive` — without which the JobManager cannot write the archive at
+all. Only terminal jobs are archived; a job stuck restarting never appears.
 
 ### S5 — Health check the TaskManagers
 
@@ -433,12 +672,21 @@ healthcheck:
 Proves the JVM is serving, not that it is registered with the JobManager — that is M9's
 "TaskManagers missing" alert. The two together cover it.
 
-### S7 — Pin every image, and version the jars
+### S7 — Pin every image, and version the jars *(APPLIED 2026-08-31 — see "What has landed")*
 
 `kafka-ui:latest`, `redis_exporter:latest` and `kafka-exporter:latest` mean a rebuild can silently
 change what runs. Pin to a tag, ideally a digest. Separately every job jar is `1.0-SNAPSHOT`, so
 nothing on a running cluster says which commit is deployed — stamp the git SHA into the manifest and
 log it from `main()`.
+
+**Two deviations when it was applied.** *Tags, not digests*: the three cached images report
+`RepoDigests` whose value equals their local image ID, which is not a registry manifest digest and
+would not resolve on another host — pinning to those would have produced a file that cannot pull.
+*Manifest + upload filename, not `main()` logging*: logging the SHA at job start means editing 8
+`main()` methods across three independently-built projects; the upload filename gets the SHA onto
+the cluster's own `/jars` listing for one line in `run-job.sh`. The tradeoff is that the listing is
+lost on a JobManager restart, so after an HA recovery the running jobs no longer say what they are.
+`main()` logging is still the durable answer if that matters later.
 
 ### S8 — Kafka replication factor 1 caps what M4 can promise
 
@@ -486,7 +734,7 @@ jobmanager:
         zookeeper:
             condition: service_healthy
     ports:
-        - "192.168.150.104:7070:8081"             # M8 — was "7070:8081"
+        - "7070:8081"                             # M8 DROPPED — see standing decisions
         - "9249:9249"
     environment:
         FLINK_PROPERTIES: |

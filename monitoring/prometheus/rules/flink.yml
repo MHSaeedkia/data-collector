@@ -1,0 +1,176 @@
+# Alert rules for the Flink cluster.
+#
+# Metric names were taken from a live scrape of flink:2.2.0-scala_2.12-java21
+# on 2026-08-31 (a throwaway JobManager + TaskManager running the bundled
+# TopSpeedWindowing example), not from documentation — the names and the scope
+# prefixes differ between Flink versions. Two consequences worth knowing:
+#
+#   * Flink exposes everything as a Prometheus `gauge`, including counters like
+#     numRestarts. `increase()` still works — Prometheus ignores the TYPE
+#     metadata at query time and applies its own reset detection.
+#   * TaskManager series carry `host` as the container IP with dots turned into
+#     underscores (host="172_20_0_3"), which changes on every recreate. Group
+#     and report on Prometheus's own `instance` label instead.
+#
+# The two checkpoint alerts from the original review
+# (numberOfFailedCheckpoints, lastCheckpointDuration) are deliberately absent:
+# they are parked with the checkpointing postponement.
+#
+# No rules for kafka-exporter / redis-exporter / lpa-staleness-exporter. They
+# are scraped and queryable, but their thresholds were never part of this
+# review and guessing them would ship noise.
+
+groups:
+    - name: flink-cluster
+      rules:
+          # Guards every rule below it. `numRunningJobs != 8` cannot fire when
+          # the JobManager is gone, because the series is gone too — a dead
+          # JobManager would otherwise be the quietest failure of the set.
+          - alert: FlinkJobManagerDown
+            expr: up{job="flink-jobmanager"} == 0
+            for: 2m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Flink JobManager is not scrapeable"
+                description: >-
+                    {{ $labels.instance }} has failed scraping for 2 minutes.
+                    While this fires, treat every other Flink alert as unknown
+                    rather than clear.
+
+          # The whole first class of failures in the review collapses into this
+          # one number: a job that died, was never submitted, or exhausted its
+          # restart budget all end up here. 8, not 7 — `ALL_JOBS := adjustment
+          # merger $(NORMALIZER_JOBS)`. Update this if a job is added.
+          #
+          # `for: 5m` is deliberately longer than a full `make run-all-jobs`,
+          # which submits all eight in well under a minute, so an ordinary
+          # deploy does not page anyone.
+          - alert: FlinkJobCountWrong
+            expr: flink_jobmanager_numRunningJobs != 8
+            for: 5m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Flink is running {{ $value }} jobs, expected 8"
+                description: >-
+                    A job is missing or an extra one is running. Note that
+                    HA recovery re-submits the existing graphs, so a second
+                    `make run-all-jobs` after a JobManager failover produces 16
+                    and trips this too.
+
+          - alert: FlinkTaskManagersMissing
+            expr: flink_jobmanager_numRegisteredTaskManagers < 4
+            for: 2m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Only {{ $value }} of 4 TaskManagers are registered"
+                description: >-
+                    The cluster runs 8 jobs in 8 slots with nothing spare, so a
+                    lost TaskManager leaves jobs unschedulable. A TaskManager
+                    that is up but unregistered is usually the HA keys: every
+                    TaskManager needs the same high-availability block as the
+                    JobManager, or leader fencing rejects it.
+
+          # A TaskManager can pass its own healthcheck — the JVM serves 9250 —
+          # while never registering with the JobManager. This catches the
+          # process being gone; FlinkTaskManagersMissing catches the other half.
+          - alert: FlinkTaskManagerDown
+            expr: up{job="flink-taskmanager"} == 0
+            for: 2m
+            labels:
+                severity: warning
+            annotations:
+                summary: "TaskManager {{ $labels.instance }} is not scrapeable"
+
+    - name: flink-jobs
+      rules:
+          # M1 gave every job an exponential-delay restart strategy, which means
+          # a poison record now produces a job that restarts forever instead of
+          # one that dies. That job stays in RUNNING, so it never reaches a
+          # terminal state and never appears in the HistoryServer either. This
+          # rule is the only thing that sees it.
+          - alert: FlinkJobRestarting
+            expr: increase(flink_jobmanager_job_numRestarts[15m]) > 0
+            for: 0m
+            labels:
+                severity: warning
+            annotations:
+                summary: "Job {{ $labels.job_name }} restarted in the last 15m"
+
+          - alert: FlinkJobRestartLoop
+            expr: increase(flink_jobmanager_job_numRestarts[1h]) > 5
+            for: 0m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Job {{ $labels.job_name }} restarted {{ $value }} times in an hour"
+                description: >-
+                    Restarting rather than failing, so the job count alert stays
+                    clear and the data is stale anyway. With no checkpointing
+                    every restart re-reads from `latest` and re-baselines, so a
+                    loop here also means a resync loop against the exchanges.
+
+          # backPressuredTimeMsPerSecond rather than the isBackPressured gauge:
+          # the gauge is a 0/1 sample that a 15s scrape interval will mostly
+          # miss, while this is time accumulated between scrapes. 500 of every
+          # 1000ms, sustained for 15 minutes, is a real bottleneck rather than a
+          # burst.
+          - alert: FlinkTaskBackPressured
+            expr: avg_over_time(flink_taskmanager_job_task_backPressuredTimeMsPerSecond[15m]) > 500
+            for: 15m
+            labels:
+                severity: warning
+            annotations:
+                summary: "{{ $labels.task_name }} in {{ $labels.job_name }} is back-pressured"
+                description: >-
+                    Back-pressured for over half of each second for 15 minutes.
+                    The stage named here is upstream of the real bottleneck —
+                    look at the first task downstream of it that is not
+                    back-pressured.
+
+          # ⚠ UNVERIFIED METRIC NAME. Every other name in this file came from a
+          # live scrape; this one could not, because the probe cluster had no
+          # Kafka source. The path is the documented Flink 2.x KafkaSource one,
+          # but confirm it on the first real deploy with:
+          #
+          #   curl -s localhost:9250/metrics | grep -i records_lag_max
+          #
+          # If it is absent or spelled differently, this rule is silently dead —
+          # it will never fire rather than error.
+          - alert: FlinkKafkaSourceLag
+            expr: flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max > 50000
+            for: 10m
+            labels:
+                severity: warning
+            annotations:
+                summary: "{{ $labels.job_name }} is {{ $value }} records behind"
+
+    - name: flink-jvm
+      rules:
+          # The review's baseline row 6 — the OOM — in advance. Heap is the
+          # sizing set by M2a/M2b, so a sustained breach here is the signal that
+          # the 4x8g TaskManager sizing needs revisiting rather than that a job
+          # leaked.
+          - alert: FlinkTaskManagerHeapPressure
+            expr: >-
+                flink_taskmanager_Status_JVM_Memory_Heap_Used
+                / flink_taskmanager_Status_JVM_Memory_Heap_Max > 0.9
+            for: 15m
+            labels:
+                severity: warning
+            annotations:
+                summary: "TaskManager {{ $labels.instance }} heap over 90% for 15m"
+
+          - alert: FlinkTaskManagerGcThrashing
+            expr: flink_taskmanager_Status_JVM_GarbageCollector_All_TimeMsPerSecond > 200
+            for: 15m
+            labels:
+                severity: warning
+            annotations:
+                summary: "TaskManager {{ $labels.instance }} spending >20% of wall time in GC"
+                description: >-
+                    Reported directly by Flink as ms of GC per second, so no
+                    rate() is needed. Sustained, this precedes the heap alert
+                    and is the earlier signal of the two.

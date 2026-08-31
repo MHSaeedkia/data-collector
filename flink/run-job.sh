@@ -15,10 +15,24 @@ source "$(dirname "${BASH_SOURCE[0]}")/job-discovery.sh"
 
 FLINK_API="${FLINK_API:-http://localhost:7070}"
 
-# A job can be scheduled onto any TaskManager, so log lookups read all of them.
-TASKMANAGERS=(taskmanager-1 taskmanager-2 taskmanager-3 taskmanager-4)
+# S7: every jar is 1.0-SNAPSHOT, so a jar name alone never said which commit is running.
+# The SHA goes two places: the jar manifest (Git-Commit, via -Dgit.sha) and the name the
+# jar is uploaded under, which is what Flink's /jars listing and UI actually show.
+GIT_SHA=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || echo unknown)
+if [[ "$GIT_SHA" != "unknown" ]] && ! git -C "$(dirname "${BASH_SOURCE[0]}")" diff --quiet HEAD 2>/dev/null; then
+    GIT_SHA="${GIT_SHA}-dirty"
+fi
+
+# A job can be scheduled onto any TaskManager, so log lookups read all of them. Discovered
+# rather than listed: docker-compose.yml (dev) runs a single `taskmanager`, docker-compose.prod.yml
+# runs `taskmanager-1..4`, and this script has to work against both.
+TASKMANAGERS=($(docker ps --format '{{.Names}}' | grep -E '^taskmanager(-[0-9]+)?$' | sort))
 
 tm_logs() {
+    if [[ ${#TASKMANAGERS[@]} -eq 0 ]]; then
+        echo "    (no running taskmanager container found)"
+        return
+    fi
     for tm in "${TASKMANAGERS[@]}"; do
         # || true: a stopped TM must not abort the diagnostics under pipefail
         docker logs --since "$SINCE" "$tm" 2>&1 | sed "s/^/[$tm] /" || true
@@ -38,11 +52,11 @@ fi
 # 1. Build. Multi-module needs -am so common/ is built alongside; single-module builds whole project.
 if [[ -n "${MODULE:-}" ]]; then
     echo "==> Building $MODULE ($(basename "$PROJECT"))..."
-    mvn -f "$PROJECT/pom.xml" -pl "$MODULE" -am package -q -DskipTests
+    mvn -f "$PROJECT/pom.xml" -pl "$MODULE" -am package -q -DskipTests -Dgit.sha="$GIT_SHA"
     TARGET="$PROJECT/$MODULE/target"
 else
     echo "==> Building $JOB..."
-    mvn -f "$PROJECT/pom.xml" package -q -DskipTests
+    mvn -f "$PROJECT/pom.xml" package -q -DskipTests -Dgit.sha="$GIT_SHA"
     TARGET="$PROJECT/target"
 fi
 
@@ -52,11 +66,12 @@ if [[ -z "$JAR" ]]; then
     echo "ERROR: no jar found in $TARGET"
     exit 1
 fi
-echo "    Built: $JAR"
+echo "    Built: $JAR ($GIT_SHA)"
 
-# 2. Upload JAR to Flink
+# 2. Upload JAR to Flink, under a name carrying the SHA
 echo "==> Uploading JAR..."
-UPLOAD_RESP=$(curl -s -X POST -H "Expect:" -F "jarfile=@${JAR}" "${FLINK_API}/jars/upload")
+UPLOAD_NAME="$(basename "${JAR%.jar}")-${GIT_SHA}.jar"
+UPLOAD_RESP=$(curl -s -X POST -H "Expect:" -F "jarfile=@${JAR};filename=${UPLOAD_NAME}" "${FLINK_API}/jars/upload")
 JAR_ID=$(echo "$UPLOAD_RESP" | jq -r '.filename | split("/") | last')
 if [[ -z "$JAR_ID" || "$JAR_ID" == "null" ]]; then
     echo "ERROR: JAR upload failed: $UPLOAD_RESP"
@@ -110,4 +125,4 @@ done
 echo ""
 echo "==> TaskManager logs:"
 tm_logs | grep -E "io.tibobit|ERROR|WARN" \
-    || echo "    (no matching log lines — check 'docker logs taskmanager-N' for details)"
+    || echo "    (no matching log lines — check 'docker logs <taskmanager>' for details)"
