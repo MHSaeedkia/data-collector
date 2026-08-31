@@ -58,6 +58,13 @@ public class AggregatorJob {
                 .name("aggregate")
                 .sinkTo(KafkaSink.<AggregatedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
+                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                        // failure drops records silently. Idempotence is the load-bearing one:
+                        // plain retries can reorder writes, which corrupts the book downstream.
+                        .setProperty("acks", "all")
+                        .setProperty("enable.idempotence", "true")
+                        .setProperty("retries", "2147483647")
+                        .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<AggregatedOrderBook>builder()
                                 // Route each record to p{pair_id}-{side} (e.g. p1-asks).
                                 .setTopicSelector((TopicSelector<AggregatedOrderBook>) book ->

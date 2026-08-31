@@ -1,13 +1,13 @@
 ---
 # Full stack for the raw-normalization pipeline: the Flink image builds from ./flink/normalizer
-# and the taskmanager has 8 slots, enough for the 5 upstream normalizer jobs PLUS the terminal
-# aggregator submitted to this one cluster via flink/run-job.sh.
+# and the four taskmanagers have 3 slots each, enough for the 8 jobs submitted to this one
+# cluster via flink/run-job.sh with four slots spare.
 services:
     jobmanager:
         build: ./flink/normalizer
         container_name: jobmanager
         hostname: jobmanager
-        restart: on-failure
+        restart: unless-stopped
         command: jobmanager
         ports:
             - "7070:8081"
@@ -15,6 +15,18 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
+
+                # Explicit on purpose: Flink defaults restart-strategy.type to
+                # `disable` only because checkpointing is off, so today the first
+                # exception in any job kills it permanently. Backoff is longer
+                # than Flink's defaults because with no checkpoints every restart
+                # costs a full resync.
+                restart-strategy.type: exponential-delay
+                restart-strategy.exponential-delay.initial-backoff: 10 s
+                restart-strategy.exponential-delay.max-backoff: 5 min
+                restart-strategy.exponential-delay.backoff-multiplier: 2.0
+                restart-strategy.exponential-delay.reset-backoff-threshold: 15 min
+
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
                 metrics.reporter.prom.port: 9249
@@ -22,16 +34,29 @@ services:
             - data-collector-jobmanager-logs:/opt/flink/log
         networks:
             - data-collector-net
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
         healthcheck:
             test: [ "CMD", "curl", "-f", "http://localhost:8081/overview" ]
             interval: 10s
             retries: 5
 
-    taskmanager:
+    # Four TaskManagers with 3 slots each (12 total) rather than one with 8.
+    # The 8 jobs at parallelism 1 filled the single TM exactly, so there was no
+    # room for a 9th job or any parallelism increase; spreading them over four
+    # JVMs also means one OOM takes down ~2 jobs instead of the whole pipeline.
+    #
+    # SIZING NOT VERIFIED AGAINST THE TARGET HOST: 4 x 8g here plus everything
+    # else in this file. Check free RAM on the box before deploying and scale
+    # process.size / the container limit together if it does not fit.
+    taskmanager-1:
         build: ./flink/normalizer
-        container_name: taskmanager
-        hostname: taskmanager
-        restart: on-failure
+        container_name: taskmanager-1
+        hostname: taskmanager-1
+        restart: unless-stopped
         command: taskmanager
         ports:
             - "9250:9250"
@@ -41,37 +66,208 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 8
+                taskmanager.numberOfTaskSlots: 3
+
+                # The image default is 1728m, which leaves roughly 384 MB of task
+                # heap shared by every job. managed.fraction is dropped from 0.4
+                # because the hashmap state backend barely uses managed memory.
+                # NEVER set env.java.opts.all here: the image uses that key for the
+                # Java 21 --add-opens list and setting it replaces the list.
+                taskmanager.memory.process.size: 8g
+                taskmanager.memory.managed.fraction: 0.1
+                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
+
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
                 metrics.reporter.prom.port: 9250
         volumes:
-            - data-collector-taskmanager-logs:/opt/flink/log
+            - data-collector-taskmanager-1-logs:/opt/flink/log
         networks:
             - data-collector-net
+        deploy:
+            resources:
+                limits:
+                    # Must stay ABOVE process.size. Set it lower and the kernel
+                    # OOM-killer kills the container before Flink's memory
+                    # accounting can report anything.
+                    memory: 9g
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
 
-    # taskmanager-2:
-    #     build: ./flink/normalizer
-    #     container_name: taskmanager-2
-    #     hostname: taskmanager-2
-    #     restart: on-failure
-    #     command: taskmanager
-    #     ports:
-    #         - "9251:9250"
-    #     depends_on:
-    #         jobmanager:
-    #             condition: service_healthy
-    #     environment:
-    #         FLINK_PROPERTIES: |
-    #             jobmanager.rpc.address: jobmanager
-    #             taskmanager.numberOfTaskSlots: 8
-    #             metrics.reporters: prom
-    #             metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
-    #             metrics.reporter.prom.port: 9250
-    #     volumes:
-    #         - data-collector-taskmanager-2-logs:/opt/flink/log
-    #     networks:
-    #         - data-collector-net
+    taskmanager-2:
+        build: ./flink/normalizer
+        container_name: taskmanager-2
+        hostname: taskmanager-2
+        restart: unless-stopped
+        command: taskmanager
+        ports:
+            - "9251:9250"
+        depends_on:
+            jobmanager:
+                condition: service_healthy
+        environment:
+            FLINK_PROPERTIES: |
+                jobmanager.rpc.address: jobmanager
+                taskmanager.numberOfTaskSlots: 3
+
+                # The image default is 1728m, which leaves roughly 384 MB of task
+                # heap shared by every job. managed.fraction is dropped from 0.4
+                # because the hashmap state backend barely uses managed memory.
+                # NEVER set env.java.opts.all here: the image uses that key for the
+                # Java 21 --add-opens list and setting it replaces the list.
+                taskmanager.memory.process.size: 8g
+                taskmanager.memory.managed.fraction: 0.1
+                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
+
+                metrics.reporters: prom
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9250
+        volumes:
+            - data-collector-taskmanager-2-logs:/opt/flink/log
+        networks:
+            - data-collector-net
+        deploy:
+            resources:
+                limits:
+                    # Must stay ABOVE process.size. Set it lower and the kernel
+                    # OOM-killer kills the container before Flink's memory
+                    # accounting can report anything.
+                    memory: 9g
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
+
+    taskmanager-3:
+        build: ./flink/normalizer
+        container_name: taskmanager-3
+        hostname: taskmanager-3
+        restart: unless-stopped
+        command: taskmanager
+        ports:
+            - "9252:9250"
+        depends_on:
+            jobmanager:
+                condition: service_healthy
+        environment:
+            FLINK_PROPERTIES: |
+                jobmanager.rpc.address: jobmanager
+                taskmanager.numberOfTaskSlots: 3
+
+                # The image default is 1728m, which leaves roughly 384 MB of task
+                # heap shared by every job. managed.fraction is dropped from 0.4
+                # because the hashmap state backend barely uses managed memory.
+                # NEVER set env.java.opts.all here: the image uses that key for the
+                # Java 21 --add-opens list and setting it replaces the list.
+                taskmanager.memory.process.size: 8g
+                taskmanager.memory.managed.fraction: 0.1
+                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
+
+                metrics.reporters: prom
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9250
+        volumes:
+            - data-collector-taskmanager-3-logs:/opt/flink/log
+        networks:
+            - data-collector-net
+        deploy:
+            resources:
+                limits:
+                    # Must stay ABOVE process.size. Set it lower and the kernel
+                    # OOM-killer kills the container before Flink's memory
+                    # accounting can report anything.
+                    memory: 9g
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
+
+    taskmanager-4:
+        build: ./flink/normalizer
+        container_name: taskmanager-4
+        hostname: taskmanager-4
+        restart: unless-stopped
+        command: taskmanager
+        ports:
+            - "9253:9250"
+        depends_on:
+            jobmanager:
+                condition: service_healthy
+        environment:
+            FLINK_PROPERTIES: |
+                jobmanager.rpc.address: jobmanager
+                taskmanager.numberOfTaskSlots: 3
+
+                # The image default is 1728m, which leaves roughly 384 MB of task
+                # heap shared by every job. managed.fraction is dropped from 0.4
+                # because the hashmap state backend barely uses managed memory.
+                # NEVER set env.java.opts.all here: the image uses that key for the
+                # Java 21 --add-opens list and setting it replaces the list.
+                taskmanager.memory.process.size: 8g
+                taskmanager.memory.managed.fraction: 0.1
+                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
+
+                metrics.reporters: prom
+                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+                metrics.reporter.prom.port: 9250
+        volumes:
+            - data-collector-taskmanager-4-logs:/opt/flink/log
+        networks:
+            - data-collector-net
+        deploy:
+            resources:
+                limits:
+                    # Must stay ABOVE process.size. Set it lower and the kernel
+                    # OOM-killer kills the container before Flink's memory
+                    # accounting can report anything.
+                    memory: 9g
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
+
     kafka:
         image: confluentinc/cp-kafka:7.8.0
         container_name: kafka
@@ -361,8 +557,10 @@ volumes:
     data-collector-nifi-content-repository:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
-    data-collector-taskmanager-logs:
+    data-collector-taskmanager-1-logs:
     data-collector-taskmanager-2-logs:
+    data-collector-taskmanager-3-logs:
+    data-collector-taskmanager-4-logs:
     data-collector-redis-data:
 
 networks:

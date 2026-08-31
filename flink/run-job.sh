@@ -15,6 +15,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/job-discovery.sh"
 
 FLINK_API="${FLINK_API:-http://localhost:7070}"
 
+# A job can be scheduled onto any TaskManager, so log lookups read all of them.
+TASKMANAGERS=(taskmanager-1 taskmanager-2 taskmanager-3 taskmanager-4)
+
+tm_logs() {
+    for tm in "${TASKMANAGERS[@]}"; do
+        # || true: a stopped TM must not abort the diagnostics under pipefail
+        docker logs --since "$SINCE" "$tm" 2>&1 | sed "s/^/[$tm] /" || true
+    done
+}
+
 JOB="${1:-}"
 read -r PROJECT MODULE <<< "$(resolve_job "$JOB")"
 
@@ -89,7 +99,7 @@ while true; do
                 | jq -r '."root-exception" // .exceptionHistory.entries[0].stacktrace // "No exception detail available"'
             echo ""
             echo "==> TaskManager logs (last 50 lines):"
-            docker logs --since "$SINCE" taskmanager 2>&1 | tail -50
+            tm_logs | tail -50
             exit 1
             ;;
     esac
@@ -99,5 +109,5 @@ done
 # 5. Show relevant logs from this run
 echo ""
 echo "==> TaskManager logs:"
-docker logs --since "$SINCE" taskmanager 2>&1 | grep -E "io.tibobit|ERROR|WARN" \
-    || echo "    (no matching log lines — check 'docker logs taskmanager' for details)"
+tm_logs | grep -E "io.tibobit|ERROR|WARN" \
+    || echo "    (no matching log lines — check 'docker logs taskmanager-N' for details)"
