@@ -1,0 +1,15 @@
+{
+	"push": {
+		"channel": "trades:BTC_USDT",
+		"pub": {
+			"data": {
+				"symbol": "BTC_USDT",
+				"event": "trade",
+				"price": "62800.00",
+				"quantity": "0.01000000",
+				"event_time": "2027-01-15T08:00:00Z"
+			},
+			"offset": 5551
+		}
+	}
+}

@@ -23,8 +23,6 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- S7: overridden by run-job.sh (-Dgit.sha=...); `unknown` when built by hand. -->
-        <git.sha>unknown</git.sha>
         <flink.version>2.2.0</flink.version>
         <flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
         <avro.version>1.11.4</avro.version>
@@ -60,16 +58,6 @@
                 <groupId>org.apache.flink</groupId>
                 <artifactId>flink-connector-kafka</artifactId>
                 <version>${flink.kafka.connector.version}</version>
-                <scope>provided</scope>
-            </dependency>
-
-            <!-- Required by flink-connector-kafka at runtime and NOT a transitive dep of it.
-                 On the cluster it arrives inside flink-dist, which is why nothing needed it until
-                 run-local.sh started jobs off-cluster; provided, so it stays out of the jar. -->
-            <dependency>
-                <groupId>org.apache.flink</groupId>
-                <artifactId>flink-connector-base</artifactId>
-                <version>${flink.version}</version>
                 <scope>provided</scope>
             </dependency>
 
@@ -165,51 +153,6 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <!-- What the cluster image puts in /opt/flink/lib, declared once for every module. `provided`
-         is not transitive, so a module that only uses avro through normalizer-common never
-         resolved it: fine on the cluster, where the image hands the same lib set to every job,
-         but off-cluster (run-local.sh) that classpath has to be reconstructed from the poms.
-         Keep in step with Dockerfile, which is still the source of truth for the image itself.
-         All provided — the shaded jars are unchanged. -->
-    <dependencies>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-base</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.avro</groupId>
-            <artifactId>avro</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-avro</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-avro-confluent-registry</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.confluent</groupId>
-            <artifactId>kafka-schema-registry-client</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-
-        <!-- flink-clients carries the LocalExecutorFactory that env.execute() looks up to start an
-             in-process MiniCluster, so it is what run-local.sh and an IDE launch need. `provided`,
-             not `test`: it ships inside flink-dist on the cluster exactly like the deps above, and
-             the two scopes are identical to shade — but only `provided` is on the classpath the IDE
-             hands a src/main class, so `test` made an F5 launch die with "No ExecutorFactory". -->
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-clients</artifactId>
-            <version>${flink.version}</version>
-            <scope>provided</scope>
-        </dependency>
-    </dependencies>
 
     <build>
         <pluginManagement>

@@ -1,0 +1,8 @@
+io/tibobit/orderbook/aggregation/OrderBookMergerTest$Update.class
+io/tibobit/orderbook/aggregation/OrderBookMergerTest$Snapshot.class
+io/tibobit/orderbook/serializer/ConsolidatedOrderBookSerializerTest.class
+io/tibobit/orderbook/deserializer/OrderBookEventDeserializerTest.class
+io/tibobit/orderbook/model/OrderBookEventTypeTest.class
+io/tibobit/orderbook/source/PairsLoaderTest.class
+io/tibobit/orderbook/aggregation/OrderBookMergerTest$MergeAndSort.class
+io/tibobit/orderbook/aggregation/OrderBookMergerTest.class

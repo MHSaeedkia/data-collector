@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * Tests {@link BookBuildFunction} through Flink's keyed harness so the real keyed state backend
@@ -240,53 +239,6 @@ class BookBuildFunctionTest {
                 .isGreaterThanOrEqualTo(out.getPipelineTimings().getBookBuildIn());
     }
 
-    // ---- simulation flag ---------------------------------------------------------
-
-    @Test
-    @DisplayName("the emitted book carries the producing event's simulation flag")
-    void carriesSimulationFlag() throws Exception {
-        RawOrderBookEvent simulated = event("snapshot", levels("10", "1"), levels("9", "3"));
-        simulated.setSimulation(1);
-
-        assertThat(process(simulated).getSimulation()).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("an unflagged event emits a live (0) book")
-    void defaultsToLive() throws Exception {
-        assertThat(process(event("snapshot", levels("10", "1"), List.of())).getSimulation())
-                .isZero();
-    }
-
-    @Test
-    @DisplayName("the flag follows the latest event, it is not sticky book state")
-    void flagFollowsLatestEvent() throws Exception {
-        RawOrderBookEvent simulated = event("snapshot", levels("10", "1"), List.of());
-        simulated.setSimulation(1);
-        assertThat(process(simulated).getSimulation()).isEqualTo(1);
-
-        // The book is unchanged state, but the flag is a property of the feed, not of the levels.
-        assertThat(process(event("update", levels("11", "2"), List.of())).getSimulation()).isZero();
-    }
-
-    @Test
-    @DisplayName("a reset empties the book and still reports the reset event's flag")
-    void resetKeepsFlag() throws Exception {
-        RawOrderBookEvent simulated = event("snapshot", levels("10", "1"), levels("9", "3"));
-        simulated.setSimulation(1);
-        process(simulated);
-
-        RawOrderBookEvent reset = event("reset", null, null, null);
-        reset.setSimulation(1);
-        OrderBookSnapshot out = process(reset);
-
-        assertThat(out.getAsks()).isEmpty();
-        assertThat(out.getBids()).isEmpty();
-        // Job 6 drops the exchange on an empty book — but while it is still in flight the record
-        // must not claim to be live data.
-        assertThat(out.getSimulation()).isEqualTo(1);
-    }
-
     // ---- keying ------------------------------------------------------------------
 
     @Test
@@ -299,136 +251,5 @@ class BookBuildFunctionTest {
         OrderBookSnapshot out = process(otherPair);
 
         pricesOf(out.getAsks()).containsExactly("20");
-    }
-
-    // ---- lineage -----------------------------------------------------------------
-
-    /** Job 4 stamped an id on every event that reaches here; these stand in for those. */
-    private static RawOrderBookEvent from(RawOrderBookEvent event, String id) {
-        event.setId(id);
-        return event;
-    }
-
-    /**
-     * The defining case for this job: a book assembled from three separate events. The record names
-     * the event that caused THIS emit; who each level belongs to is on the levels, which is why the
-     * state has to remember which event set each one.
-     */
-    @Test
-    @DisplayName("a book made of several events names the triggering one and attributes each level")
-    void namesTheTriggerAndAttributesEachLevel() throws Exception {
-        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-a"));
-        process(from(event("update", levels("11", "2"), List.of()), "ev-b"));
-        OrderBookSnapshot out = process(from(event("update", List.of(), levels("9", "3")), "ev-c"));
-
-        assertThat(out.getTriggerId()).isEqualTo("ev-c");
-        assertThat(out.getAsks()).extracting(PriceLevel::getSourceId).containsExactly("ev-a", "ev-b");
-        assertThat(out.getBids()).extracting(PriceLevel::getSourceId).containsExactly("ev-c");
-        assertThat(out.getId()).isNotBlank();
-    }
-
-    /**
-     * A level updated by a later event belongs to that event, so the earlier one stops being named
-     * anywhere once nothing it set is still resting.
-     */
-    @Test
-    @DisplayName("overwriting a level transfers it to the newer event, retiring the older one")
-    void overwrittenLevelChangesOwner() throws Exception {
-        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-old"));
-        OrderBookSnapshot out = process(from(event("update", levels("10", "5"), List.of()), "ev-new"));
-
-        assertThat(out.getAsks()).extracting(PriceLevel::getSourceId).containsExactly("ev-new");
-        assertThat(out.getTriggerId()).isEqualTo("ev-new");
-    }
-
-    /**
-     * THE reason trigger_id is its own field rather than being folded in with the level ids: an
-     * event that only DELETES leaves nothing resting, so it appears on no level. Without it the
-     * record would name no parent that has anything to do with why it exists.
-     */
-    @Test
-    @DisplayName("a delete-only event is the trigger even though it owns no level")
-    void deleteOnlyEventIsStillTheTrigger() throws Exception {
-        process(from(event("snapshot", levels("10", "1", "11", "2"), List.of()), "ev-seed"));
-        OrderBookSnapshot out = process(from(event("update", levels("11", "0"), List.of()), "ev-del"));
-
-        pricesOf(out.getAsks()).containsExactly("10");
-        assertThat(out.getAsks()).extracting(PriceLevel::getSourceId).containsExactly("ev-seed");
-        assertThat(out.getTriggerId()).isEqualTo("ev-del");
-    }
-
-    /** The same argument at its limit: a reset empties the book, so there is no level to carry it. */
-    @Test
-    @DisplayName("a reset's emptied book still names the reset marker as its trigger")
-    void resetKeepsItsOwnTrigger() throws Exception {
-        process(from(event("snapshot", levels("10", "1"), levels("9", "1")), "ev-seed"));
-        OrderBookSnapshot out = process(from(event("reset", null, null, null), "ev-reset"));
-
-        assertThat(out.getAsks()).isEmpty();
-        assertThat(out.getBids()).isEmpty();
-        assertThat(out.getTriggerId()).isEqualTo("ev-reset");
-    }
-
-    /**
-     * The per-level half of the lineage: each emitted level names the ONE event that set it, which
-     * is what makes a single price traceable back to its raw event. trigger_id answers a different
-     * question — why this record exists — and says nothing about any particular price.
-     */
-    @Test
-    @DisplayName("each emitted level carries the event that set it")
-    void stampsEachLevelWithItsOwningEvent() throws Exception {
-        process(from(event("snapshot", levels("10", "1", "11", "2"), levels("9", "3")), "ev-seed"));
-        OrderBookSnapshot out = process(from(event("update", levels("11", "5"), null), "ev-upd"));
-
-        assertThat(out.getAsks()).extracting(PriceLevel::getPrice, PriceLevel::getSourceId)
-                .containsExactly(tuple("10", "ev-seed"), tuple("11", "ev-upd"));
-        assertThat(out.getBids()).extracting(PriceLevel::getPrice, PriceLevel::getSourceId)
-                .containsExactly(tuple("9", "ev-seed"));
-    }
-
-    /**
-     * The reason the lineage has to follow the price rather than the message: an event that touches
-     * one level says nothing about the rest of the book, however many events later it arrives. A
-     * level untouched for 500 events still names the event that put it there.
-     */
-    @Test
-    @DisplayName("a level untouched by later events keeps naming the event that set it")
-    void untouchedLevelKeepsItsOriginalEvent() throws Exception {
-        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-first"));
-        process(from(event("update", levels("11", "1"), List.of()), "ev-second"));
-        process(from(event("update", levels("12", "1"), List.of()), "ev-third"));
-        OrderBookSnapshot out = process(from(event("update", levels("13", "1"), List.of()), "ev-fourth"));
-
-        assertThat(out.getAsks()).extracting(PriceLevel::getPrice, PriceLevel::getSourceId)
-                .containsExactly(tuple("10", "ev-first"), tuple("11", "ev-second"),
-                        tuple("12", "ev-third"), tuple("13", "ev-fourth"));
-    }
-
-    /**
-     * A snapshot replaces the side wholesale, so every level belongs to it — including a price that
-     * happened to be resting at the same value before. Nothing may survive with a stale owner.
-     */
-    @Test
-    @DisplayName("a snapshot takes ownership of every level it re-reports")
-    void snapshotOwnsEveryLevelItReports() throws Exception {
-        process(from(event("snapshot", levels("10", "1", "11", "2"), List.of()), "ev-old"));
-        OrderBookSnapshot out = process(from(
-                event("snapshot", levels("10", "1", "12", "4"), List.of()), "ev-new"));
-
-        assertThat(out.getAsks()).extracting(PriceLevel::getSourceId)
-                .containsOnly("ev-new");
-    }
-
-    @Test
-    @DisplayName("every emitted book gets its own distinct id")
-    void mintsDistinctIdPerBook() throws Exception {
-        process(from(event("snapshot", levels("10", "1"), List.of()), "ev-a"));
-        process(from(event("update", levels("11", "2"), List.of()), "ev-b"));
-
-        List<OrderBookSnapshot> all = harness.extractOutputValues();
-        assertThat(all).hasSize(2);
-        assertThat(all).extracting(OrderBookSnapshot::getId)
-                .doesNotHaveDuplicates()
-                .allSatisfy(id -> assertThat(id).isNotBlank());
     }
 }

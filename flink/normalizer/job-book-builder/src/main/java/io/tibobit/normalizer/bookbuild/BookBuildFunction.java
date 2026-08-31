@@ -1,7 +1,6 @@
 package io.tibobit.normalizer.bookbuild;
 
 import io.tibobit.normalizer.decimal.Decimals;
-import io.tibobit.normalizer.model.Lineage;
 import io.tibobit.normalizer.model.OrderBookSnapshot;
 import io.tibobit.normalizer.model.PriceLevel;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
@@ -38,34 +37,21 @@ import java.util.Map;
  * MapState is hash-based: without it "10.50" and "10.5" would be two different levels for the same
  * price (a lesson from the aggregation stage).
  *
- * <p><b>Lineage is the one thing here that fans in</b>, so it is written at TWO granularities.
- * Every other step has exactly one parent; a book is state accumulated over many events. So each
- * emitted level carries the event that SET it as its {@code source_id} — which is why each level's
- * originating event is tracked in the state itself ({@link RestingLevel}) — and the record carries
- * {@code trigger_id}, the event that caused this emit.
- *
- * <p>The trigger is a separate field rather than being folded in with the level ids because it is
- * not always among them: an event that only deletes levels, or a reset that empties the book, leaves
- * nothing resting yet still caused this record and must not vanish from the chain. Going the other
- * way, only the per-level id can answer "which raw event made this price" — a record-level set has
- * no mapping back to prices, so it would widen the trace to the whole book exactly where every other
- * hop narrows it to one parent.
- *
  * <p>No checkpointing is configured anywhere on this platform yet, so after a restart a book is
  * empty until the next snapshot re-seeds it. Known, shared, not solved here.
  */
 public class BookBuildFunction
         extends KeyedProcessFunction<String, RawOrderBookEvent, OrderBookSnapshot> {
 
-    private transient MapState<String, RestingLevel> asks;
-    private transient MapState<String, RestingLevel> bids;
+    private transient MapState<String, String> asks;
+    private transient MapState<String, String> bids;
 
     @Override
     public void open(OpenContext openContext) {
         asks = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("asks", String.class, RestingLevel.class));
+                new MapStateDescriptor<>("asks", String.class, String.class));
         bids = getRuntimeContext().getMapState(
-                new MapStateDescriptor<>("bids", String.class, RestingLevel.class));
+                new MapStateDescriptor<>("bids", String.class, String.class));
     }
 
     @Override
@@ -81,22 +67,13 @@ public class BookBuildFunction
             bids.clear();
         } else {
             boolean replace = "snapshot".equals(event.getType());
-            applySide(asks, event.getAsks(), replace, event.getId());
-            applySide(bids, event.getBids(), replace, event.getId());
+            applySide(asks, event.getAsks(), replace);
+            applySide(bids, event.getBids(), replace);
         }
-
-        List<RestingLevel> restingAsks = sorted(asks, ASCENDING);
-        List<RestingLevel> restingBids = sorted(bids, DESCENDING);
 
         OrderBookSnapshot book = new OrderBookSnapshot(
                 event.getExchangeId(), event.getPairId(), event.getEventTime(),
-                event.getSequenceId(), priceLevels(restingAsks), priceLevels(restingBids));
-        // The book is state built from many events, but simulation is a property of the feed, not of
-        // a level — so the emitted book carries the flag of the event that produced it. Kept out of
-        // MapState deliberately: it is not per-price, and a feed does not switch mid-stream.
-        book.setSimulation(event.getSimulation());
-        book.setTriggerId(event.getId());
-        book.setId(Lineage.newId());
+                event.getSequenceId(), sorted(asks, ASCENDING), sorted(bids, DESCENDING));
         book.setPipelineTimings(event.getPipelineTimings());
 
         book.getPipelineTimings().setBookBuildOut(System.currentTimeMillis());
@@ -108,8 +85,8 @@ public class BookBuildFunction
      * report for this side (ex3's absent half) — leave the state untouched, including on a
      * snapshot. {@code replace} clears the side first, turning a merge into a wholesale replace.
      */
-    private static void applySide(MapState<String, RestingLevel> side, List<PriceLevel> levels,
-                                  boolean replace, String id) throws Exception {
+    private static void applySide(MapState<String, String> side, List<PriceLevel> levels,
+                                  boolean replace) throws Exception {
         if (levels == null) {
             return;
         }
@@ -127,54 +104,26 @@ public class BookBuildFunction
                 // must not rest in the book. Don't "fix" a delete you can't find in the raw feed.
                 side.remove(price);
             } else {
-                // The level's origin is the event that last SET it, so this overwrites the previous
-                // owner — a level updated by a later event belongs to that event, not the first one.
-                side.put(price, new RestingLevel(
-                        price, Decimals.canonicalize(quantity), id));
+                side.put(price, Decimals.canonicalize(quantity));
             }
         }
     }
 
-    private static final Comparator<RestingLevel> ASCENDING =
+    private static final Comparator<PriceLevel> ASCENDING =
             Comparator.comparing(level -> new BigDecimal(level.getPrice()));
-    private static final Comparator<RestingLevel> DESCENDING = ASCENDING.reversed();
+    private static final Comparator<PriceLevel> DESCENDING = ASCENDING.reversed();
 
     /**
      * MapState iteration order is undefined, so the book is sorted on the way out — asks ascending,
-     * bids descending, the platform's convention — to keep the emitted snapshot deterministic. That
-     * determinism covers the per-level lineage too, since each level's {@code source_id} rides out
-     * in this order.
+     * bids descending, the platform's convention — to keep the emitted snapshot deterministic.
      */
-    private static List<RestingLevel> sorted(MapState<String, RestingLevel> side,
-                                             Comparator<RestingLevel> order) throws Exception {
-        List<RestingLevel> levels = new ArrayList<>();
-        for (Map.Entry<String, RestingLevel> entry : side.entries()) {
-            levels.add(entry.getValue());
+    private static List<PriceLevel> sorted(MapState<String, String> side,
+                                           Comparator<PriceLevel> order) throws Exception {
+        List<PriceLevel> levels = new ArrayList<>();
+        for (Map.Entry<String, String> entry : side.entries()) {
+            levels.add(new PriceLevel(entry.getKey(), entry.getValue()));
         }
         levels.sort(order);
         return levels;
     }
-
-    /**
-     * Carries each level's owning event out onto the wire as the level's {@code source_id}.
-     *
-     * <p>This is what makes ONE price traceable, and it is the whole of this record's fan-in: the
-     * record itself names only {@code trigger_id}. A record-level set of every contributing event
-     * would have no mapping back to prices, so it could only answer "this level came from one of
-     * these N events"; the per-level id answers "this level came from THAT event", which is where a
-     * trace back to the raw topic has to start.
-     *
-     * <p>Note that a level's id is the event that last SET it, not the event that triggered this
-     * emit: an update touching one price leaves every other level naming whichever event put it
-     * there, however many events ago. That is the point — the lineage follows the price, not the
-     * message.
-     */
-    private static List<PriceLevel> priceLevels(List<RestingLevel> resting) {
-        List<PriceLevel> levels = new ArrayList<>(resting.size());
-        for (RestingLevel level : resting) {
-            levels.add(new PriceLevel(level.getPrice(), level.getQuantity(), level.getId()));
-        }
-        return levels;
-    }
-
 }

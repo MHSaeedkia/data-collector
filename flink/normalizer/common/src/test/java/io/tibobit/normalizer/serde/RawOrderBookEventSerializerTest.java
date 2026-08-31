@@ -73,25 +73,6 @@ class RawOrderBookEventSerializerTest {
     }
 
     /**
-     * PriceLevel is shared with the snapshot schema, which is the only one declaring source_id.
-     * A level still carrying that value must map onto THIS schema without it — a
-     * GenericRecordBuilder throws on a field its schema does not have, so the shared mapper has to
-     * decide from the schema rather than from the value.
-     */
-    @Test
-    @DisplayName("ignores a level's source_id, which this schema does not declare")
-    void ignoresSourceIdNotInThisSchema() {
-        RawOrderBookEvent event = new RawOrderBookEvent(1, 1, "snapshot", 42L, 0L,
-                1752473005123L, List.of(new PriceLevel("62775.5", "1", "ev-a")), List.of());
-
-        GenericRecord record = RawOrderBookEventSerializer.toGenericRecord(event, SCHEMA);
-
-        GenericRecord level = (GenericRecord) ((List<?>) record.get("asks")).get(0);
-        assertThat(level.getSchema().getField("source_id")).isNull();
-        assertThat(level.get("price")).isEqualTo("62775.5");
-    }
-
-    /**
      * Given a snapshot whose exchange reported one side empty, When mapped, Then that side is an
      * EMPTY array — not null. The other half of the null-vs-empty contract.
      */

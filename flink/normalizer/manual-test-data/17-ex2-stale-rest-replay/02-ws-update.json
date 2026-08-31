@@ -1,0 +1,20 @@
+{
+	"push": {
+		"channel": "orderbook:BTC_USDT",
+		"pub": {
+			"data": {
+				"asks": [
+					["62701.30", "0.29045069"],
+					["62720.00", "0.40000000"]
+				],
+				"bids": [
+					["62699.50", "0.55175335"]
+				],
+				"symbol": "BTC_USDT",
+				"event": "market_data",
+				"event_time": "2027-01-15T08:00:01Z"
+			},
+			"offset": 1000
+		}
+	}
+}

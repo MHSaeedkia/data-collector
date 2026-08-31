@@ -1,0 +1,20 @@
+{
+	"push": {
+		"channel": "public:orderbook-BTCUSDT",
+		"pub": {
+			"data": {
+				"asks": [
+					["62970", "0"],
+					["62980", "0.30000000"]
+				],
+				"bids": [
+					["62938", "0"],
+					["62935", "1.10000000"]
+				],
+				"lastTradePrice": "62960",
+				"lastUpdate": 1800000000200
+			},
+			"offset": 1001
+		}
+	}
+}

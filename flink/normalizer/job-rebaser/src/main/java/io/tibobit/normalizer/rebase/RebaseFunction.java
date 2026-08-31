@@ -2,7 +2,6 @@ package io.tibobit.normalizer.rebase;
 
 import io.tibobit.normalizer.decimal.Decimals;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
-import io.tibobit.normalizer.model.Lineage;
 import io.tibobit.normalizer.model.PriceLevel;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
@@ -60,20 +59,14 @@ public class RebaseFunction extends ProcessFunction<RawOrderBookEvent, RawOrderB
                 factors.get(RebaseFactorsLoader.key(event.getExchangeId(), event.getPairId()));
         if (factor == null) {
             // rebaseOut stays null — the event never leaves the rebaser onto the main stream.
-            // The dead-letter envelope gets its own id (writing to that topic is still a
-            // write); the event inside keeps the id it arrived with, which is what links it back.
-            RejectedOrderBookEvent rejection =
-                    new RejectedOrderBookEvent(event, NO_REBASE_ROW, System.currentTimeMillis());
-            rejection.setSourceIds(List.of(event.getId()));
-            rejection.setId(Lineage.newId());
-            ctx.output(REJECTED, rejection);
+            ctx.output(REJECTED,
+                    new RejectedOrderBookEvent(event, NO_REBASE_ROW, System.currentTimeMillis()));
             return;
         }
 
         event.setAsks(rebaseLevels(event.getAsks(), factor));
         event.setBids(rebaseLevels(event.getBids(), factor));
 
-        Lineage.restamp(event);
         event.getPipelineTimings().setRebaseOut(System.currentTimeMillis());
         out.collect(event);
     }

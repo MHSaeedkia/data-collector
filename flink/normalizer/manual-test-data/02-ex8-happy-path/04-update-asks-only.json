@@ -1,0 +1,17 @@
+{
+	"arg": {
+		"channel": "books-grouped",
+		"instId": "BTC-USDT",
+		"grouping": "1"
+	},
+	"action": "update",
+	"data": [
+		{
+			"asks": [
+				["62800", "0.90000000"],
+				["62810", "0"]
+			],
+			"ts": "1800000001200"
+		}
+	]
+}

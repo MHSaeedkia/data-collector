@@ -1,11 +1,7 @@
 ---
-# DEVELOPMENT stack.  `docker compose up -d`
-# Production runs docker-compose.prod.yml, which is a separate, hardened copy — see the header
-# there.  Adding or rewiring a service here means doing the same over there by hand.
-#
 # Full stack for the raw-normalization pipeline: the Flink image builds from ./flink/normalizer
 # and the taskmanager has 8 slots, enough for the 5 upstream normalizer jobs PLUS the terminal
-# aggregator submitted to this one cluster via flink/run-job.sh.
+# aggregator submitted to this one cluster via flink/normalizer/run-job.sh.
 services:
     jobmanager:
         build: ./flink/normalizer
@@ -15,7 +11,7 @@ services:
         command: jobmanager
         ports:
             - "7070:8081"
-            - "9249:9249"
+            - "9249:9249" 
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
@@ -54,28 +50,6 @@ services:
         networks:
             - data-collector-net
 
-    # taskmanager-2:
-    #     build: ./flink/normalizer
-    #     container_name: taskmanager-2
-    #     hostname: taskmanager-2
-    #     restart: on-failure
-    #     command: taskmanager
-    #     ports:
-    #         - "9251:9250"
-    #     depends_on:
-    #         jobmanager:
-    #             condition: service_healthy
-    #     environment:
-    #         FLINK_PROPERTIES: |
-    #             jobmanager.rpc.address: jobmanager
-    #             taskmanager.numberOfTaskSlots: 8
-    #             metrics.reporters: prom
-    #             metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
-    #             metrics.reporter.prom.port: 9250
-    #     volumes:
-    #         - data-collector-taskmanager-2-logs:/opt/flink/log
-    #     networks:
-    #         - data-collector-net
     kafka:
         image: confluentinc/cp-kafka:7.8.0
         container_name: kafka
@@ -160,12 +134,6 @@ services:
             KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_URL: http://schema-registry:8082
             KAFKA_CLUSTERS_0_SERDE_0_PROPERTIES_SCHEMANAMETEMPLATE: aggregated-order-book-event
-            KAFKA_CLUSTERS_0_SERDE_1_NAME: ControlCommandAvro
-            KAFKA_CLUSTERS_0_SERDE_1_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
-            KAFKA_CLUSTERS_0_SERDE_1_TOPICVALUESPATTERN: ^control-plane$
-            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_URL: http://schema-registry:8082
-            KAFKA_CLUSTERS_0_SERDE_1_PROPERTIES_SCHEMANAMETEMPLATE: control-command
-
         networks:
             - data-collector-net
 
@@ -282,52 +250,20 @@ services:
         networks:
             - data-collector-net
 
-    lpa-staleness-exporter:
-        build: ./lpa-staleness-exporter
-        container_name: lpa-staleness-exporter
-        hostname: lpa-staleness-exporter
+    kafka-staleness-exporter:
+        build: ./kafka-staleness-exporter
+        container_name: kafka-staleness-exporter
+        hostname: kafka-staleness-exporter
         restart: on-failure
         depends_on:
             kafka:
                 condition: service_healthy
         volumes:
-            - ./lpa-staleness-exporter/config.yaml:/config/config.yaml:ro
+            - ./kafka-staleness-exporter/config.yaml:/config/config.yaml:ro
         ports:
             - "9309:9309"
         networks:
             - data-collector-net
-
-    market-subscriptions:
-        build: ./market-subscriptions
-        container_name: market-subscriptions
-        hostname: market-subscriptions
-        restart: on-failure
-        depends_on:
-            postgres:
-                condition: service_healthy
-        ports:
-            - "8090:8090" # host: http://localhost:8090
-        environment:
-            # These win over the image's .env, so the same image runs anywhere.
-            PORT: 8090
-            DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
-            # NiFi's control-plane endpoints. Reachable on the compose network by
-            # hostname; both resolved URLs are logged at startup.
-            NIFI_BASE_URL: "http://nifi:8081/control-plane"
-            NIFI_SUBSCRIBE_PATH: /subscribe
-            NIFI_UNSUBSCRIBE_PATH: /unsubscribe
-            NIFI_TIMEOUT: 10s
-            NIFI_MAX_RETRIES: 3
-            NIFI_RETRY_DELAY: 2s
-            UI_REFRESH_SECONDS: 10
-        networks:
-            - data-collector-net
-        healthcheck:
-            test: [ "CMD-SHELL", "wget -qO- http://localhost:8090/healthz >/dev/null || exit 1" ]
-            interval: 30s
-            timeout: 5s
-            retries: 3
-            start_period: 15s
 
     web:
         build: ./web
@@ -366,7 +302,6 @@ volumes:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
     data-collector-taskmanager-logs:
-    data-collector-taskmanager-2-logs:
     data-collector-redis-data:
 
 networks:

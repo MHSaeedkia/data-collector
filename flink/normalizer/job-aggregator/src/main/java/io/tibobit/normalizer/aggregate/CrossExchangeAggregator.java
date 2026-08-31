@@ -1,7 +1,5 @@
 package io.tibobit.normalizer.aggregate;
 
-import io.tibobit.normalizer.model.Lineage;
-
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
@@ -82,12 +80,6 @@ public class CrossExchangeAggregator
 
         // Sort the union by side; equal-price levels from different exchanges stay separate.
         merged.sort("asks".equals(book.getSide()) ? asksComparator : bidsComparator);
-
-        AggregatedOrderBook aggregated =
-                new AggregatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime);
-        // Each level already carries its own source_id, stamped back at the split — nothing to
-        // gather here, only this record's own id to mint.
-        aggregated.setId(Lineage.newId());
-        out.collect(aggregated);
+        out.collect(new AggregatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime));
     }
 }

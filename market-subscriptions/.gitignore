@@ -1,2 +1,0 @@
-# Real config never gets committed — .env.example is the documented template.
-.env

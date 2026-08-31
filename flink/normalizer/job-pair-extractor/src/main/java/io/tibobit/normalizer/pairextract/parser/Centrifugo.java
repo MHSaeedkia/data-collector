@@ -3,8 +3,7 @@ package io.tibobit.normalizer.pairextract.parser;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * Envelope helper for the four Centrifugo exchanges (ex1 nobitex, ex2 bitpin, ex4 ramzinex,
- * ex7 ompfinex — the only one of them with true delta semantics):
+ * Envelope helper for the three Centrifugo exchanges (ex1 nobitex, ex2 bitpin, ex4 ramzinex):
  * {@code {"push": {"channel": ..., "pub": {"data": {...}, "offset": n}}}}. Only the channel
  * format and the shape of {@code data} differ per exchange.
  */

@@ -2,7 +2,6 @@ package io.tibobit.normalizer.precision;
 
 import io.tibobit.normalizer.decimal.Decimals;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
-import io.tibobit.normalizer.model.Lineage;
 import io.tibobit.normalizer.model.PriceLevel;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 
@@ -73,7 +72,6 @@ public class PrecisionFunction extends RichMapFunction<RawOrderBookEvent, RawOrd
         event.setAsks(applyLevels(event.getAsks(), precision));
         event.setBids(applyLevels(event.getBids(), precision));
 
-        Lineage.restamp(event);
         event.getPipelineTimings().setPrecisionOut(System.currentTimeMillis());
         return event;
     }
