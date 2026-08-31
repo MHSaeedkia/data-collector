@@ -123,6 +123,13 @@ public class AdjustmentJob {
                 .name("slippage")
                 .sinkTo(KafkaSink.<AdjustedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
+                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                        // failure drops records silently. Idempotence is the load-bearing one:
+                        // plain retries can reorder writes, which corrupts the book downstream.
+                        .setProperty("acks", "all")
+                        .setProperty("enable.idempotence", "true")
+                        .setProperty("retries", "2147483647")
+                        .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<AdjustedOrderBook>builder()
                                 // Route each record to p{pair_id}-{side}-adjusted (e.g. p1-asks-adjusted).
                                 .setTopicSelector((TopicSelector<AdjustedOrderBook>) book

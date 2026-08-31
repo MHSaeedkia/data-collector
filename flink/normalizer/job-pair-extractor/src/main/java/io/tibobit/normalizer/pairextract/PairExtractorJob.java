@@ -65,6 +65,13 @@ public class PairExtractorJob {
 
         events.sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)
+                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                        // failure drops records silently. Idempotence is the load-bearing one:
+                        // plain retries can reorder writes, which corrupts the book downstream.
+                        .setProperty("acks", "all")
+                        .setProperty("enable.idempotence", "true")
+                        .setProperty("retries", "2147483647")
+                        .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
                                 .setTopicSelector((TopicSelector<RawOrderBookEvent>) event ->
                                         "ex" + event.getExchangeId() + "-p" + event.getPairId() + "-raw-flink")

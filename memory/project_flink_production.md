@@ -1,0 +1,658 @@
+---
+name: flink-production-hardening
+description: Production-readiness report for the Flink cluster in docker-compose.yml — what breaks today, the changes agreed for now (restart strategy, memory/TM split, HA, producer acks, exposure, monitoring), and why checkpointing is POSTPONED (cross-job replay corrupts the book). NiFi is out of scope.
+metadata:
+    type: project
+---
+
+# Taking the Flink cluster to production
+
+Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5 and M4 are
+APPLIED** (2026-08-29, on `docs/flink-production-hardening`) — see "What has landed"
+below; everything else is still review-only. A formatted copy is published at
+<https://claude.ai/code/artifact/0bab2c11-7c5a-4928-b2cc-78a1aaacdc15>; nothing here depends on that
+link. The ordered apply-one-by-one list is in `todo.md` under `## flink (production readiness)`,
+keyed by the same refs.
+
+**Scope** `docker-compose.yml` jobmanager + taskmanager, `flink/` · **Jobs** 8 (6 normalizer + merger + adjustment) · **Image** flink:2.2.0-scala_2.12-java21
+
+> **Job count corrected 2026-08-29.** The review was written against 7 jobs; merging `origin/main` brought in `flink/adjustment` (PR #10), making it **8**, and `ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)` confirms it. The cluster runs **8/8 task slots, completely full**. M2's slot arithmetic and M9's job-count alert are corrected throughout; `flink/adjustment` was **not read** for this review, so whether it has the same sink/state characteristics as the other seven is unverified.
+
+## What has landed (2026-08-29)
+
+Applied to `docker-compose.yml` in apply-order, verified only by `docker compose config --quiet`
+(exit 0) — **nothing has been deployed or observed running**:
+
+- **M1** — the five `restart-strategy.exponential-delay.*` keys on `jobmanager`.
+- **M7** — `restart: unless-stopped` and a `json-file` 100m x 5 `logging:` block on the JobManager
+  and every TaskManager. Deliberately *not* applied to any other service.
+- **M2a** — `process.size: 8g`, `managed.fraction: 0.1`, `env.java.opts.taskmanager` on the single
+  TaskManager, slots left at 8.
+- **M2b** — replaced the single `taskmanager` with **`taskmanager-1..4`, 3 slots each (12 total)**,
+  each with `deploy.resources.limits.memory: 9g`, host metrics ports 9250-9253. The commented-out
+  `taskmanager-2` block was removed, having become the real `taskmanager-2`. Note the container
+  metrics port stays 9250 in all four and only the *host* port varies — the report's section 07
+  said "each with its own metrics port", which turned out to be unnecessary.
+
+- **S5** — a `healthcheck:` on all four TaskManagers (`curl -f localhost:9250/metrics`, 20s/5s/3,
+  40s start period). ⚠ **This is visibility, not recovery.** Docker does not restart a container
+  because it went unhealthy, and `restart: unless-stopped` does not change that — a hung JVM now
+  *reports* unhealthy and keeps running. M9's alerting is what makes it actionable.
+- **M4** — `acks=all`, `enable.idempotence=true`, `retries=2147483647`,
+  `delivery.timeout.ms=120000` via `.setProperty(...)` on **all 11 `KafkaSink` builder sites across
+  8 files** — one per job, plus RebaserJob's `rejected` dead-letter sink and TypeValidatorJob's
+  `rejected` **and** `controlCommands` sinks (the todo said "job 2's dead-letter sink"; there are
+  three extra sinks, not one). Verified by compiling all three Maven projects and running the
+  suites: **105 + 16 + 23 = 144 tests, all passing**.
+
+**What M4 does and does not buy.** It closes: transient broker-side failures (infinite `retries`
+bounded by `delivery.timeout.ms`), acceptance of an under-replicated write (`acks=all`), and
+**reordering across retries** (`enable.idempotence`) — that last one is the load-bearing part,
+because a reordered write corrupts the book in exactly the way the checkpoint-replay problem does.
+It does **not** close: `DeliveryGuarantee` is still `NONE`, so records sitting in the producer's
+buffer when a TaskManager JVM dies are still lost, and idempotence is per-producer-session, so a job
+restart starts a new producer id and can still duplicate at the seam. And per **S8**, this is a
+single-broker RF=1 Kafka — `acks=all` means "the one replica that exists".
+
+**M4 was applied inline at all 11 sites rather than through a shared helper.** `flink/merger` and
+`flink/adjustment` are standalone Maven projects that do **not** depend on `normalizer/common`
+(checked `merger/pom.xml`), so centralising would have meant introducing a cross-project dependency
+between three independently-built artifacts — far outside M4's scope. Inline duplication was the
+smaller cost.
+
+**Deviations from section 07, deliberate:** section 07's jobmanager block also carries
+`jobmanager.memory.process.size: 2g`, which belongs to no M-item and was **not** applied — it is a
+loose end, decide it with M3. The `-1..4` blocks are written out explicitly rather than sharing a
+YAML anchor, matching this file's existing fully-explicit style.
+
+**Blast radius that M2b created and that was fixed with it:** `flink/run-job.sh` hard-coded
+`docker logs ... taskmanager` in three places for its failure diagnostics. Renaming the container
+would have made every one of them print "No such container" at exactly the moment someone is
+debugging a failed submit. It now has a `TASKMANAGERS=(taskmanager-1 .. -4)` array and a `tm_logs`
+helper that reads all four and prefixes each line with its source. **[[flink-deploy-tooling]]'s
+slot-leak procedure is now stale** — `docker compose restart taskmanager` names a container that no
+longer exists; the sequence is four restarts then the JobManager.
+
+**Unverified, and it needs a human before deploy:** four TaskManagers at 8 g plus the JobManager is
+~34 g of Flink alone, before Kafka/Postgres/NiFi/the rest. **Host RAM was never inspected** — this
+session had no access to the target box. A comment above the TaskManager blocks says so. If it does
+not fit, scale `process.size` and the container `memory:` limit *together*, keeping the limit above
+`process.size`.
+
+**Verification still owed on all four**, none of it possible from here: kill a job and watch it come
+back (M1); read the TaskManager startup log's own memory breakdown and confirm both the `--add-opens`
+list and the heap-dump flags appear in the JVM options line (M2a); confirm 12 free slots and that the
+8 jobs spread across the four TaskManagers rather than piling onto one (M2b); confirm the
+TaskManagers report healthy and that a deliberately hung one flips to unhealthy (S5); confirm the
+producer config actually took by reading `ProducerConfig` values in the TaskManager startup log —
+**no test in the repo exercises sink configuration**, so the 144 passing tests prove nothing broke,
+not that M4 works (M4).
+
+---
+
+## Two standing decisions (user, 2026-08-29)
+
+- **Checkpointing is POSTPONED, not rejected.** Leave it off and the pipeline as it is for now.
+  Section 03 records the reason and what would have to be true to revisit it. Everything that only
+  pays off with checkpointing is parked with it.
+- **NiFi is out of scope entirely.** It is not managed from our side and its compose entry is
+  development-only. Nothing in this document proposes a NiFi change, and NiFi is not part of any
+  sizing, hazard or configuration item here.
+
+---
+
+## 01 · Baseline — What happens today when something fails
+
+Each row is the current, verified behaviour of the stack as committed — not a hypothetical.
+
+| Failure | What actually happens now | Why | Addressed by |
+|---|---|---|---|
+| **A job throws** | The job goes to `FAILED` and stays there forever. The other six keep running, so the pipeline silently loses one stage. Nothing alerts. | Default `restart-strategy.type` is `disable` when checkpointing is not enabled. | **M1** |
+| **TaskManager dies** | Docker restarts the container, but all eight jobs had tasks on it, so all eight fail — and per the row above, none come back. Cluster healthy, pipeline dead. | One TaskManager with 8 slots hosts every job. | **M1 + M2** |
+| **JobManager dies** | Docker restarts it and it comes up as an *empty* cluster. Every submission is gone. Recovery is a human running `make run-all-jobs`. | `high-availability.type` defaults to `NONE` — no persistent job-graph store. | **M3** |
+| **Any restart at all** | All keyed state is gone (books, `lastSeq`), sources resume at `latest`, and every delta market hits `no_baseline` and resyncs. | No checkpoints; all eight jobs use `OffsetsInitializer.latest()`. | **Accepted** — see 03 |
+| **Broker hiccup on write** | Records are dropped. No exception, no metric, no dead letter — the book downstream is wrong until the next snapshot touches that level. | `KafkaSink`'s default is `DeliveryGuarantee.NONE`; no job overrides it or sets producer acks. | **M4** |
+| **State outgrows heap** | The TaskManager JVM OOMs, which is the "TaskManager dies" row — all eight jobs go down together. | Image default `taskmanager.memory.process.size: 1728m`; `hashmap` backend keeps every book on heap. | **M2** |
+| **Host reboot** | Containers come back, the cluster is empty, jobs need resubmitting by hand. | Same as JobManager death. | **M3 + M7** |
+| **Logs accumulate** | JobManager and TaskManager JSON logs grow without bound on the docker host. | The Flink services set no `logging:` block. | **M7** |
+
+**The compounding failure.** Rows 1–3 stack. A single bad record in `job-type-validator` kills that
+job; six jobs keep publishing into topics nobody is reading; nothing alerts, so it is found by a
+human noticing stale data hours later. **M1 and M9 together collapse this chain**, and neither needs
+checkpointing — which is why they lead the list.
+
+---
+
+## 02 · Now — the changes agreed for this round
+
+Ordered for application. Each is independently verifiable and independently revertible.
+
+### M1 — An explicit restart strategy *(one line, largest single win)*
+
+The default is `disable` **only because checkpointing is off**; setting the key explicitly overrides
+that. So automatic restarts do not wait on the checkpointing decision.
+
+```yaml
+# jobmanager FLINK_PROPERTIES
+restart-strategy.type: exponential-delay
+restart-strategy.exponential-delay.initial-backoff: 10 s
+restart-strategy.exponential-delay.max-backoff: 5 min
+restart-strategy.exponential-delay.backoff-multiplier: 2.0
+restart-strategy.exponential-delay.reset-backoff-threshold: 15 min
+```
+
+**Backoff is deliberately longer than Flink's defaults** (1 s / 1 min). With no checkpointing a
+restart means an empty book and a full resync, so each restart has a real downstream cost — a job
+flapping on a poison record must not turn into a resync loop. Pair with M9's restart-loop alert: the
+backoff buys time, the alert is what actually gets it fixed.
+
+A restarted job starts with empty state and its source at `latest`, then re-baselines through the
+normal `no_baseline` → snapshot path. That is the intended semantic, not a defect.
+
+### M2 — Real memory, and stop running eight jobs in one JVM
+
+The image ships `taskmanager.memory.process.size: 1728m` and compose does not override it. Working
+the documented split backwards from 1728 MB — metaspace 256 MB, JVM overhead ~192 MB, managed 0.4 of
+the remainder, network 0.1, framework heap 128 MB — leaves on the order of **384 MB of task heap
+shared by all eight jobs**. That is arithmetic; the real number is printed in the TaskManager startup
+log and is worth reading before sizing.
+
+```yaml
+# taskmanager FLINK_PROPERTIES
+taskmanager.numberOfTaskSlots: 3
+taskmanager.memory.process.size: 8g
+taskmanager.memory.managed.fraction: 0.1   # hashmap backend barely uses managed memory
+env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
+```
+
+Then **four TaskManagers with 3 slots each** instead of one with 8. **Eight** jobs at parallelism 1
+need eight slots, so the cluster is at 8/8 today and 4 x 2 would still be exactly full — 4 x 3 = 12
+leaves four spare for a ninth job or a parallelism increase. Spreading them over four JVMs means one
+OOM takes down roughly two jobs rather than the entire pipeline. The commented-out `taskmanager-2` block is the right shape — copy to `-3` and `-4`,
+each with its own metrics port.
+
+Worth splitting into two steps when applying: **M2a** set memory on the existing single TaskManager
+(low risk, immediately measurable), **M2b** split into four.
+
+> **DO NOT SET `env.java.opts.all`.** The base image uses that exact key for the long
+> `--add-opens` / `--add-exports` list Flink needs on Java 21; setting it in `FLINK_PROPERTIES`
+> *replaces* the list. Use the per-process `env.java.opts.taskmanager`, and confirm both lists appear
+> in the JVM options line at the top of the TaskManager log.
+
+> **Container limit must exceed the Flink limit.** If you add `deploy.resources.limits.memory`, set
+> it *above* `process.size` (8 g Flink → 9 g container). Lower, and the kernel OOM-killer kills the
+> container before Flink's memory accounting can report anything — a silent restart with no
+> diagnosis.
+
+### M3 — JobManager HA, so a restart recovers the submissions
+
+Without an HA store nothing remembers that eight jobs were submitted. With ZooKeeper the JobManager
+re-reads its job graphs on boot and resubmits them unattended.
+
+**HA does not require checkpointing, and stays consistent with the postponement:** with no checkpoint
+to restore from, recovered jobs start with empty state at `latest` and re-baseline — exactly the
+restart semantic chosen in 03.
+
+```yaml
+# jobmanager FLINK_PROPERTIES
+high-availability.type: zookeeper
+high-availability.zookeeper.quorum: zookeeper:2181
+high-availability.storageDir: file:///opt/flink/ha
+high-availability.cluster-id: /data-collector
+```
+
+```yaml
+zookeeper:
+    image: zookeeper:3.9
+    container_name: zookeeper
+    hostname: zookeeper
+    restart: unless-stopped
+    environment:
+        ZOO_MY_ID: 1
+        ZOO_4LW_COMMANDS_WHITELIST: srvr,ruok
+    volumes:
+        - data-collector-zk-data:/data
+        - data-collector-zk-datalog:/datalog
+    networks: [ data-collector-net ]
+    healthcheck:
+        test: [ "CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep -q imok" ]
+        interval: 15s
+        retries: 5
+```
+
+Needs one volume, `data-collector-flink-ha:/opt/flink/ha`, on the JobManager. **No checkpoint or
+savepoint volumes** — those are parked with M1-CP.
+
+A single ZooKeeper node is itself a SPOF; accepted, because the missing capability is job recovery
+across a JobManager restart and one node delivers it. Ensemble + standby JM is L2.
+
+**Rejected alternative:** an external supervisor polling `/jobs` and resubmitting. Less machinery,
+but it would have to reimplement what the HA store already does.
+
+### M4 — Stop silent record loss at the sink *(producer config, not delivery guarantee)*
+
+`KafkaSink` defaults to `DeliveryGuarantee.NONE` — "messages may be lost in case of issues on the
+Kafka broker." **`AT_LEAST_ONCE` is not the fix while checkpointing is off**: the docs are explicit
+that it "will wait for all outstanding records in the Kafka buffers to be acknowledged by the Kafka
+producer *on a checkpoint*", so with no checkpoints there is no flush barrier and it is inert.
+
+The protection that works without checkpointing is producer-side. `KafkaSinkBuilder` exposes both
+`setKafkaProducerConfig(Properties)` and `setProperty(String, String)` (verified in the
+flink-connector-kafka 5.0.0-2.2 javadoc):
+
+```java
+.sinkTo(KafkaSink.<OrderBookSnapshot>builder()
+        .setBootstrapServers(bootstrapServers)
+        .setProperty("acks", "all")
+        .setProperty("enable.idempotence", "true")
+        .setProperty("retries", "2147483647")
+        .setProperty("delivery.timeout.ms", "120000")
+        .setRecordSerializer(...)
+        .build())
+```
+
+`enable.idempotence=true` is the important one and is the reason not to just set `retries`: it makes
+the broker de-duplicate retried sends **and preserves per-partition ordering across retries**. Plain
+retries without it can reorder writes, which for an order-book stream is the same class of bug as the
+cross-job replay in 03 — an older level state landing after a newer one.
+
+Applies to **every** `KafkaSink`, including `job-type-validator`'s dead-letter sink.
+
+> `acks=all` is only as strong as the broker's replication. With the single-broker RF=1 setup (S8) it
+> means "acknowledged by the one replica that exists" — it closes the in-flight-buffer loss, not the
+> broker-loss case.
+
+### M7 — `restart: unless-stopped`, and log rotation on the Flink services
+
+`on-failure` does not bring a container back after an intentional stop or in every host-reboot path;
+`unless-stopped` does. And the Flink services have no `logging:` block, so their JSON logs grow until
+the disk fills.
+
+```yaml
+restart: unless-stopped
+logging:
+    driver: json-file
+    options:
+        max-size: "100m"
+        max-file: "5"
+```
+
+Apply to `jobmanager` and every `taskmanager`. Leave every other service alone.
+
+### M8 — Close the REST port to the world
+
+Port `7070` is published on `0.0.0.0` and Flink's REST API has **no authentication whatsoever**.
+Anyone who can reach it can upload a JAR and run arbitrary code as the `flink` user, inside a
+container with network access to the rest of the stack. This is the sharpest security issue here.
+
+```yaml
+ports:
+    - "192.168.150.104:7070:8081"
+```
+
+`web.submit.enable: false` is *not* the fix — `run-job.sh` deploys through exactly that endpoint. The
+control is network-layer: private-interface binding plus a host firewall, or a reverse proxy with
+auth. `make run-remote` pointing at `192.168.150.104:7070` keeps working with the binding above.
+
+The same reasoning is worth a separate pass over the other published ports (`kafka-ui` 8080,
+`market-subscriptions` 8090 — already flagged unauthenticated in `todo.md`, Postgres 5432 on
+`postgres/postgres`, Redis 6379 with no password). Out of scope for this round.
+
+### M9 — Actually collect the metrics already exported
+
+Both Flink processes run a Prometheus reporter, and there are `kafka-exporter`, `redis-exporter` and
+`lpa-staleness-exporter` alongside. Nothing scrapes any of them. Every failure in section 01 is
+currently detected by a human noticing stale data.
+
+Add Prometheus, Alertmanager and Grafana, then start with:
+
+| Alert | Signal | Catches |
+|---|---|---|
+| Job count wrong | running jobs `!= 8` for 2 min | Baseline rows 1, 2, 3 — the whole class |
+| TaskManagers missing | registered TMs `< 4` | A TaskManager died and did not come back |
+| Restart loop | `numRestarts` rising | A poison record cycling — and, here, resyncing |
+| Consumer lag | source `records_lag_max` | A stage falling behind the feed |
+| Backpressure | `isBackPressured` sustained | Which stage is the bottleneck |
+| Heap pressure | heap used / GC time | The OOM in baseline row 6, in advance |
+
+The two checkpoint alerts from the original report (`numberOfFailedCheckpoints`,
+`lastCheckpointDuration`) are parked with M1-CP.
+
+Exact metric names differ between Flink versions and depend on the reporter's scope format. Build the
+rules against a live `curl localhost:9249/metrics`, not from a reference.
+
+---
+
+## 03 · Postponed — checkpointing and everything that depends on it
+
+**Status: postponed by the user, 2026-08-29. Not rejected — revisit deliberately.**
+
+Parked together: **M1-CP** (checkpointing config), **M5** (`.uid()` on every operator), **S2**
+(`pipeline.max-parallelism`, baked into the first checkpoint), **M6** (checkpoint/savepoint volumes),
+**S6** (stop-with-savepoint deploys). None of them pays off without the others.
+
+### Why — the finding that caused the postponement
+
+Flink has **no cross-job checkpoint coordination**. Each JobGraph checkpoints on its own timer, so
+seven independently submitted jobs never share a consistent cut. That is fine within a job and
+dangerous between them:
+
+- **Within a job: safe.** If job 5 crashes, its books *and* its offsets rewind to the same checkpoint
+  atomically. It re-reads and re-applies exactly the events it had already applied, in the same
+  order, and lands in the identical state. No corruption.
+- **Across jobs: corrupting.** If job 4 crashes and rewinds, it re-emits into
+  `applied-precision-flink`. Job 5 never restarted — its books are at the head. It applies those old
+  updates over newer ones and **silently reverts price levels**, and the wrong book persists until a
+  snapshot happens to touch each affected level.
+
+**Nothing is lost in this scenario — records are re-ordered.** A checkpoint is never ahead of what was
+processed; the records are still in Kafka and get re-read. Re-ordering is what corrupts an order
+book, which is why the fix is not a shorter interval.
+
+**Verified, and it corrects an earlier claim in this document.** The original M4 argued the book
+builder is "idempotent by construction". That conflates *idempotent* with *commutative*:
+`BookBuildFunction` reads `event.getSequenceId()` only to stamp it onto the emitted snapshot
+(`BookBuildFunction.java:93`) and never compares it. Job 2 is the platform's only sequence validator
+and sits four stages upstream, so replayed records reaching job 5 have already passed validation once
+and meet no second guard. See [[project_type_validator]], [[project_book_builder]].
+
+### The user's position, and why it is sound
+
+> Prefer restarting from the latest event and requesting a snapshot if needed, over resuming from a
+> possibly-wrong place and building order books on invalid state.
+
+For a live order book a fresh exchange snapshot is ground truth and cheap. Replayed state can be
+subtly wrong in a way nothing detects. Correctness argues for re-baselining, so the current
+no-checkpoint behaviour is the safe default — the real gap was that **nothing restarts**, which M1
+fixes on its own.
+
+### What would have to change to adopt checkpointing later
+
+Three routes, in increasing order of cost:
+
+1. **Merge the six normalizer jobs into one JobGraph** — operators connected directly instead of
+   through Kafka topics, so a single checkpoint covers the whole chain atomically. The only option
+   that gives both state survival and consistency. Costs the per-stage topics, the dead-letter
+   visibility and the e2e harness's inspection points.
+2. **Add a monotonicity guard downstream** (reject `sequence_id` ≤ last applied, per key, in job 5).
+   Small and targeted, but it **conflicts with the user-stated invariant that job 2 is the only
+   sequence validator** ([[project_type_validator]], audit of 2026-08-23) — a decision to reopen, not
+   a change to make quietly.
+3. **Checkpoint only the terminal jobs** whose replay cannot reach a stateful consumer. Needs a
+   per-job analysis nobody has done.
+
+### If it is revisited, these were the values proposed
+
+30 s interval / 10 s min-pause / 5 min timeout, `tolerable-failed-checkpoints: 5` (default `0` fails
+a job on one failure), `num-retained: 3` (default `1`), `RETAIN_ON_CANCELLATION`,
+`state.backend.type: hashmap`, `pipeline.max-parallelism: 256`. Resume semantics for reference: a
+**stop-with-savepoint resumes at the exact offset, zero replay**; a **crash rewinds to the last
+checkpoint**, worst case ≈ interval + checkpoint duration, average ≈ half the interval.
+
+---
+
+## 04 · Closed decisions
+
+- **S1 — keep `OffsetsInitializer.latest()`.** Closed 2026-08-29. Re-baselining from a snapshot is
+  preferred over resuming at a committed offset, for the reason in 03. The downstream-first
+  submission ordering in the root `Makefile` therefore stays load-bearing, and the cold-start resync
+  burst stays a known, accepted cost (its `todo.md` item remains open on its own merits).
+- **NiFi — out of scope.** Not managed from our side; development-only in this compose file. No NiFi
+  change is proposed anywhere in this document.
+
+---
+
+## 05 · Should — after the section 02 items land
+
+### S4 — Run the HistoryServer
+
+When a job fails overnight and the JobManager restarts, the exception, the failing subtask and the
+metrics vanish with it. Archiving is what makes post-mortems possible. Works without checkpointing.
+
+```yaml
+# jobmanager
+jobmanager.archive.fs.dir: file:///opt/flink/archive
+# historyserver service, same image, command: history-server
+historyserver.archive.fs.dir: file:///opt/flink/archive
+historyserver.archive.fs.refresh-interval: 10000
+```
+
+### S5 — Health check the TaskManagers
+
+The JobManager has one; the TaskManagers have none, so a hung JVM stays "up" forever.
+
+```yaml
+healthcheck:
+    test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+    interval: 20s
+    timeout: 5s
+    retries: 3
+    start_period: 40s
+```
+
+Proves the JVM is serving, not that it is registered with the JobManager — that is M9's
+"TaskManagers missing" alert. The two together cover it.
+
+### S7 — Pin every image, and version the jars
+
+`kafka-ui:latest`, `redis_exporter:latest` and `kafka-exporter:latest` mean a rebuild can silently
+change what runs. Pin to a tag, ideally a digest. Separately every job jar is `1.0-SNAPSHOT`, so
+nothing on a running cluster says which commit is deployed — stamp the git SHA into the manifest and
+log it from `main()`.
+
+### S8 — Kafka replication factor 1 caps what M4 can promise
+
+Single-node broker with `OFFSETS_TOPIC_REPLICATION_FACTOR: 1` and
+`TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1`. `acks=all` means "acknowledged by the one replica that
+exists"; if the broker loses a partition there is no replica and no replay source. Its own piece of
+work, on the same production checklist.
+
+### S3 — RocksDB, if heap becomes the constraint *(watch)*
+
+Without checkpointing the state backend still decides *where* state lives — `hashmap` keeps every
+book on the task heap. If M2's sizing proves insufficient as subscribed markets grow,
+`state.backend.type: rocksdb` moves it off heap (`managed.fraction` back to 0.4, plus disk for
+`io.tmp.dirs`). Trigger is heap utilisation, not a schedule.
+
+---
+
+## 06 · Later
+
+- **L1 — Application mode, one cluster per job.** A session cluster gives eight jobs a shared fate
+  through shared JVMs. Application mode gives each its own JobManager and TaskManagers: real
+  isolation, independent scaling and deploys. Costs eight clusters and a `run-job.sh` rewrite; M2's
+  four TaskManagers buy most of the isolation for a fraction of the work. Also the natural home for
+  route 1 in section 03.
+- **L2 — Standby JobManager and a three-node ZooKeeper.** M3 gives job recovery; it does not remove
+  the JobManager as a SPOF. Worth it once the recovery window itself is the problem.
+- **L3 — Parallelism above 1.** `keyBy(exchange_id, pair_id)` parallelises cleanly, but throughput is
+  capped by the input topic's partition count — raising parallelism without repartitioning gains
+  nothing. Sequence: partitions, then `parallelism.default`, then re-measure.
+
+`L4` (unaligned checkpoints) is parked with section 03.
+
+---
+
+## 07 · Configuration — the two service blocks as they should look after section 02
+
+```yaml
+jobmanager:
+    build: ./flink/normalizer
+    container_name: jobmanager
+    hostname: jobmanager
+    restart: unless-stopped                       # M7
+    command: jobmanager
+    depends_on:                                   # M3
+        zookeeper:
+            condition: service_healthy
+    ports:
+        - "192.168.150.104:7070:8081"             # M8 — was "7070:8081"
+        - "9249:9249"
+    environment:
+        FLINK_PROPERTIES: |
+            jobmanager.rpc.address: jobmanager
+            jobmanager.memory.process.size: 2g
+
+            # --- M1: explicit; the `disable` default applies only because
+            # --- checkpointing is off. Backoff is long on purpose: with no
+            # --- checkpoints every restart costs a full resync.
+            restart-strategy.type: exponential-delay
+            restart-strategy.exponential-delay.initial-backoff: 10 s
+            restart-strategy.exponential-delay.max-backoff: 5 min
+            restart-strategy.exponential-delay.backoff-multiplier: 2.0
+            restart-strategy.exponential-delay.reset-backoff-threshold: 15 min
+
+            # --- M3: recover submissions across a JM restart. No checkpoint to
+            # --- restore, so recovered jobs start at `latest` and re-baseline.
+            high-availability.type: zookeeper
+            high-availability.zookeeper.quorum: zookeeper:2181
+            high-availability.storageDir: file:///opt/flink/ha
+            high-availability.cluster-id: /data-collector
+
+            # --- S4
+            jobmanager.archive.fs.dir: file:///opt/flink/archive
+
+            metrics.reporters: prom
+            metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+            metrics.reporter.prom.port: 9249
+    volumes:
+        - data-collector-jobmanager-logs:/opt/flink/log
+        - data-collector-flink-ha:/opt/flink/ha            # M3
+        - data-collector-flink-archive:/opt/flink/archive  # S4
+    networks:
+        - data-collector-net
+    logging:                                      # M7
+        driver: json-file
+        options:
+            max-size: "100m"
+            max-file: "5"
+    healthcheck:
+        test: [ "CMD", "curl", "-f", "http://localhost:8081/overview" ]
+        interval: 10s
+        retries: 5
+```
+
+```yaml
+# one of four — copy for taskmanager-2/3/4, changing container_name,
+# hostname, the published metrics port and the log volume.
+taskmanager-1:
+    build: ./flink/normalizer
+    container_name: taskmanager-1
+    hostname: taskmanager-1
+    restart: unless-stopped                       # M7
+    command: taskmanager
+    ports:
+        - "9250:9250"
+    depends_on:
+        jobmanager:
+            condition: service_healthy
+    environment:
+        FLINK_PROPERTIES: |
+            jobmanager.rpc.address: jobmanager
+            taskmanager.numberOfTaskSlots: 3      # M2 — was 8
+            taskmanager.memory.process.size: 8g
+            taskmanager.memory.managed.fraction: 0.1
+
+            # per-process key — never override env.java.opts.all, the image
+            # uses it for the Java 21 --add-opens flags Flink requires
+            env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
+
+            metrics.reporters: prom
+            metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+            metrics.reporter.prom.port: 9250
+    volumes:
+        - data-collector-taskmanager-1-logs:/opt/flink/log
+    networks:
+        - data-collector-net
+    deploy:
+        resources:
+            limits:
+                memory: 9g          # must exceed process.size
+    logging:                                      # M7
+        driver: json-file
+        options:
+            max-size: "100m"
+            max-file: "5"
+    healthcheck:                                  # S5
+        test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+        interval: 20s
+        timeout: 5s
+        retries: 3
+        start_period: 40s
+```
+
+New named volumes: `data-collector-flink-ha`, `data-collector-flink-archive`,
+`data-collector-zk-data`, `data-collector-zk-datalog`, and `data-collector-taskmanager-{1..4}-logs`.
+
+**Host sizing.** Four TaskManagers at 8 g plus a 2 g JobManager is 34 g of Flink alone, before Kafka,
+Postgres and the rest. Size to the box you actually have — **four smaller TaskManagers beat one large
+one** regardless of the total, because the isolation is the point. If the host is small, 4 × 3 g still
+improves on today's single 1728 m. **Host RAM has not been inspected.**
+
+---
+
+## 08 · Code — what changes inside the jobs
+
+| Ref | Change | Applies to |
+|---|---|---|
+| **M4** | `acks=all`, `enable.idempotence=true`, `retries`, `delivery.timeout.ms` via `setProperty` | Every `KafkaSink` across all 8 jobs, including job 2's dead-letter sink |
+| **S7** | Log the build SHA from `main()` | All 8 |
+
+`.uid()` (M5) and the offsets change (S1) are **not** in this round — parked in 03 and closed in 04
+respectively.
+
+---
+
+## 09 · Deploy path — three hazards in the current tooling
+
+Not Flink settings; the reason a production incident would be self-inflicted.
+
+- **H1 — `make refresh-normalizer` runs `docker compose down -v`.** `-v` deletes every named volume in
+  the file, including Kafka's log directory and the Postgres data directory. One person running the
+  familiar refresh command on the wrong host wipes production. **This target must not exist on a
+  production box.** Split it: `refresh-normalizer` stays a development target; a separate production
+  target does `up -d --build` with no `down`, no `-v`.
+- **H2 — every deploy target opens with `git pull origin`** and builds from source on the box, so
+  production runs whatever is on the branch with no way to name or roll back what is deployed. Build
+  and tag images in CI. Same problem as S7 from the other end.
+- **H3 — `run-job.sh` exits at `RUNNING`** and nothing re-checks afterwards. M1 covers job failures
+  and M3 covers JobManager restarts, but a job that exhausts its restart budget still needs M9's "job
+  count wrong" alert to be noticed at all. Treat that alert as part of the deploy, not monitoring
+  polish.
+
+See [[flink-deploy-tooling]] for what these scripts and targets actually do.
+
+---
+
+## 10 · Confidence
+
+**Verified against the Flink 2.2 docs, the image, and the connector jar**
+
+- Default restart strategy is `disable` without checkpointing, `exponential-delay` with it; every
+  `restart-strategy.*` and `high-availability.*` key name and default quoted above.
+- `KafkaSink`'s default is `DeliveryGuarantee.NONE`. `AT_LEAST_ONCE` flushes **on checkpoint** — the
+  docs' own wording — so it is inert with checkpointing off.
+- `KafkaSinkBuilder` exposes `setKafkaProducerConfig(Properties)` and `setProperty(String, String)`
+  (flink-connector-kafka 5.0.0-2.2 javadoc).
+- Image defaults read directly out of `flink:2.2.0-scala_2.12-java21`: TaskManager `1728m`,
+  JobManager `1600m`, 1 slot, `parallelism.default: 1`, `failover-strategy: region`, and the
+  `env.java.opts.all` flag list.
+- No job calls `enableCheckpointing`, `uid` or `setDeliveryGuarantee`, or sets a state backend; all
+  eight use `OffsetsInitializer.latest()`. `BookBuildFunction` reads `sequence_id` only to stamp
+  output (line 93) — no monotonicity guard downstream of job 2.
+
+**Unverified — check before or while applying**
+
+- **The ~384 MB task-heap figure** is arithmetic from documented default fractions, not a reading.
+  Read the TaskManager's own startup breakdown before finalising M2's sizing.
+- **Whether `env.java.opts.taskmanager` appends to or replaces `env.java.opts.all`.** Stated as
+  additive; confirm in the JVM options line at the top of the TaskManager log. Getting this wrong on
+  Java 21 is a startup failure.
+- **Whether HA job recovery works cleanly with no checkpoints** — expected to resubmit jobs fresh at
+  `latest`, but not observed. This is the entire value of M3, so verify it by killing the JobManager
+  once M3 is in.
+- **Prometheus metric names** for M9's rules. Build from live scrape output.
+- **Host RAM** for M2's figures — never inspected.
+- **Whether `enable.idempotence=true` conflicts with anything in the current producer setup.** It
+  constrains `max.in.flight.requests.per.connection` and `retries`; on modern clients the defaults
+  are compatible, but confirm no job overrides those.

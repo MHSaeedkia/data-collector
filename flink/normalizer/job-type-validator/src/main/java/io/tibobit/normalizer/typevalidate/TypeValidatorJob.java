@@ -69,6 +69,13 @@ public class TypeValidatorJob {
                 // raw-order-book-event schema).
                 validated.sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                                 .setBootstrapServers(bootstrapServers)
+                                // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                                // failure drops records silently. Idempotence is the load-bearing one:
+                                // plain retries can reorder writes, which corrupts the book downstream.
+                                .setProperty("acks", "all")
+                                .setProperty("enable.idempotence", "true")
+                                .setProperty("retries", "2147483647")
+                                .setProperty("delivery.timeout.ms", "120000")
                                 .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
                                                 .setTopicSelector((TopicSelector<RawOrderBookEvent>) event -> "ex"
                                                                 + event.getExchangeId() + "-p" + event.getPairId()
@@ -84,6 +91,13 @@ public class TypeValidatorJob {
                 DataStream<RejectedOrderBookEvent> rejected = validated.getSideOutput(TypeValidateFunction.REJECTED);
                 rejected.sinkTo(KafkaSink.<RejectedOrderBookEvent>builder()
                                 .setBootstrapServers(bootstrapServers)
+                                // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                                // failure drops records silently. Idempotence is the load-bearing one:
+                                // plain retries can reorder writes, which corrupts the book downstream.
+                                .setProperty("acks", "all")
+                                .setProperty("enable.idempotence", "true")
+                                .setProperty("retries", "2147483647")
+                                .setProperty("delivery.timeout.ms", "120000")
                                 .setRecordSerializer(KafkaRecordSerializationSchema.<RejectedOrderBookEvent>builder()
                                                 .setTopicSelector(
                                                                 (TopicSelector<RejectedOrderBookEvent>) rejection -> "ex"
@@ -102,6 +116,13 @@ public class TypeValidatorJob {
                 DataStream<ControlCommand> controlCommands = validated.getSideOutput(TypeValidateFunction.CONTROL);
                 controlCommands.sinkTo(KafkaSink.<ControlCommand>builder()
                 .setBootstrapServers(bootstrapServers)
+                // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                // failure drops records silently. Idempotence is the load-bearing one:
+                // plain retries can reorder writes, which corrupts the book downstream.
+                .setProperty("acks", "all")
+                .setProperty("enable.idempotence", "true")
+                .setProperty("retries", "2147483647")
+                .setProperty("delivery.timeout.ms", "120000")
                 .setRecordSerializer(KafkaRecordSerializationSchema.<ControlCommand>builder()
                         .setTopic("control-plane")
                         .setKeySerializationSchema(cmd ->
