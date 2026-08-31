@@ -29,6 +29,9 @@ Exchanges (nobitex, bitpin, wallex)
 | Schema Registry  | 8082            | Avro schema management          |
 | Kafka UI         | 8080            | Kafka web UI                    |
 | PostgreSQL       | 5432            | Market metadata store           |
+| Prometheus       | 9090            | Scrapes Flink + exporters       |
+| Alertmanager     | 9093            | Alert routing (no receiver yet) |
+| Grafana          | 3001            | Dashboards (3000 is `web`)      |
 
 ## Markets
 
@@ -94,6 +97,7 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 │   ├── run-local.sh           # runs one job in-process instead — no Flink cluster at all
 │   ├── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
 │   └── merger/                # sums the aggregated book's levels per price (p{id}-{side}-merged)
+├── monitoring/                # Prometheus scrape config + alert rules, Alertmanager, Grafana
 ├── nifi/
 │   └── Dockerfile              # NiFi + PostgreSQL JDBC driver
 ├── postgres/

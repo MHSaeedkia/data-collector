@@ -667,6 +667,106 @@ services:
         networks:
             - data-collector-net
 
+    # M9 — until this block existed nothing scraped a single one of the metrics
+    # this stack already exports: both Flink processes run a Prometheus
+    # reporter, and kafka-exporter, redis-exporter and lpa-staleness-exporter
+    # sit right above. Every failure mode in the production review was detected
+    # by a human noticing stale data.
+    #
+    # All config is in ./monitoring, mounted read-only. What is alerted on, and
+    # why each threshold is what it is, is documented in
+    # monitoring/prometheus/rules/flink.yml. Host-agnostic like the rest of the
+    # file: every scrape target is a compose service name, and no root URL or
+    # host address is baked in anywhere (see M8's removal).
+    prometheus:
+        image: prom/prometheus:v2.53.0
+        container_name: prometheus
+        hostname: prometheus
+        restart: unless-stopped
+        # Deliberately no depends_on. Its entire job is to notice that a target
+        # is down, which it cannot do if it waits for that target to be healthy
+        # before starting.
+        command:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            # Long enough to post-mortem the failures the review describes,
+            # short enough that the volume stays sane on a dev box.
+            - "--storage.tsdb.retention.time=15d"
+            # Lets `curl -XPOST :9090/-/reload` pick up rule edits without a
+            # restart, which matters because the rules are bind-mounted.
+            - "--web.enable-lifecycle"
+        ports:
+            - "9090:9090"
+        volumes:
+            - ./monitoring/prometheus:/etc/prometheus:ro
+            - data-collector-prometheus-data:/prometheus
+        networks:
+            - data-collector-net
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            test: [ "CMD", "wget", "-qO-", "http://localhost:9090/-/healthy" ]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 20s
+
+    # ⚠ Routes nowhere until a receiver is filled in — the project has no agreed
+    # notification channel. Alerts are still visible on its UI and Prometheus's
+    # /alerts. See the header of monitoring/alertmanager/alertmanager.yml.
+    alertmanager:
+        image: prom/alertmanager:v0.27.0
+        container_name: alertmanager
+        hostname: alertmanager
+        restart: unless-stopped
+        command:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+        ports:
+            - "9093:9093"
+        volumes:
+            - ./monitoring/alertmanager:/etc/alertmanager:ro
+            - data-collector-alertmanager-data:/alertmanager
+        networks:
+            - data-collector-net
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+
+    grafana:
+        image: grafana/grafana:11.1.0
+        container_name: grafana
+        hostname: grafana
+        restart: unless-stopped
+        ports:
+            # 3001 because 3000 is the web service. Container side stays 3000.
+            - "3001:3000"
+        environment:
+            # Dev-grade, in keeping with the rest of this file. Note there is
+            # deliberately no GF_SERVER_ROOT_URL: it would have to name a host,
+            # and Grafana does not need it for direct access.
+            GF_SECURITY_ADMIN_USER: admin
+            GF_SECURITY_ADMIN_PASSWORD: admin
+            GF_USERS_ALLOW_SIGN_UP: "false"
+        volumes:
+            # Provisions the Prometheus datasource so Grafana is usable on
+            # first start on every environment. No dashboards are provisioned —
+            # none have been authored.
+            - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+            - data-collector-grafana-data:/var/lib/grafana
+        networks:
+            - data-collector-net
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+
     market-subscriptions:
         build: ./market-subscriptions
         container_name: market-subscriptions
@@ -744,6 +844,9 @@ volumes:
     data-collector-zk-data:
     data-collector-zk-datalog:
     data-collector-redis-data:
+    data-collector-prometheus-data:
+    data-collector-alertmanager-data:
+    data-collector-grafana-data:
 
 networks:
     data-collector-net:

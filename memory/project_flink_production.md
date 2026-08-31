@@ -7,7 +7,7 @@ metadata:
 
 # Taking the Flink cluster to production
 
-Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5, M4, M3 and S4
+Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5, M4, M3, S4 and M9
 are APPLIED** (2026-08-29 / 2026-08-31, on `docs/flink-production-hardening`); **M8 is DROPPED** — see "What has landed"
 below; everything else is still review-only. A formatted copy is published at
 <https://claude.ai/code/artifact/0bab2c11-7c5a-4928-b2cc-78a1aaacdc15>; nothing here depends on that
@@ -162,6 +162,68 @@ longer exists; the sequence is four restarts then the JobManager.
 session had no access to the target box. A comment above the TaskManager blocks says so. If it does
 not fit, scale `process.size` and the container `memory:` limit *together*, keeping the limit above
 `process.size`.
+
+**M9 — Prometheus, Alertmanager and Grafana *(applied 2026-08-31)*.** `monitoring/` holds all the
+config, bind-mounted read-only; compose gains `prometheus` (host **9090**), `alertmanager` (**9093**)
+and `grafana` (**3001**, because 3000 is the `web` service) plus three named volumes. Six scrape
+targets — the JobManager on 9249, the four TaskManagers on 9250, and the three existing exporters —
+all named as compose services, so this satisfies the host-agnostic rule without exception.
+
+*The metric names are the point of this entry.* They were not taken from documentation. A throwaway
+`flink:2.2.0-scala_2.12-java21` JobManager and TaskManager were booted on a scratch network, the
+bundled `TopSpeedWindowing` example submitted to force job- and task-scope metrics into existence,
+and both endpoints scraped. Then a real `prom/prometheus:v2.53.0` was pointed at that pair with the
+actual rules file. Result: all ten rules reported `health: "ok"` with no `lastError`, and
+`FlinkJobCountWrong` and `FlinkTaskManagersMissing` were observed *firing* with correctly rendered
+annotations ("Flink is running 1 jobs, expected 8"). Three things that scrape revealed and that no
+reference would have:
+
+- **Flink exposes everything as a Prometheus `gauge`**, counters included — `numRestarts` among them.
+  `increase()` still works, because Prometheus ignores TYPE metadata at query time, but it emits a
+  "metric might not be a counter" warning that is expected and not a fault
+- **TaskManager series carry `host` as the container IP with dots turned into underscores**
+  (`host="172_20_0_3"`), which changes on every recreate. Anything that groups TaskManagers must use
+  Prometheus's own `instance` label instead
+- **`numRestarts` is JobManager-scope, not TaskManager-scope** (`flink_jobmanager_job_numRestarts`,
+  labelled with `job_name`), so the restart rules read from 9249
+
+Four deliberate deviations from the table in section 02, each because the table would not have
+worked as written:
+
+1. **`FlinkJobManagerDown` (`up == 0`) was added**, and it is listed first for a reason: a dead
+   JobManager is the *quietest* failure in the whole set, because `numRunningJobs != 8` cannot fire
+   when the series does not exist. It inhibits the derived alerts in Alertmanager so a failover pages
+   once instead of six times
+2. **"numRestarts rising" became two rules** — any restart in 15 min (warning), more than five in an
+   hour (critical). M1 converted a poison record from a job that dies into a job that restarts
+   forever; that job stays `RUNNING`, so the job-count alert stays clear, and it never reaches a
+   terminal state, so S4's HistoryServer never sees it either. These two rules are the only thing
+   that does
+3. **Back-pressure reads `backPressuredTimeMsPerSecond`, not the `isBackPressured` gauge** the report
+   named. The gauge is a 0/1 instantaneous sample and a 15 s scrape interval will mostly miss it; the
+   other is milliseconds accumulated between scrapes and is what a threshold can be set against
+4. **Nothing was written for the three exporters.** They are scraped and queryable, but their
+   thresholds were never part of this review and inventing them ships noise
+
+**Two honest gaps.** First, `records_lag_max` is the **one metric name in the file that is not
+verified** — the probe cluster had no Kafka source, so
+`flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max` comes from the
+documented Flink 2.x convention. If it is wrong the rule is *silently dead*: a rule whose selector
+matches nothing never errors and never fires. Confirm on the first deploy with `curl -s
+localhost:9250/metrics | grep -i records_lag_max`. Second, **Alertmanager delivers nowhere.** The
+project has no agreed notification channel, so its default receiver is deliberately empty (the
+upstream `- name: 'null'` idiom) rather than pointed at a placeholder URL that would fail on every
+alert. Grouping and two inhibit rules are in place, so adding a receiver is a one-block edit. Alerts
+remain visible on Alertmanager's UI and Prometheus's `/alerts` meanwhile. Grafana ships with the
+Prometheus datasource provisioned and **no dashboards** — none have been authored, and an empty
+dashboards provider is just another directory to keep in sync.
+
+**What was and was not validated.** `promtool check config` passed on `prometheus.yml` and found the
+rules file (10 rules), and the live run above exercised them end to end. `alertmanager.yml` parses as
+YAML and matches the schema by inspection, but **`amtool check-config` was never run** — no
+`prom/alertmanager` image is cached locally. Related: `prom/prometheus:v2.53.0` is already local,
+while `prom/alertmanager:v0.27.0` and `grafana/grafana:11.1.0` **both need a pull** before the first
+`up`.
 
 **Verification still owed on all four**, none of it possible from here: kill a job and watch it come
 back (M1); read the TaskManager startup log's own memory breakdown and confirm both the `--add-opens`
@@ -392,7 +454,7 @@ The same reasoning is worth a separate pass over the other published ports (`kaf
 `market-subscriptions` 8090 — already flagged unauthenticated in `todo.md`, Postgres 5432 on
 `postgres/postgres`, Redis 6379 with no password). Out of scope for this round.
 
-### M9 — Actually collect the metrics already exported
+### M9 — Actually collect the metrics already exported *(APPLIED 2026-08-31 — see "What has landed")*
 
 Both Flink processes run a Prometheus reporter, and there are `kafka-exporter`, `redis-exporter` and
 `lpa-staleness-exporter` alongside. Nothing scrapes any of them. Every failure in section 01 is
@@ -414,6 +476,11 @@ The two checkpoint alerts from the original report (`numberOfFailedCheckpoints`,
 
 Exact metric names differ between Flink versions and depend on the reporter's scope format. Build the
 rules against a live `curl localhost:9249/metrics`, not from a reference.
+
+**As applied**, this became `monitoring/` plus three compose services, and the table above changed in
+four places: a `FlinkJobManagerDown` rule was added ahead of everything else, "restart loop" became
+two rules, back-pressure uses `backPressuredTimeMsPerSecond` rather than the `isBackPressured` gauge,
+and one metric name — the Kafka one — is still unverified. The reasons are in the landed entry.
 
 ---
 

@@ -9,7 +9,7 @@
 
 ## flink (production readiness)
 
-Reviewed 2026-08-26, scope agreed with the user 2026-08-29. **M1, M7, M2a, M2b, S5, M4, M3 and S4
+Reviewed 2026-08-26, scope agreed with the user 2026-08-29. **M1, M7, M2a, M2b, S5, M4, M3, S4 and M9
 applied; M8 dropped. Nothing deployed or observed running.** Full report in
 [[project_flink_production]] — every item below has its config block there under the same ref.
 
@@ -149,11 +149,42 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
 - [ ] **Deploy note created by that fix — the next deploy MUST rebuild the Flink image.**
       `docker compose up -d` on its own reuses the old image and M3's HA has nowhere to write, with
       no obvious error at `up` time. Use `up -d --build` for the first deploy of this branch
-- [ ] **M9 — Prometheus + Alertmanager + Grafana.** Nothing scrapes the metrics we already export.
-      Alerts: **running jobs != 8** (not 7 — corrected), registered TMs < 4, `numRestarts` rising,
-      source `records_lag_max`, sustained `isBackPressured`, heap/GC. Build the rules from a live
-      `curl :9249/metrics` — metric names vary by version. (The two checkpoint alerts are parked
-      with the postponement)
+- [x] **M9 — Prometheus + Alertmanager + Grafana.** `monitoring/` holds the config; three services
+      added to compose (Prometheus **9090**, Alertmanager **9093**, Grafana **3001** — 3000 is
+      `web`). Ten rules in `monitoring/prometheus/rules/flink.yml`. Every scrape target is a compose
+      service name, so it stays host-agnostic. **Metric names came from a live scrape**, not from
+      docs: a throwaway `flink:2.2.0` JM+TM running the bundled `TopSpeedWindowing` example, then a
+      real Prometheus pointed at it — all ten rules evaluated `health: "ok"`, and `FlinkJobCountWrong`
+      / `FlinkTaskManagersMissing` were confirmed *firing* with correctly rendered annotations.
+      Deviations and gaps, all four deliberate:
+      - **Added `FlinkJobManagerDown` (`up == 0`)**, not in the report's table. Without it a dead
+        JobManager is the *quietest* failure of the set: `numRunningJobs != 8` cannot fire because
+        the series is gone. It inhibits the derived alerts in Alertmanager
+      - **Split "numRestarts rising" into two** — any restart in 15 min (warning) and >5 in an hour
+        (restart loop, critical). M1 turned a poison record from a dead job into a permanently
+        restarting one, which stays `RUNNING`, never reaches the HistoryServer, and is invisible to
+        every other rule here
+      - **Back-pressure uses `backPressuredTimeMsPerSecond`, not the `isBackPressured` gauge** the
+        report names. The gauge is a 0/1 instant sample that a 15 s scrape mostly misses; the other
+        is time accumulated between scrapes
+      - **⚠ One unverified metric name: `records_lag_max`.** The probe cluster had no Kafka source,
+        so `flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max` is
+        from the documented convention. If it is wrong the rule is *silently dead* — it never errors,
+        it just never fires. See the deploy check below
+      - **Alertmanager delivers nowhere**: no Slack webhook or SMTP host has been agreed, so the
+        default receiver is empty on purpose rather than pointed at a placeholder. Alerts are still
+        visible on its UI and Prometheus's `/alerts`. Grouping + two inhibit rules are in place, so
+        adding a receiver is a one-block edit
+      - **Grafana ships the Prometheus datasource provisioned but no dashboards** — none have been
+        authored, and an empty dashboards provider is just another directory to keep in sync
+      - **Not validated:** `alertmanager.yml` parses as YAML and matches Alertmanager's schema by
+        inspection, but no `prom/alertmanager` image is available locally, so `amtool check-config`
+        has **not** been run. Prometheus's own config and rules *were* validated with `promtool`
+- [ ] **Deploy check for M9 — confirm the Kafka lag metric name on the first real deploy.**
+      `curl -s localhost:9250/metrics | grep -i records_lag_max`. If the name differs, fix
+      `FlinkKafkaSourceLag` in `monitoring/prometheus/rules/flink.yml`; a wrong name is silent
+- [ ] **Deploy check for M9 — `prom/alertmanager:v0.27.0` and `grafana/grafana:11.1.0` are not
+      cached locally** and need a pull. `prom/prometheus:v2.53.0` is already present
 - [ ] **S7 — pin `kafka-ui`/`redis_exporter`/`kafka-exporter` off `:latest`**, and stamp the git SHA
       into the job jars — every jar is `1.0-SNAPSHOT`, so nothing on a running cluster says which
       commit it is
@@ -165,8 +196,9 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       production box.** Split into a dev target and a prod `up -d --build` with no `down -v`
 - [ ] **H2 — every deploy target opens with `git pull origin`** and builds on the box, so prod runs
       whatever is on the branch with no rollback. Build and tag images in CI
-- [ ] **H3 — `run-job.sh` exits at `RUNNING`** and nothing re-checks. M9's "job count wrong" alert is
-      what closes this loop — part of the deploy, not monitoring polish
+- [ ] **H3 — `run-job.sh` exits at `RUNNING`** and nothing re-checks. M9's `FlinkJobCountWrong`
+      alert now exists and closes half of it; the other half is the deploy asserting 8 running jobs
+      before it reports success, rather than leaving it to a 5-minute alert
 
 ### Carried over — open items from other sections that this work depends on
 
