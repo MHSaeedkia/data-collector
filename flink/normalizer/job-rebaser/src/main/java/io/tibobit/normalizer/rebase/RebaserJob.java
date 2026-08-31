@@ -1,5 +1,6 @@
 package io.tibobit.normalizer.rebase;
 
+import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
@@ -8,6 +9,7 @@ import io.tibobit.normalizer.serde.RawOrderBookEventSerializer;
 import io.tibobit.normalizer.serde.RejectedOrderBookEventSerializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
@@ -45,7 +47,7 @@ public class RebaserJob {
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+        CheckpointingConfigurer.configure(env); 
         KafkaSource<RawOrderBookEvent> source = KafkaSource.<RawOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
@@ -72,6 +74,8 @@ public class RebaserJob {
                                                 + "-rebased-flink")
                                 .setValueSerializationSchema(new RawOrderBookEventSerializer(schemaRegistryUrl))
                                 .build())
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                        .setTransactionalIdPrefix("job3-rebased")
                         .build())
                 .name("rebased-sink");
 
@@ -85,6 +89,8 @@ public class RebaserJob {
                                                 + "-p" + rejection.getEvent().getPairId() + "-rejected-flink")
                                 .setValueSerializationSchema(new RejectedOrderBookEventSerializer(schemaRegistryUrl))
                                 .build())
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                        .setTransactionalIdPrefix("job3-rejected")
                         .build())
                 .name("rejected-sink");
 

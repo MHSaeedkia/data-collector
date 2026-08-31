@@ -1,10 +1,12 @@
 package io.tibobit.normalizer.aggregate;
 
+import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.model.OrderBookSnapshot;
 import io.tibobit.normalizer.serde.OrderBookSnapshotDeserializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
@@ -39,7 +41,7 @@ public class AggregatorJob {
         String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+        CheckpointingConfigurer.configure(env); 
         KafkaSource<OrderBookSnapshot> source = KafkaSource.<OrderBookSnapshot>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
@@ -62,6 +64,8 @@ public class AggregatorJob {
                                         "p" + book.getPairId() + "-" + book.getSide())
                                 .setValueSerializationSchema(new AggregatedOrderBookSerializer(schemaRegistryUrl))
                                 .build())
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                        .setTransactionalIdPrefix("job6-aggregated")
                         .build())
                 .name("aggregated-order-book-sink");
 

@@ -5,12 +5,14 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
 import io.tibobit.normalizer.serde.RawOrderBookEventDeserializer;
 import io.tibobit.normalizer.serde.RawOrderBookEventSerializer;
 import io.tibobit.normalizer.serde.RejectedOrderBookEventSerializer;
+import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.model.ControlCommand;
 import io.tibobit.normalizer.serde.ControlCommandSerializer;
 
 import java.nio.charset.StandardCharsets;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
@@ -50,7 +52,7 @@ public class TypeValidatorJob {
                                 String.valueOf(TypeValidateFunction.DEFAULT_SNAPSHOT_RETRY_MS)));
 
                 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+                CheckpointingConfigurer.configure(env); 
                 KafkaSource<RawOrderBookEvent> source = KafkaSource.<RawOrderBookEvent>builder()
                                 .setBootstrapServers(bootstrapServers)
                                 .setTopicPattern(INPUT_TOPIC_PATTERN)
@@ -76,6 +78,8 @@ public class TypeValidatorJob {
                                                 .setValueSerializationSchema(
                                                                 new RawOrderBookEventSerializer(schemaRegistryUrl))
                                                 .build())
+                                .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                                .setTransactionalIdPrefix("job2-type-validated")
                                 .build())
                                 .name("type-validated-sink");
 
@@ -94,6 +98,8 @@ public class TypeValidatorJob {
                                                 .setValueSerializationSchema(
                                                                 new RejectedOrderBookEventSerializer(schemaRegistryUrl))
                                                 .build())
+                                .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                                .setTransactionalIdPrefix("job2-rejected")
                                 .build())
                                 .name("rejected-sink");
 

@@ -1,11 +1,13 @@
 package io.tibobit.normalizer.precision;
 
+import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.serde.RawOrderBookEventDeserializer;
 import io.tibobit.normalizer.serde.RawOrderBookEventSerializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
@@ -41,7 +43,7 @@ public class PrecisionJob {
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+        CheckpointingConfigurer.configure(env); 
         KafkaSource<RawOrderBookEvent> source = KafkaSource.<RawOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
@@ -65,6 +67,8 @@ public class PrecisionJob {
                                                 + "-applied-precision-flink")
                                 .setValueSerializationSchema(new RawOrderBookEventSerializer(schemaRegistryUrl))
                                 .build())
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                        .setTransactionalIdPrefix("job4-applied-precision")
                         .build())
                 .name("applied-precision-sink");
 

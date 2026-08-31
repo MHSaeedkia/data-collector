@@ -1,5 +1,6 @@
 package io.tibobit.normalizer.pairextract;
 
+import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.pairextract.parser.Parsers;
@@ -13,7 +14,7 @@ import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import java.util.regex.Pattern;
 
 /**
@@ -44,7 +45,7 @@ public class PairExtractorJob {
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+        CheckpointingConfigurer.configure(env); 
         KafkaSource<RawExchangeMessage> source = KafkaSource.<RawExchangeMessage>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(RAW_TOPIC_PATTERN)
@@ -70,6 +71,8 @@ public class PairExtractorJob {
                                         "ex" + event.getExchangeId() + "-p" + event.getPairId() + "-raw-flink")
                                 .setValueSerializationSchema(new RawOrderBookEventSerializer(schemaRegistryUrl))
                                 .build())
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE) 
+                        .setTransactionalIdPrefix("job1-raw-flink")
                         .build())
                 .name("raw-flink-sink");
 
