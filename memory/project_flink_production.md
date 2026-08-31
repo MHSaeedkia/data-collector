@@ -7,8 +7,8 @@ metadata:
 
 # Taking the Flink cluster to production
 
-Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a and M2b are
-APPLIED** (2026-08-29, uncommitted on `docs/flink-production-hardening`) — see "What has landed"
+Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5 and M4 are
+APPLIED** (2026-08-29, on `docs/flink-production-hardening`) — see "What has landed"
 below; everything else is still review-only. A formatted copy is published at
 <https://claude.ai/code/artifact/0bab2c11-7c5a-4928-b2cc-78a1aaacdc15>; nothing here depends on that
 link. The ordered apply-one-by-one list is in `todo.md` under `## flink (production readiness)`,
@@ -34,6 +34,32 @@ Applied to `docker-compose.yml` in apply-order, verified only by `docker compose
   metrics port stays 9250 in all four and only the *host* port varies — the report's section 07
   said "each with its own metrics port", which turned out to be unnecessary.
 
+- **S5** — a `healthcheck:` on all four TaskManagers (`curl -f localhost:9250/metrics`, 20s/5s/3,
+  40s start period). ⚠ **This is visibility, not recovery.** Docker does not restart a container
+  because it went unhealthy, and `restart: unless-stopped` does not change that — a hung JVM now
+  *reports* unhealthy and keeps running. M9's alerting is what makes it actionable.
+- **M4** — `acks=all`, `enable.idempotence=true`, `retries=2147483647`,
+  `delivery.timeout.ms=120000` via `.setProperty(...)` on **all 11 `KafkaSink` builder sites across
+  8 files** — one per job, plus RebaserJob's `rejected` dead-letter sink and TypeValidatorJob's
+  `rejected` **and** `controlCommands` sinks (the todo said "job 2's dead-letter sink"; there are
+  three extra sinks, not one). Verified by compiling all three Maven projects and running the
+  suites: **105 + 16 + 23 = 144 tests, all passing**.
+
+**What M4 does and does not buy.** It closes: transient broker-side failures (infinite `retries`
+bounded by `delivery.timeout.ms`), acceptance of an under-replicated write (`acks=all`), and
+**reordering across retries** (`enable.idempotence`) — that last one is the load-bearing part,
+because a reordered write corrupts the book in exactly the way the checkpoint-replay problem does.
+It does **not** close: `DeliveryGuarantee` is still `NONE`, so records sitting in the producer's
+buffer when a TaskManager JVM dies are still lost, and idempotence is per-producer-session, so a job
+restart starts a new producer id and can still duplicate at the seam. And per **S8**, this is a
+single-broker RF=1 Kafka — `acks=all` means "the one replica that exists".
+
+**M4 was applied inline at all 11 sites rather than through a shared helper.** `flink/merger` and
+`flink/adjustment` are standalone Maven projects that do **not** depend on `normalizer/common`
+(checked `merger/pom.xml`), so centralising would have meant introducing a cross-project dependency
+between three independently-built artifacts — far outside M4's scope. Inline duplication was the
+smaller cost.
+
 **Deviations from section 07, deliberate:** section 07's jobmanager block also carries
 `jobmanager.memory.process.size: 2g`, which belongs to no M-item and was **not** applied — it is a
 loose end, decide it with M3. The `-1..4` blocks are written out explicitly rather than sharing a
@@ -56,7 +82,11 @@ not fit, scale `process.size` and the container `memory:` limit *together*, keep
 **Verification still owed on all four**, none of it possible from here: kill a job and watch it come
 back (M1); read the TaskManager startup log's own memory breakdown and confirm both the `--add-opens`
 list and the heap-dump flags appear in the JVM options line (M2a); confirm 12 free slots and that the
-8 jobs spread across the four TaskManagers rather than piling onto one (M2b).
+8 jobs spread across the four TaskManagers rather than piling onto one (M2b); confirm the
+TaskManagers report healthy and that a deliberately hung one flips to unhealthy (S5); confirm the
+producer config actually took by reading `ProducerConfig` values in the TaskManager startup log —
+**no test in the repo exercises sink configuration**, so the 144 passing tests prove nothing broke,
+not that M4 works (M4).
 
 ---
 

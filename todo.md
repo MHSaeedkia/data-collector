@@ -67,15 +67,28 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       `freeSlots: 8`) is stale — now flagged in that file, but not re-tested across four TMs
 - [ ] **Loose end — `jobmanager.memory.process.size: 2g`.** It sits in the report's section 07
       jobmanager block but belongs to no M-item, so it was deliberately NOT applied. Decide with M3
-- [ ] **S5 — TaskManager healthcheck** (`curl :9250/metrics`). They have none, so a hung JVM stays
-      "up" forever. **Now four blocks to edit, not one** — the TM blocks are already open
-- [ ] **M4 — stop silent sink loss via producer config.** ⚠ `AT_LEAST_ONCE` is **inert** without
+- [x] **S5 — TaskManager healthcheck** (`curl :9250/metrics`). They have none, so a hung JVM stays
+      "up" forever. **APPLIED 2026-08-29** to all four TM blocks (20s/5s/3, 40s start period).
+      ⚠ **Visibility, not recovery** — Docker does not restart a container for going unhealthy, so
+      a hung JVM now *reports* unhealthy and keeps running. M9 is what makes this actionable
+- [x] **M4 — stop silent sink loss via producer config.** ⚠ `AT_LEAST_ONCE` is **inert** without
       checkpointing (it flushes *on checkpoint* — the docs' own wording), so the fix is
       `acks=all` + `enable.idempotence=true` + `retries` + `delivery.timeout.ms` via
       `setProperty` on every `KafkaSink`, job 2's dead-letter sink included. Idempotence is the
       important one: plain retries can **reorder** writes, which is the same class of bug as the
       replay problem above. Verified `setKafkaProducerConfig`/`setProperty` exist on
-      `KafkaSinkBuilder` (connector 5.0.0-2.2). **Now 8 jobs to touch, including `adjustment`**
+      `KafkaSinkBuilder` (connector 5.0.0-2.2). **Now 8 jobs to touch, including `adjustment`**.
+      **APPLIED 2026-08-29** to **11 sink sites across 8 files** — not 8: RebaserJob has a
+      `rejected` sink and TypeValidatorJob has `rejected` **and** `controlCommands` too. Applied
+      inline rather than via a shared helper because `merger`/`adjustment` do not depend on
+      `normalizer/common` and centralising would couple three independently-built projects.
+      All three projects compile; **144 tests pass** (105 + 16 + 23).
+      ⚠ **Does NOT close everything**: `DeliveryGuarantee` is still `NONE`, so records buffered in
+      the producer when a TM JVM dies are still lost, and idempotence is per-producer-session so a
+      restart can still duplicate at the seam. See **S8** — single-broker RF=1 means `acks=all` is
+      "the one replica that exists".
+      ⚠ **Verification owed: no test in the repo exercises sink configuration.** The 144 passing
+      tests prove nothing broke, not that M4 works — read `ProducerConfig` in the TM startup log
 - [ ] **M8 — bind 7070 to the private interface**, not `0.0.0.0`. Flink's REST API has **no auth at
       all**; anyone who can reach it uploads a jar and runs code next to Kafka/Postgres.
       `web.submit.enable: false` is NOT the fix — `run-job.sh` deploys through that endpoint.

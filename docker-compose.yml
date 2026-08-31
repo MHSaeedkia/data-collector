@@ -96,6 +96,15 @@ services:
             options:
                 max-size: "100m"
                 max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
 
     taskmanager-2:
         build: ./flink/normalizer
@@ -141,6 +150,15 @@ services:
             options:
                 max-size: "100m"
                 max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
 
     taskmanager-3:
         build: ./flink/normalizer
@@ -186,6 +204,15 @@ services:
             options:
                 max-size: "100m"
                 max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
 
     taskmanager-4:
         build: ./flink/normalizer
@@ -231,6 +258,15 @@ services:
             options:
                 max-size: "100m"
                 max-file: "5"
+        healthcheck:
+            # Visibility only: Docker does NOT restart an unhealthy container, so
+            # this marks a hung JVM rather than recovering it. M9's alerting is
+            # what turns it into a signal.
+            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 40s
 
     kafka:
         image: confluentinc/cp-kafka:7.8.0
