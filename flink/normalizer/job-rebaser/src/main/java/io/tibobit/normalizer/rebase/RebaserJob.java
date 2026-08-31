@@ -53,6 +53,10 @@ public class RebaserJob {
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
+                // Job 2's sinks write transactionally (EXACTLY_ONCE); without this a
+                // read_uncommitted consumer would see records from transactions that
+                // later abort.
+                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new RawOrderBookEventDeserializer(schemaRegistryUrl))
                 .build();
 
@@ -68,9 +72,10 @@ public class RebaserJob {
         // Rebased events -> ex{id}-p{id}-rebased-flink (same shared raw-order-book-event schema).
         rebased.sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)
-                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                        // failure drops records silently. Idempotence is the load-bearing one:
-                        // plain retries can reorder writes, which corrupts the book downstream.
+                        // EXACTLY_ONCE below commits transactionally on checkpoint completion
+                        // (CheckpointingConfigurer). acks=all + idempotence are required for
+                        // transactional Kafka writes; unlimited retries absorb transient
+                        // broker hiccups without failing the transaction.
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
                         .setProperty("retries", "2147483647")
@@ -90,9 +95,10 @@ public class RebaserJob {
         DataStream<RejectedOrderBookEvent> rejected = rebased.getSideOutput(RebaseFunction.REJECTED);
         rejected.sinkTo(KafkaSink.<RejectedOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)
-                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                        // failure drops records silently. Idempotence is the load-bearing one:
-                        // plain retries can reorder writes, which corrupts the book downstream.
+                        // EXACTLY_ONCE below commits transactionally on checkpoint completion
+                        // (CheckpointingConfigurer). acks=all + idempotence are required for
+                        // transactional Kafka writes; unlimited retries absorb transient
+                        // broker hiccups without failing the transaction.
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
                         .setProperty("retries", "2147483647")

@@ -47,6 +47,10 @@ public class AggregatorJob {
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
+                // Job 5's sink writes transactionally (EXACTLY_ONCE); without this a
+                // read_uncommitted consumer would see records from transactions that
+                // later abort.
+                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new OrderBookSnapshotDeserializer(schemaRegistryUrl))
                 .build();
 
@@ -58,9 +62,10 @@ public class AggregatorJob {
                 .name("aggregate")
                 .sinkTo(KafkaSink.<AggregatedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
-                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                        // failure drops records silently. Idempotence is the load-bearing one:
-                        // plain retries can reorder writes, which corrupts the book downstream.
+                        // EXACTLY_ONCE below commits transactionally on checkpoint completion
+                        // (CheckpointingConfigurer). acks=all + idempotence are required for
+                        // transactional Kafka writes; unlimited retries absorb transient
+                        // broker hiccups without failing the transaction.
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
                         .setProperty("retries", "2147483647")
