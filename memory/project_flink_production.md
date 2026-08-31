@@ -1,6 +1,6 @@
 ---
 name: flink-production-hardening
-description: Production-readiness report for the Flink cluster in docker-compose.yml — what breaks today, the changes agreed for now (restart strategy, memory/TM split, HA, producer acks, exposure, monitoring), and why checkpointing is POSTPONED (cross-job replay corrupts the book). NiFi is out of scope.
+description: Production-readiness report for the Flink cluster in docker-compose.yml — what breaks today, the changes agreed for now (restart strategy, memory/TM split, HA, producer acks, exposure, monitoring), and why checkpointing was POSTPONED then UN-postponed 2026-08-31 on feat/checkpointing (cross-job replay risk accepted, not mitigated). NiFi is out of scope.
 metadata:
     type: project
 ---
@@ -98,6 +98,65 @@ not that M4 works (M4).
 - **NiFi is out of scope entirely.** It is not managed from our side and its compose entry is
   development-only. Nothing in this document proposes a NiFi change, and NiFi is not part of any
   sizing, hazard or configuration item here.
+
+---
+
+## 2026-08-31 — Checkpointing UN-postponed on `feat/checkpointing`
+
+The postponement above held for two days. `feat/checkpointing` (commit `ec8d35c`, reviewed and fixed
+2026-08-31) enables per-job `EXACTLY_ONCE` checkpointing on all 6 normalizer jobs via a new
+`CheckpointingConfigurer` (`flink/normalizer/common/.../checkpointingConfigurer/`), called at the top
+of each `main()`. **User's call, 2026-08-31: proceed and accept the cross-job replay risk described in
+03 for now** — it has NOT been mitigated (none of the three "What would have to change" routes below
+were taken; the 6 jobs still checkpoint independently with no shared cut). This is a live, accepted
+risk, not a resolved one — re-read 03's "Why" section before assuming checkpointing makes restarts
+safe.
+
+What landed with it, and what this review fixed on top:
+- **FIX — did not compile.** `CheckpointingConfigurer` called `CheckpointConfig.setCheckpointStorage
+  (FileSystemCheckpointStorage)`, which does not exist in Flink 2.2.0 — that fluent
+  `StateBackend`/`CheckpointStorage`-object API was removed; checkpoint storage is config-key driven
+  now (`CheckpointingOptions.CHECKPOINT_STORAGE` = `"filesystem"` +
+  `CheckpointingOptions.CHECKPOINTS_DIRECTORY`, applied via `CheckpointConfig.configure(Configuration)`
+  — the same pattern already used for the other options). Confirmed by decompiling the actual
+  `flink-runtime`/`flink-core` 2.2.0 jars from `~/.m2` (no such method exists on `CheckpointConfig`),
+  then by compiling all 7 touched modules — **fails without this fix, builds clean with it, and all
+  269 existing tests in those modules still pass** (`mvn test -pl common,job-pair-extractor,
+  job-type-validator,job-rebaser,job-precision,job-book-builder,job-aggregator -am`, JDK 25 targeting
+  the pom's `java.version=21`, JDK 21 itself not installed on this machine). **The branch as pushed to
+  `origin/feat/checkpointing` would not have built.**
+- **`EXACTLY_ONCE` `DeliveryGuarantee` + a `TransactionalIdPrefix`** on every main/dead-letter
+  `KafkaSink` across all 6 jobs (not `job-type-validator`'s `control-plane` sink — left on M4's plain
+  idempotent-producer config, since duplicate resend requests are harmless).
+- **FIX — missing consumer `isolation.level=read_committed`.** The branch added transactional
+  producers but never set this on any downstream `KafkaSource`; without it, a `read_uncommitted`
+  consumer (Kafka's default) sees records from transactions that later abort — silent corruption of
+  exactly the kind 03 describes, just one hop earlier. Added to the 5 sources that read another job's
+  now-transactional output (`job-type-validator`, `job-rebaser`, `job-precision`, `job-book-builder`,
+  `job-aggregator`); `job-pair-extractor`'s source reads NiFi's raw topic, never written
+  transactionally, so it was left alone.
+- **FIX — restart strategy left alone.** `CheckpointingConfigurer` also set a job-level `fixed-delay`
+  restart strategy (5 attempts, 10s) via `env.getConfig().configure(...)`, overriding M1's cluster-wide
+  `exponential-delay` (infinite retries) in `docker-compose.yml`. Removed — jobs still inherit M1's
+  policy. (Verified against the flink-runtime/flink-core 2.2.0 jars locally: `ExecutionConfig
+  .configure()` does own restart-strategy parsing, so the call would have worked as written — reverted
+  for policy reasons, not because it was broken.)
+- **FIX — no shared checkpoint storage.** `CHECKPOINT_DIR` defaults to `file:///opt/flink/checkpoints`,
+  but no volume backed that path — each of the 5 containers (jobmanager + 4 taskmanagers) had its own
+  ephemeral local copy. A task rescheduled to a different TaskManager after a restart would not find
+  its own checkpoint. Added one shared named volume, `data-collector-flink-checkpoints`, mounted at
+  `/opt/flink/checkpoints` on all 5.
+- Stale comments ("Without checkpointing, DeliveryGuarantee is NONE...") left over from before
+  `CheckpointingConfigurer` existed, on every sink this branch upgraded, were rewritten to describe the
+  current EXACTLY_ONCE/transactional behavior.
+
+**Still not done** (out of scope for this pass — flag before relying on them): **M5** (`.uid()` on
+every operator — needed before a checkpoint can be restored across a topology-changing redeploy, and
+nobody added it here), **S2** (`pipeline.max-parallelism`), **S6** (stop-with-savepoint deploys), and
+**S8's interaction with transactional writes** (single-broker RF=1 —
+`TRANSACTION_STATE_LOG_REPLICATION_FACTOR`/`_MIN_ISR` are both 1, unexamined for what that means for
+transaction durability). None of this was verified live — same caveat as the rest of this document,
+"nothing has been deployed or observed running."
 
 ---
 

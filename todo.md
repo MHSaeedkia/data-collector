@@ -21,6 +21,12 @@ Reviewed 2026-08-26, scope agreed with the user 2026-08-29. **Nothing applied ye
   re-baseline from a snapshot rather than resume from a possibly-wrong state. Parked with it:
   **M5** (`.uid()`), **S2** (`max-parallelism`), **M6** (checkpoint volumes), **S6** (savepoint
   deploys), **L4**. Revisit routes are in the report's section 03
+  - **⚠ UN-POSTPONED 2026-08-31 on `feat/checkpointing`.** Checkpointing landed (all 6 normalizer
+    jobs, `EXACTLY_ONCE`) and the user's call was to accept the cross-job replay risk above for now
+    rather than block on one of the three routes. See [[project_flink_production]]'s dated section for
+    what landed and what this review fixed (`isolation.level=read_committed`, a shared checkpoint
+    volume, and reverting a restart-strategy override back to M1's cluster policy). **M5/S2/M6/S6/L4
+    are still NOT done** — they were not part of this pass and remain open below.
 - **NiFi out of scope** — not managed from our side, development-only in this compose file. Do not
   change it and do not propose changes to it
 - **S1 CLOSED** — keep `OffsetsInitializer.latest()`. Downstream-first submission ordering in the
@@ -140,8 +146,16 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
 - [ ] **L1 — application mode / one cluster per job**; **L2 — standby JM + 3-node ZooKeeper**;
       **L3 — parallelism > 1** (repartition topics first, or it gains nothing — and note there are
       no spare slots today)
-- [ ] **Revisit checkpointing** once one of the report's three routes is chosen: merge the normalizer
+- [x] **Checkpointing landed 2026-08-31** on `feat/checkpointing`, risk accepted rather than
+      mitigated — see the standing-decision note above. The three routes below are now about closing
+      the *residual* cross-job risk, not a precondition for checkpointing itself
+- [ ] **Close the cross-job replay risk** via one of the report's three routes: merge the normalizer
       chain into one JobGraph (only option giving both state survival and consistency), add a
       downstream monotonicity guard (⚠ conflicts with the user-stated "job 2 is the only sequence
       validator" invariant — reopen deliberately, see [[project_type_validator]]), or checkpoint only
       terminal jobs
+- [ ] **M5 — `.uid()` on every operator.** Needed before a checkpoint can be restored across a
+      topology-changing redeploy; not added as part of the 2026-08-31 checkpointing landing
+- [ ] **S2 — `pipeline.max-parallelism`**, **S6 — stop-with-savepoint deploys**, **M6 — checkpoint
+      volumes were added ad hoc (`data-collector-flink-checkpoints`), revisit against the report's
+      proposed values (num-retained, tolerable-failed-checkpoints) in section 03
