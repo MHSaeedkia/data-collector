@@ -18,10 +18,18 @@ keyed by the same refs.
 
 > **Job count corrected 2026-08-29.** The review was written against 7 jobs; merging `origin/main` brought in `flink/adjustment` (PR #10), making it **8**, and `ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)` confirms it. The cluster runs **8/8 task slots, completely full**. M2's slot arithmetic and M9's job-count alert are corrected throughout; `flink/adjustment` was **not read** for this review, so whether it has the same sink/state characteristics as the other seven is unverified.
 
-## What has landed (2026-08-29)
+## What has landed (2026-08-29 … 2026-08-31)
 
-Applied to `docker-compose.yml` in apply-order, verified only by `docker compose config --quiet`
-(exit 0) — **nothing has been deployed or observed running**:
+**⚠ Read this first: as of 2026-08-31 none of the hardening below is in `docker-compose.yml`
+any more.** It all lives in **`docker-compose.prod.yml`**, a separate file. `docker-compose.yml`
+was restored byte-for-byte to `f023a47`, the last commit before M1, and is the **development**
+stack. Where an item below says "applied to `docker-compose.yml`", read `docker-compose.prod.yml`.
+See "The dev/prod compose split" at the end of this section for why, and for what it costs.
+
+The agreed round is **complete**: M1, M7, M2a, M2b, S5, M4, M3, S4, M9, S7. M8 dropped.
+
+Applied in apply-order, verified only by `docker compose config --quiet` (exit 0) — **nothing has
+been deployed or observed running**:
 
 - **M1** — the five `restart-strategy.exponential-delay.*` keys on `jobmanager`.
 - **M7** — `restart: unless-stopped` and a `json-file` 100m x 5 `logging:` block on the JobManager
@@ -224,6 +232,71 @@ YAML and matches the schema by inspection, but **`amtool check-config` was never
 `prom/alertmanager` image is cached locally. Related: `prom/prometheus:v2.53.0` is already local,
 while `prom/alertmanager:v0.27.0` and `grafana/grafana:11.1.0` **both need a pull** before the first
 `up`.
+
+**S7 (2026-08-31)** — the last item of the round. Pins: `redis_exporter:v1.86.0` and
+`kafka-exporter:v1.9.0` were **read off the locally cached images** (the OCI
+`org.opencontainers.image.version` label, and the binary's own `--version` respectively) rather than
+recalled; `kafka-ui:v0.7.2` could not be — that image carries neither a version label nor
+Spring's `build-info.properties` — so it is the one pin taken from memory of provectuslabs' last
+release, annotated as such in the file. It fails **loudly** if wrong (`manifest unknown` at `up`),
+which is why it was acceptable to ship unverified where M9's `records_lag_max` was not.
+SHA stamping went two places because either alone is insufficient: `Git-Commit` in each shaded
+jar's manifest (a `${git.sha}` property defaulting to `unknown`, plus `<manifestEntries>` in all 8
+module shade transformers — verified by building with and without `-Dgit.sha`), and the **filename
+the jar is uploaded under** (`curl -F 'jarfile=@x.jar;filename=y.jar'`), which is what Flink's
+`/jars` listing and UI actually display. The manifest is durable but needs the jar in hand; the
+upload name is visible from the cluster but is lost on a JobManager restart.
+
+---
+
+### The dev/prod compose split (2026-08-31)
+
+**Why.** Every item above was applied in place to `docker-compose.yml` — the file developers run on
+a laptop. That was the wrong home for it: production hardening (four 8 GB TaskManagers, ZooKeeper,
+a monitoring stack) makes the dev stack heavy and slow for no dev benefit. User's call: production
+gets its own file, developers get theirs back exactly as it was.
+
+**Shape.** `docker-compose.prod.yml` is a **full standalone copy**, not an override layered with
+`-f a.yml -f b.yml`. That was forced, not preferred: **a compose override can add and modify but
+cannot remove**, and prod has to drop dev's single `taskmanager` service in favour of
+`taskmanager-1..4`. An override would have left a fifth, unwanted TaskManager registering with the
+cluster. The price is duplication — **a service added to one file must be added to the other by
+hand** — and that warning is written into both headers and the README rather than left implicit.
+
+**Decisions inside the split, each with a reason that is not obvious from the diff:**
+
+- **`docker-compose.yml` was restored from `f023a47`, not hand-reverted.** `origin/main` had
+  already merged the branch at `e130d6f`, so main's copy *contains* M1/M7/M2a/M2b/S5 — it is not a
+  clean baseline. `f023a47` is the last commit that touched the file before M1. Verified with
+  `diff`; identical apart from a 3-line header.
+- **NiFi is in the prod file, byte-identical** (user's call). "Out of scope" has always meant *do
+  not modify it*, which is not the same as *remove it*; removing it would have left the prod stack
+  with no ingestion if prod does in fact run it from here.
+- **Volume names and the compose project name are unchanged across both files.** Deliberate: a
+  distinct project name would re-prefix every volume, and an existing box switching to the prod file
+  would come up with empty Kafka and Postgres volumes and no error. The two stacks are never meant
+  to run side by side on one host.
+- **S7's pins live only in the prod file.** Dev is allowed to float; "restore it as it was" wins.
+- **The shared `flink/normalizer/Dockerfile` was left alone.** Its HA/archive `mkdir`+`chown` is
+  inert in dev (the dirs exist, nothing is mounted on them) and load-bearing in prod, so one image
+  still serves both.
+- **`run-job.sh` now *discovers* TaskManager containers** (`docker ps` filtered on
+  `^taskmanager(-[0-9]+)?$`) instead of the `taskmanager-1..4` list M2b baked in. This is fallout
+  the split created — dev is back to one `taskmanager` — and it needs the empty-array guard,
+  because `"${arr[@]}"` on an empty array aborts under `set -u`.
+- **Makefile: prod targets added, dev targets untouched** (user's call). They differ on purpose in
+  three ways — no `down -v` anywhere in the prod path, no `git pull` (check out the ref you mean to
+  deploy), and `--build` unconditional (the Dockerfile ownership fix). `prod-verify` counts
+  `RUNNING` jobs against `ALL_JOBS` and fails the deploy on a mismatch.
+
+**What this closed:** H1 (the `down -v` target is now unambiguously dev-only), H3 (the deploy
+asserts its own job count), and the `--build` deploy note. **Half of H2** — no more `git pull` in
+the deploy path; prod still builds on the box. It also defuses the standing concern that 4 × 8 GB of
+TaskManager could not coexist with "runnable on 5+ dev/test envs": that sizing is now prod-only.
+**Still unverified: neither file has been brought up.** The split is a text-level change validated
+by `config --quiet` and by diffing the two service sets.
+
+---
 
 **Verification still owed on all four**, none of it possible from here: kill a job and watch it come
 back (M1); read the TaskManager startup log's own memory breakdown and confirm both the `--add-opens`
@@ -599,12 +672,21 @@ healthcheck:
 Proves the JVM is serving, not that it is registered with the JobManager — that is M9's
 "TaskManagers missing" alert. The two together cover it.
 
-### S7 — Pin every image, and version the jars
+### S7 — Pin every image, and version the jars *(APPLIED 2026-08-31 — see "What has landed")*
 
 `kafka-ui:latest`, `redis_exporter:latest` and `kafka-exporter:latest` mean a rebuild can silently
 change what runs. Pin to a tag, ideally a digest. Separately every job jar is `1.0-SNAPSHOT`, so
 nothing on a running cluster says which commit is deployed — stamp the git SHA into the manifest and
 log it from `main()`.
+
+**Two deviations when it was applied.** *Tags, not digests*: the three cached images report
+`RepoDigests` whose value equals their local image ID, which is not a registry manifest digest and
+would not resolve on another host — pinning to those would have produced a file that cannot pull.
+*Manifest + upload filename, not `main()` logging*: logging the SHA at job start means editing 8
+`main()` methods across three independently-built projects; the upload filename gets the SHA onto
+the cluster's own `/jars` listing for one line in `run-job.sh`. The tradeoff is that the listing is
+lost on a JobManager restart, so after an HA recovery the running jobs no longer say what they are.
+`main()` logging is still the durable answer if that matters later.
 
 ### S8 — Kafka replication factor 1 caps what M4 can promise
 

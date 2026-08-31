@@ -1,124 +1,41 @@
 ---
+# DEVELOPMENT stack.  `docker compose up -d`
+# Production runs docker-compose.prod.yml, which is a separate, hardened copy — see the header
+# there.  Adding or rewiring a service here means doing the same over there by hand.
+#
 # Full stack for the raw-normalization pipeline: the Flink image builds from ./flink/normalizer
-# and the four taskmanagers have 3 slots each, enough for the 8 jobs submitted to this one
-# cluster via flink/run-job.sh with four slots spare.
+# and the taskmanager has 8 slots, enough for the 5 upstream normalizer jobs PLUS the terminal
+# aggregator submitted to this one cluster via flink/run-job.sh.
 services:
-    # M3 — the HA store. Without it nothing remembers that eight jobs were ever
-    # submitted: a JobManager restart comes back as an empty cluster and recovery
-    # is a human running `make run-all-jobs`. With it the JobManager re-reads the
-    # job graphs on boot and resubmits them unattended.
-    #
-    # HA does not require checkpointing and stays consistent with the
-    # postponement: there is no checkpoint to restore, so recovered jobs start
-    # with empty state at `latest` and re-baseline, which is the restart semantic
-    # already chosen. A single node is a SPOF; accepted, because the missing
-    # capability is job recovery across a JobManager restart and one node
-    # delivers it. Ensemble + standby JobManager is a later item.
-    zookeeper:
-        image: zookeeper:3.9
-        container_name: zookeeper
-        hostname: zookeeper
-        restart: unless-stopped
-        environment:
-            ZOO_MY_ID: 1
-            ZOO_4LW_COMMANDS_WHITELIST: srvr,ruok
-        volumes:
-            - data-collector-zk-data:/data
-            - data-collector-zk-datalog:/datalog
-        networks:
-            - data-collector-net
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            # zkServer.sh rather than `echo ruok | nc`: nc is not guaranteed to be
-            # in this image, and zkServer.sh ships with ZooKeeper itself. It costs
-            # a JVM start per probe, hence the 10s timeout.
-            test: [ "CMD-SHELL", "zkServer.sh status" ]
-            interval: 15s
-            timeout: 10s
-            retries: 5
-            start_period: 30s
-
     jobmanager:
         build: ./flink/normalizer
         container_name: jobmanager
         hostname: jobmanager
-        restart: unless-stopped
+        restart: on-failure
         command: jobmanager
-        depends_on:
-            zookeeper:
-                condition: service_healthy
         ports:
             - "7070:8081"
             - "9249:9249"
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-
-                # Explicit on purpose: Flink defaults restart-strategy.type to
-                # `disable` only because checkpointing is off, so today the first
-                # exception in any job kills it permanently. Backoff is longer
-                # than Flink's defaults because with no checkpoints every restart
-                # costs a full resync.
-                restart-strategy.type: exponential-delay
-                restart-strategy.exponential-delay.initial-backoff: 10 s
-                restart-strategy.exponential-delay.max-backoff: 5 min
-                restart-strategy.exponential-delay.backoff-multiplier: 2.0
-                restart-strategy.exponential-delay.reset-backoff-threshold: 15 min
-
-                # M3. All four keys are host-agnostic on purpose: `zookeeper` is a
-                # compose service name resolved on the internal network and the
-                # storageDir is a container path on a shared named volume, so this
-                # file still runs unchanged on every dev and test environment.
-                # cluster-id namespaces the ZK znodes; change it and the cluster
-                # forgets every job it was told about.
-                high-availability.type: zookeeper
-                high-availability.zookeeper.quorum: zookeeper:2181
-                high-availability.storageDir: file:///opt/flink/ha
-                high-availability.cluster-id: /data-collector
-
-                # S4. Terminal job state is written here as a JSON archive and
-                # the historyserver reads the same directory, so an exception
-                # outlives the JobManager that produced it. Only jobs reaching a
-                # terminal state are archived: a job caught in M1's restart loop
-                # is never written, so this is a post-mortem tool, not a live one.
-                jobmanager.archive.fs.dir: file:///opt/flink/archive
-
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
-            - data-collector-flink-ha:/opt/flink/ha
-            - data-collector-flink-archive:/opt/flink/archive
         networks:
             - data-collector-net
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
         healthcheck:
             test: [ "CMD", "curl", "-f", "http://localhost:8081/overview" ]
             interval: 10s
             retries: 5
 
-    # Four TaskManagers with 3 slots each (12 total) rather than one with 8.
-    # The 8 jobs at parallelism 1 filled the single TM exactly, so there was no
-    # room for a 9th job or any parallelism increase; spreading them over four
-    # JVMs also means one OOM takes down ~2 jobs instead of the whole pipeline.
-    #
-    # SIZING NOT VERIFIED AGAINST THE TARGET HOST: 4 x 8g here plus everything
-    # else in this file. Check free RAM on the box before deploying and scale
-    # process.size / the container limit together if it does not fit.
-    taskmanager-1:
+    taskmanager:
         build: ./flink/normalizer
-        container_name: taskmanager-1
-        hostname: taskmanager-1
-        restart: unless-stopped
+        container_name: taskmanager
+        hostname: taskmanager
+        restart: on-failure
         command: taskmanager
         ports:
             - "9250:9250"
@@ -128,324 +45,37 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
-
-                # M3, and NOT optional on the TaskManagers even though the report
-                # shows these keys only on the JobManager. With HA on, the leader
-                # publishes a random session id to ZooKeeper and fences RPC with
-                # it; a TaskManager left on the default `NONE` would use the
-                # standalone leader id and be rejected at registration. In an
-                # ordinary standalone deployment this falls out of every node
-                # sharing one config file — compose is what splits it per service.
-                high-availability.type: zookeeper
-                high-availability.zookeeper.quorum: zookeeper:2181
-                high-availability.storageDir: file:///opt/flink/ha
-                high-availability.cluster-id: /data-collector
-
-                # The image default is 1728m, which leaves roughly 384 MB of task
-                # heap shared by every job. managed.fraction is dropped from 0.4
-                # because the hashmap state backend barely uses managed memory.
-                # NEVER set env.java.opts.all here: the image uses that key for the
-                # Java 21 --add-opens list and setting it replaces the list.
-                taskmanager.memory.process.size: 8g
-                taskmanager.memory.managed.fraction: 0.1
-                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
-
+                taskmanager.numberOfTaskSlots: 8
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
                 metrics.reporter.prom.port: 9250
         volumes:
-            - data-collector-taskmanager-1-logs:/opt/flink/log
-            # The HA storage dir doubles as the blob store, which is how a
-            # TaskManager fetches job jars when the JobManager is unreachable. In a
-            # real cluster it is one shared filesystem visible to every node; a
-            # named volume mounted by all five containers is the compose equivalent.
-            - data-collector-flink-ha:/opt/flink/ha
+            - data-collector-taskmanager-logs:/opt/flink/log
         networks:
             - data-collector-net
-        deploy:
-            resources:
-                limits:
-                    # Must stay ABOVE process.size. Set it lower and the kernel
-                    # OOM-killer kills the container before Flink's memory
-                    # accounting can report anything.
-                    memory: 9g
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            # Visibility only: Docker does NOT restart an unhealthy container, so
-            # this marks a hung JVM rather than recovering it. M9's alerting is
-            # what turns it into a signal.
-            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
-            interval: 20s
-            timeout: 5s
-            retries: 3
-            start_period: 40s
 
-    taskmanager-2:
-        build: ./flink/normalizer
-        container_name: taskmanager-2
-        hostname: taskmanager-2
-        restart: unless-stopped
-        command: taskmanager
-        ports:
-            - "9251:9250"
-        depends_on:
-            jobmanager:
-                condition: service_healthy
-        environment:
-            FLINK_PROPERTIES: |
-                jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
-
-                # M3, and NOT optional on the TaskManagers even though the report
-                # shows these keys only on the JobManager. With HA on, the leader
-                # publishes a random session id to ZooKeeper and fences RPC with
-                # it; a TaskManager left on the default `NONE` would use the
-                # standalone leader id and be rejected at registration. In an
-                # ordinary standalone deployment this falls out of every node
-                # sharing one config file — compose is what splits it per service.
-                high-availability.type: zookeeper
-                high-availability.zookeeper.quorum: zookeeper:2181
-                high-availability.storageDir: file:///opt/flink/ha
-                high-availability.cluster-id: /data-collector
-
-                # The image default is 1728m, which leaves roughly 384 MB of task
-                # heap shared by every job. managed.fraction is dropped from 0.4
-                # because the hashmap state backend barely uses managed memory.
-                # NEVER set env.java.opts.all here: the image uses that key for the
-                # Java 21 --add-opens list and setting it replaces the list.
-                taskmanager.memory.process.size: 8g
-                taskmanager.memory.managed.fraction: 0.1
-                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
-
-                metrics.reporters: prom
-                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
-                metrics.reporter.prom.port: 9250
-        volumes:
-            - data-collector-taskmanager-2-logs:/opt/flink/log
-            # The HA storage dir doubles as the blob store, which is how a
-            # TaskManager fetches job jars when the JobManager is unreachable. In a
-            # real cluster it is one shared filesystem visible to every node; a
-            # named volume mounted by all five containers is the compose equivalent.
-            - data-collector-flink-ha:/opt/flink/ha
-        networks:
-            - data-collector-net
-        deploy:
-            resources:
-                limits:
-                    # Must stay ABOVE process.size. Set it lower and the kernel
-                    # OOM-killer kills the container before Flink's memory
-                    # accounting can report anything.
-                    memory: 9g
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            # Visibility only: Docker does NOT restart an unhealthy container, so
-            # this marks a hung JVM rather than recovering it. M9's alerting is
-            # what turns it into a signal.
-            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
-            interval: 20s
-            timeout: 5s
-            retries: 3
-            start_period: 40s
-
-    taskmanager-3:
-        build: ./flink/normalizer
-        container_name: taskmanager-3
-        hostname: taskmanager-3
-        restart: unless-stopped
-        command: taskmanager
-        ports:
-            - "9252:9250"
-        depends_on:
-            jobmanager:
-                condition: service_healthy
-        environment:
-            FLINK_PROPERTIES: |
-                jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
-
-                # M3, and NOT optional on the TaskManagers even though the report
-                # shows these keys only on the JobManager. With HA on, the leader
-                # publishes a random session id to ZooKeeper and fences RPC with
-                # it; a TaskManager left on the default `NONE` would use the
-                # standalone leader id and be rejected at registration. In an
-                # ordinary standalone deployment this falls out of every node
-                # sharing one config file — compose is what splits it per service.
-                high-availability.type: zookeeper
-                high-availability.zookeeper.quorum: zookeeper:2181
-                high-availability.storageDir: file:///opt/flink/ha
-                high-availability.cluster-id: /data-collector
-
-                # The image default is 1728m, which leaves roughly 384 MB of task
-                # heap shared by every job. managed.fraction is dropped from 0.4
-                # because the hashmap state backend barely uses managed memory.
-                # NEVER set env.java.opts.all here: the image uses that key for the
-                # Java 21 --add-opens list and setting it replaces the list.
-                taskmanager.memory.process.size: 8g
-                taskmanager.memory.managed.fraction: 0.1
-                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
-
-                metrics.reporters: prom
-                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
-                metrics.reporter.prom.port: 9250
-        volumes:
-            - data-collector-taskmanager-3-logs:/opt/flink/log
-            # The HA storage dir doubles as the blob store, which is how a
-            # TaskManager fetches job jars when the JobManager is unreachable. In a
-            # real cluster it is one shared filesystem visible to every node; a
-            # named volume mounted by all five containers is the compose equivalent.
-            - data-collector-flink-ha:/opt/flink/ha
-        networks:
-            - data-collector-net
-        deploy:
-            resources:
-                limits:
-                    # Must stay ABOVE process.size. Set it lower and the kernel
-                    # OOM-killer kills the container before Flink's memory
-                    # accounting can report anything.
-                    memory: 9g
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            # Visibility only: Docker does NOT restart an unhealthy container, so
-            # this marks a hung JVM rather than recovering it. M9's alerting is
-            # what turns it into a signal.
-            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
-            interval: 20s
-            timeout: 5s
-            retries: 3
-            start_period: 40s
-
-    taskmanager-4:
-        build: ./flink/normalizer
-        container_name: taskmanager-4
-        hostname: taskmanager-4
-        restart: unless-stopped
-        command: taskmanager
-        ports:
-            - "9253:9250"
-        depends_on:
-            jobmanager:
-                condition: service_healthy
-        environment:
-            FLINK_PROPERTIES: |
-                jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
-
-                # M3, and NOT optional on the TaskManagers even though the report
-                # shows these keys only on the JobManager. With HA on, the leader
-                # publishes a random session id to ZooKeeper and fences RPC with
-                # it; a TaskManager left on the default `NONE` would use the
-                # standalone leader id and be rejected at registration. In an
-                # ordinary standalone deployment this falls out of every node
-                # sharing one config file — compose is what splits it per service.
-                high-availability.type: zookeeper
-                high-availability.zookeeper.quorum: zookeeper:2181
-                high-availability.storageDir: file:///opt/flink/ha
-                high-availability.cluster-id: /data-collector
-
-                # The image default is 1728m, which leaves roughly 384 MB of task
-                # heap shared by every job. managed.fraction is dropped from 0.4
-                # because the hashmap state backend barely uses managed memory.
-                # NEVER set env.java.opts.all here: the image uses that key for the
-                # Java 21 --add-opens list and setting it replaces the list.
-                taskmanager.memory.process.size: 8g
-                taskmanager.memory.managed.fraction: 0.1
-                env.java.opts.taskmanager: -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/opt/flink/log
-
-                metrics.reporters: prom
-                metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
-                metrics.reporter.prom.port: 9250
-        volumes:
-            - data-collector-taskmanager-4-logs:/opt/flink/log
-            # The HA storage dir doubles as the blob store, which is how a
-            # TaskManager fetches job jars when the JobManager is unreachable. In a
-            # real cluster it is one shared filesystem visible to every node; a
-            # named volume mounted by all five containers is the compose equivalent.
-            - data-collector-flink-ha:/opt/flink/ha
-        networks:
-            - data-collector-net
-        deploy:
-            resources:
-                limits:
-                    # Must stay ABOVE process.size. Set it lower and the kernel
-                    # OOM-killer kills the container before Flink's memory
-                    # accounting can report anything.
-                    memory: 9g
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            # Visibility only: Docker does NOT restart an unhealthy container, so
-            # this marks a hung JVM rather than recovering it. M9's alerting is
-            # what turns it into a signal.
-            test: [ "CMD", "curl", "-f", "http://localhost:9250/metrics" ]
-            interval: 20s
-            timeout: 5s
-            retries: 3
-            start_period: 40s
-
-    # S4 — post-mortem storage. Without it a JobManager restart takes every
-    # failed job's exception, failing subtask and metrics with it, and the only
-    # record left is whatever scrolled past in the container log. Independent of
-    # checkpointing, so it lands despite the postponement.
-    #
-    # Deliberately has no `depends_on: jobmanager`: the failure this exists for
-    # is a JobManager that died or is unhealthy, which is exactly when the
-    # archive has to stay readable. It only reads a directory and never joins
-    # the cluster, so it also gets none of the M3 HA keys.
-    #
-    # Same build as the cluster rather than the bare flink image: it is already
-    # built locally, so this adds no pull.
-    historyserver:
-        build: ./flink/normalizer
-        container_name: historyserver
-        hostname: historyserver
-        restart: unless-stopped
-        command: history-server
-        ports:
-            # 7071 because 8082 — the HistoryServer's own default — is
-            # schema-registry on the host and 8081 is NiFi. Container side stays
-            # 8082. Host-agnostic: a port, not an address (see M8's removal).
-            - "7071:8082"
-        environment:
-            FLINK_PROPERTIES: |
-                historyserver.archive.fs.dir: file:///opt/flink/archive
-                historyserver.archive.fs.refresh-interval: 10000
-
-                # An in-container bind, not a host binding: the published port
-                # above is unreachable if this ever defaults to loopback.
-                historyserver.web.address: 0.0.0.0
-                historyserver.web.port: 8082
-        volumes:
-            - data-collector-flink-archive:/opt/flink/archive
-        networks:
-            - data-collector-net
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            test: [ "CMD", "curl", "-f", "http://localhost:8082/config" ]
-            interval: 20s
-            timeout: 5s
-            retries: 3
-            start_period: 30s
-
+    # taskmanager-2:
+    #     build: ./flink/normalizer
+    #     container_name: taskmanager-2
+    #     hostname: taskmanager-2
+    #     restart: on-failure
+    #     command: taskmanager
+    #     ports:
+    #         - "9251:9250"
+    #     depends_on:
+    #         jobmanager:
+    #             condition: service_healthy
+    #     environment:
+    #         FLINK_PROPERTIES: |
+    #             jobmanager.rpc.address: jobmanager
+    #             taskmanager.numberOfTaskSlots: 8
+    #             metrics.reporters: prom
+    #             metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    #             metrics.reporter.prom.port: 9250
+    #     volumes:
+    #         - data-collector-taskmanager-2-logs:/opt/flink/log
+    #     networks:
+    #         - data-collector-net
     kafka:
         image: confluentinc/cp-kafka:7.8.0
         container_name: kafka
@@ -667,106 +297,6 @@ services:
         networks:
             - data-collector-net
 
-    # M9 — until this block existed nothing scraped a single one of the metrics
-    # this stack already exports: both Flink processes run a Prometheus
-    # reporter, and kafka-exporter, redis-exporter and lpa-staleness-exporter
-    # sit right above. Every failure mode in the production review was detected
-    # by a human noticing stale data.
-    #
-    # All config is in ./monitoring, mounted read-only. What is alerted on, and
-    # why each threshold is what it is, is documented in
-    # monitoring/prometheus/rules/flink.yml. Host-agnostic like the rest of the
-    # file: every scrape target is a compose service name, and no root URL or
-    # host address is baked in anywhere (see M8's removal).
-    prometheus:
-        image: prom/prometheus:v2.53.0
-        container_name: prometheus
-        hostname: prometheus
-        restart: unless-stopped
-        # Deliberately no depends_on. Its entire job is to notice that a target
-        # is down, which it cannot do if it waits for that target to be healthy
-        # before starting.
-        command:
-            - "--config.file=/etc/prometheus/prometheus.yml"
-            - "--storage.tsdb.path=/prometheus"
-            # Long enough to post-mortem the failures the review describes,
-            # short enough that the volume stays sane on a dev box.
-            - "--storage.tsdb.retention.time=15d"
-            # Lets `curl -XPOST :9090/-/reload` pick up rule edits without a
-            # restart, which matters because the rules are bind-mounted.
-            - "--web.enable-lifecycle"
-        ports:
-            - "9090:9090"
-        volumes:
-            - ./monitoring/prometheus:/etc/prometheus:ro
-            - data-collector-prometheus-data:/prometheus
-        networks:
-            - data-collector-net
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-        healthcheck:
-            test: [ "CMD", "wget", "-qO-", "http://localhost:9090/-/healthy" ]
-            interval: 30s
-            timeout: 5s
-            retries: 3
-            start_period: 20s
-
-    # ⚠ Routes nowhere until a receiver is filled in — the project has no agreed
-    # notification channel. Alerts are still visible on its UI and Prometheus's
-    # /alerts. See the header of monitoring/alertmanager/alertmanager.yml.
-    alertmanager:
-        image: prom/alertmanager:v0.27.0
-        container_name: alertmanager
-        hostname: alertmanager
-        restart: unless-stopped
-        command:
-            - "--config.file=/etc/alertmanager/alertmanager.yml"
-            - "--storage.path=/alertmanager"
-        ports:
-            - "9093:9093"
-        volumes:
-            - ./monitoring/alertmanager:/etc/alertmanager:ro
-            - data-collector-alertmanager-data:/alertmanager
-        networks:
-            - data-collector-net
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-
-    grafana:
-        image: grafana/grafana:11.1.0
-        container_name: grafana
-        hostname: grafana
-        restart: unless-stopped
-        ports:
-            # 3001 because 3000 is the web service. Container side stays 3000.
-            - "3001:3000"
-        environment:
-            # Dev-grade, in keeping with the rest of this file. Note there is
-            # deliberately no GF_SERVER_ROOT_URL: it would have to name a host,
-            # and Grafana does not need it for direct access.
-            GF_SECURITY_ADMIN_USER: admin
-            GF_SECURITY_ADMIN_PASSWORD: admin
-            GF_USERS_ALLOW_SIGN_UP: "false"
-        volumes:
-            # Provisions the Prometheus datasource so Grafana is usable on
-            # first start on every environment. No dashboards are provisioned —
-            # none have been authored.
-            - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-            - data-collector-grafana-data:/var/lib/grafana
-        networks:
-            - data-collector-net
-        logging:
-            driver: json-file
-            options:
-                max-size: "100m"
-                max-file: "5"
-
     market-subscriptions:
         build: ./market-subscriptions
         container_name: market-subscriptions
@@ -835,18 +365,9 @@ volumes:
     data-collector-nifi-content-repository:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
-    data-collector-taskmanager-1-logs:
+    data-collector-taskmanager-logs:
     data-collector-taskmanager-2-logs:
-    data-collector-taskmanager-3-logs:
-    data-collector-taskmanager-4-logs:
-    data-collector-flink-ha:
-    data-collector-flink-archive:
-    data-collector-zk-data:
-    data-collector-zk-datalog:
     data-collector-redis-data:
-    data-collector-prometheus-data:
-    data-collector-alertmanager-data:
-    data-collector-grafana-data:
 
 networks:
     data-collector-net:
