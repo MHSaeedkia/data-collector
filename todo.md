@@ -9,7 +9,8 @@
 
 ## flink (production readiness)
 
-Reviewed 2026-08-26, scope agreed with the user 2026-08-29. **Nothing applied yet.** Full report in
+Reviewed 2026-08-26, scope agreed with the user 2026-08-29. **M1, M7, M2a, M2b, S5, M4, M3 and S4
+applied; M8 dropped. Nothing deployed or observed running.** Full report in
 [[project_flink_production]] — every item below has its config block there under the same ref.
 
 **Two standing decisions (2026-08-29):**
@@ -65,8 +66,7 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       `TASKMANAGERS=(...)` array and a `tm_logs` helper that reads all four. Still open:
       [[flink-deploy-tooling]]'s slot-leak procedure (`docker compose restart taskmanager`,
       `freeSlots: 8`) is stale — now flagged in that file, but not re-tested across four TMs
-- [ ] **Loose end — `jobmanager.memory.process.size: 2g`.** It sits in the report's section 07
-      jobmanager block but belongs to no M-item, so it was deliberately NOT applied. Decide with M3
+- [x] ~~**Loose end — `jobmanager.memory.process.size: 2g`**~~ — decided with M3, see below
 - [x] **S5 — TaskManager healthcheck** (`curl :9250/metrics`). They have none, so a hung JVM stays
       "up" forever. **APPLIED 2026-08-29** to all four TM blocks (20s/5s/3, 40s start period).
       ⚠ **Visibility, not recovery** — Docker does not restart a container for going unhealthy, so
@@ -89,17 +89,66 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       "the one replica that exists".
       ⚠ **Verification owed: no test in the repo exercises sink configuration.** The 144 passing
       tests prove nothing broke, not that M4 works — read `ProducerConfig` in the TM startup log
-- [ ] **M8 — bind 7070 to the private interface**, not `0.0.0.0`. Flink's REST API has **no auth at
-      all**; anyone who can reach it uploads a jar and runs code next to Kafka/Postgres.
-      `web.submit.enable: false` is NOT the fix — `run-job.sh` deploys through that endpoint.
-      `make run-remote` keeps working with `192.168.150.104:7070:8081`
-- [ ] **M3 — JobManager HA via ZooKeeper** + new `zookeeper` service + `data-collector-flink-ha`
+- [x] ~~**M8 — bind 7070 to the private interface**~~ — **DROPPED 2026-08-31 (user).**
+      `docker-compose.yml` runs on **5+ dev and test environments** and must stay host-agnostic. A
+      literal `192.168.150.104` does not just fail to be portable — the container **fails to start**
+      on any host that does not own that address (`bind: cannot assign requested address`), and
+      `127.0.0.1` breaks reaching the UI from a laptop against a shared test box. Applied and
+      reverted the same day; the port is back to `"7070:8081"`.
+      ⚠ **The risk is unmitigated, not resolved.** Flink's REST API still has **no auth at all** —
+      anyone who can reach 7070 uploads a jar and runs code next to Kafka/Postgres.
+      `web.submit.enable: false` is NOT the fix (`run-job.sh` deploys through that endpoint). The
+      control has to live outside this file: a host firewall, or a `docker-compose.override.yml` on
+      the box that actually needs a restricted bind.
+      ⚠ **Binds M3 and M9 too** — no hard-coded ZooKeeper address, scrape targets or root URL
+- [x] **M3 — JobManager HA via ZooKeeper** + new `zookeeper` service + `data-collector-flink-ha`
       volume. Today a JM restart returns an **empty cluster**. Consistent with the postponement: no
-      checkpoint to restore, so recovered jobs start at `latest` and re-baseline. ⚠ **verify by
-      killing the JobManager** — that HA recovery works cleanly with no checkpoints is the entire
-      value of this item and has not been observed
-- [ ] **S4 — HistoryServer** (`jobmanager.archive.fs.dir` + a history-server service). Without it a
-      JM restart takes every failed job's exception with it. Works without checkpointing
+      checkpoint to restore, so recovered jobs start at `latest` and re-baseline.
+      **APPLIED 2026-08-31.** `zookeeper:3.9`, four `high-availability.*` keys, 3 new volumes
+      (`flink-ha`, `zk-data`, `zk-datalog`). Pure insertion, 125 lines. Host-agnostic, so it clears
+      the 5+ env constraint. Two deviations from the report, both reasoned not observed:
+      **HA keys are on the four TaskManagers too** (leader fencing rejects a TM left on `NONE`) and
+      **`flink-ha` is mounted on the TMs too** (it doubles as the blob store). Healthcheck is
+      `zkServer.sh status`, not `echo ruok | nc` — `nc` presence in the image is unverified.
+      ⚠ **verify by killing the JobManager** — that HA recovery works cleanly with no checkpoints is
+      the entire value of this item and has not been observed. First check on `up`: **12 registered
+      slots**. If TaskManagers fail to register, the TM-side HA keys are suspect #1
+- [ ] **New hazard created by M3 — resubmission now duplicates.** Once HA recovers the 8 jobs
+      unattended, a human running `make run-all-jobs` out of habit gets **16 running jobs**, all
+      consuming and producing. `run-job.sh` does not check for an already-running job of the same
+      name. Either make it check `/jobs` first, or document the check in the runbook
+- [ ] **New gap created by M3 — recovery ignores submission order.** HA restores all 8 job graphs
+      at once in no particular order, but sources are `OffsetsInitializer.latest()` and
+      downstream-first ordering is load-bearing (S1). A recovered upstream job can emit before its
+      downstream consumer is running and those records are gone. Inside the accepted re-baseline
+      semantics, but this is a **new, automatic, unattended** place that semantic fires
+- [x] **Loose end CLOSED 2026-08-31 — `jobmanager.memory.process.size: 2g` NOT applied.**
+      Unattributed in the report, belongs to no M-item, and nothing shows the image's 1600m default
+      is short; M3 adds only a ZK client and the job-graph store to the JM. With the file running on
+      5+ envs, raising a memory floor without measurement is the wrong direction
+- [x] **S4 — HistoryServer** (`jobmanager.archive.fs.dir` + a history-server service). Without it a
+      JM restart takes every failed job's exception with it. Works without checkpointing.
+      **APPLIED 2026-08-31.** New `historyserver` service on the same `./flink/normalizer` build,
+      `data-collector-flink-archive` volume shared with the JM, 57 lines, pure insertion.
+      Deviations: **host port 7071** (8082 is schema-registry, 8081 is NiFi; container stays 8082),
+      **no `depends_on: jobmanager`** (the failure it exists for *is* a dead JM) and therefore
+      **none of the M3 HA keys**, and `historyserver.web.address: 0.0.0.0` pinned rather than
+      trusted to default.
+      ⚠ **Only *terminal* jobs are archived.** A job stuck in M1's restart loop is running, not
+      terminal, so it never shows up here however often it has failed — that is M9's `numRestarts`,
+      not S4
+- [x] **BUG found and fixed 2026-08-31 while applying S4 — the HA and archive volumes were
+      unwritable, which silently broke M3.** Docker creates a missing mount destination as
+      `root:root`; the Flink image runs as **uid 9999**. Neither `/opt/flink/ha` nor
+      `/opt/flink/archive` exists in `flink:2.2.0-scala_2.12-java21`, so both named volumes came up
+      root-owned and the JobManager could not write either. **Verified by probe, not reasoned** —
+      `touch` into a fresh volume gave `Permission denied`; the same probe against an image that
+      pre-creates and chowns them gave `WRITE OK`. Fix is 4 lines appended to
+      `flink/normalizer/Dockerfile`. `/opt/flink/log` was never affected because it already exists
+      in the image, which is why M7's log volumes worked
+- [ ] **Deploy note created by that fix — the next deploy MUST rebuild the Flink image.**
+      `docker compose up -d` on its own reuses the old image and M3's HA has nowhere to write, with
+      no obvious error at `up` time. Use `up -d --build` for the first deploy of this branch
 - [ ] **M9 — Prometheus + Alertmanager + Grafana.** Nothing scrapes the metrics we already export.
       Alerts: **running jobs != 8** (not 7 — corrected), registered TMs < 4, `numRestarts` rising,
       source `records_lag_max`, sustained `isBackPressured`, heap/GC. Build the rules from a live

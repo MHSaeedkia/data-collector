@@ -24,6 +24,7 @@ Exchanges (nobitex, bitpin, wallex)
 | ---------------- | --------------- | ------------------------------- |
 | NiFi             | 8443 (HTTPS UI) | Data ingestion & normalization  |
 | Flink JobManager | 7070            | Stream processing UI & REST API |
+| Flink History    | 7071            | Archived jobs from past runs    |
 | Kafka            | 9092            | Message broker (KRaft mode)     |
 | Schema Registry  | 8082            | Avro schema management          |
 | Kafka UI         | 8080            | Kafka web UI                    |

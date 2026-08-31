@@ -3,12 +3,54 @@
 # and the four taskmanagers have 3 slots each, enough for the 8 jobs submitted to this one
 # cluster via flink/run-job.sh with four slots spare.
 services:
+    # M3 — the HA store. Without it nothing remembers that eight jobs were ever
+    # submitted: a JobManager restart comes back as an empty cluster and recovery
+    # is a human running `make run-all-jobs`. With it the JobManager re-reads the
+    # job graphs on boot and resubmits them unattended.
+    #
+    # HA does not require checkpointing and stays consistent with the
+    # postponement: there is no checkpoint to restore, so recovered jobs start
+    # with empty state at `latest` and re-baseline, which is the restart semantic
+    # already chosen. A single node is a SPOF; accepted, because the missing
+    # capability is job recovery across a JobManager restart and one node
+    # delivers it. Ensemble + standby JobManager is a later item.
+    zookeeper:
+        image: zookeeper:3.9
+        container_name: zookeeper
+        hostname: zookeeper
+        restart: unless-stopped
+        environment:
+            ZOO_MY_ID: 1
+            ZOO_4LW_COMMANDS_WHITELIST: srvr,ruok
+        volumes:
+            - data-collector-zk-data:/data
+            - data-collector-zk-datalog:/datalog
+        networks:
+            - data-collector-net
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            # zkServer.sh rather than `echo ruok | nc`: nc is not guaranteed to be
+            # in this image, and zkServer.sh ships with ZooKeeper itself. It costs
+            # a JVM start per probe, hence the 10s timeout.
+            test: [ "CMD-SHELL", "zkServer.sh status" ]
+            interval: 15s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+
     jobmanager:
         build: ./flink/normalizer
         container_name: jobmanager
         hostname: jobmanager
         restart: unless-stopped
         command: jobmanager
+        depends_on:
+            zookeeper:
+                condition: service_healthy
         ports:
             - "7070:8081"
             - "9249:9249"
@@ -27,11 +69,31 @@ services:
                 restart-strategy.exponential-delay.backoff-multiplier: 2.0
                 restart-strategy.exponential-delay.reset-backoff-threshold: 15 min
 
+                # M3. All four keys are host-agnostic on purpose: `zookeeper` is a
+                # compose service name resolved on the internal network and the
+                # storageDir is a container path on a shared named volume, so this
+                # file still runs unchanged on every dev and test environment.
+                # cluster-id namespaces the ZK znodes; change it and the cluster
+                # forgets every job it was told about.
+                high-availability.type: zookeeper
+                high-availability.zookeeper.quorum: zookeeper:2181
+                high-availability.storageDir: file:///opt/flink/ha
+                high-availability.cluster-id: /data-collector
+
+                # S4. Terminal job state is written here as a JSON archive and
+                # the historyserver reads the same directory, so an exception
+                # outlives the JobManager that produced it. Only jobs reaching a
+                # terminal state are archived: a job caught in M1's restart loop
+                # is never written, so this is a post-mortem tool, not a live one.
+                jobmanager.archive.fs.dir: file:///opt/flink/archive
+
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
+            - data-collector-flink-ha:/opt/flink/ha
+            - data-collector-flink-archive:/opt/flink/archive
         networks:
             - data-collector-net
         logging:
@@ -68,6 +130,18 @@ services:
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 3
 
+                # M3, and NOT optional on the TaskManagers even though the report
+                # shows these keys only on the JobManager. With HA on, the leader
+                # publishes a random session id to ZooKeeper and fences RPC with
+                # it; a TaskManager left on the default `NONE` would use the
+                # standalone leader id and be rejected at registration. In an
+                # ordinary standalone deployment this falls out of every node
+                # sharing one config file — compose is what splits it per service.
+                high-availability.type: zookeeper
+                high-availability.zookeeper.quorum: zookeeper:2181
+                high-availability.storageDir: file:///opt/flink/ha
+                high-availability.cluster-id: /data-collector
+
                 # The image default is 1728m, which leaves roughly 384 MB of task
                 # heap shared by every job. managed.fraction is dropped from 0.4
                 # because the hashmap state backend barely uses managed memory.
@@ -82,6 +156,11 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-1-logs:/opt/flink/log
+            # The HA storage dir doubles as the blob store, which is how a
+            # TaskManager fetches job jars when the JobManager is unreachable. In a
+            # real cluster it is one shared filesystem visible to every node; a
+            # named volume mounted by all five containers is the compose equivalent.
+            - data-collector-flink-ha:/opt/flink/ha
         networks:
             - data-collector-net
         deploy:
@@ -122,6 +201,18 @@ services:
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 3
 
+                # M3, and NOT optional on the TaskManagers even though the report
+                # shows these keys only on the JobManager. With HA on, the leader
+                # publishes a random session id to ZooKeeper and fences RPC with
+                # it; a TaskManager left on the default `NONE` would use the
+                # standalone leader id and be rejected at registration. In an
+                # ordinary standalone deployment this falls out of every node
+                # sharing one config file — compose is what splits it per service.
+                high-availability.type: zookeeper
+                high-availability.zookeeper.quorum: zookeeper:2181
+                high-availability.storageDir: file:///opt/flink/ha
+                high-availability.cluster-id: /data-collector
+
                 # The image default is 1728m, which leaves roughly 384 MB of task
                 # heap shared by every job. managed.fraction is dropped from 0.4
                 # because the hashmap state backend barely uses managed memory.
@@ -136,6 +227,11 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-2-logs:/opt/flink/log
+            # The HA storage dir doubles as the blob store, which is how a
+            # TaskManager fetches job jars when the JobManager is unreachable. In a
+            # real cluster it is one shared filesystem visible to every node; a
+            # named volume mounted by all five containers is the compose equivalent.
+            - data-collector-flink-ha:/opt/flink/ha
         networks:
             - data-collector-net
         deploy:
@@ -176,6 +272,18 @@ services:
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 3
 
+                # M3, and NOT optional on the TaskManagers even though the report
+                # shows these keys only on the JobManager. With HA on, the leader
+                # publishes a random session id to ZooKeeper and fences RPC with
+                # it; a TaskManager left on the default `NONE` would use the
+                # standalone leader id and be rejected at registration. In an
+                # ordinary standalone deployment this falls out of every node
+                # sharing one config file — compose is what splits it per service.
+                high-availability.type: zookeeper
+                high-availability.zookeeper.quorum: zookeeper:2181
+                high-availability.storageDir: file:///opt/flink/ha
+                high-availability.cluster-id: /data-collector
+
                 # The image default is 1728m, which leaves roughly 384 MB of task
                 # heap shared by every job. managed.fraction is dropped from 0.4
                 # because the hashmap state backend barely uses managed memory.
@@ -190,6 +298,11 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-3-logs:/opt/flink/log
+            # The HA storage dir doubles as the blob store, which is how a
+            # TaskManager fetches job jars when the JobManager is unreachable. In a
+            # real cluster it is one shared filesystem visible to every node; a
+            # named volume mounted by all five containers is the compose equivalent.
+            - data-collector-flink-ha:/opt/flink/ha
         networks:
             - data-collector-net
         deploy:
@@ -230,6 +343,18 @@ services:
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 3
 
+                # M3, and NOT optional on the TaskManagers even though the report
+                # shows these keys only on the JobManager. With HA on, the leader
+                # publishes a random session id to ZooKeeper and fences RPC with
+                # it; a TaskManager left on the default `NONE` would use the
+                # standalone leader id and be rejected at registration. In an
+                # ordinary standalone deployment this falls out of every node
+                # sharing one config file — compose is what splits it per service.
+                high-availability.type: zookeeper
+                high-availability.zookeeper.quorum: zookeeper:2181
+                high-availability.storageDir: file:///opt/flink/ha
+                high-availability.cluster-id: /data-collector
+
                 # The image default is 1728m, which leaves roughly 384 MB of task
                 # heap shared by every job. managed.fraction is dropped from 0.4
                 # because the hashmap state backend barely uses managed memory.
@@ -244,6 +369,11 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-4-logs:/opt/flink/log
+            # The HA storage dir doubles as the blob store, which is how a
+            # TaskManager fetches job jars when the JobManager is unreachable. In a
+            # real cluster it is one shared filesystem visible to every node; a
+            # named volume mounted by all five containers is the compose equivalent.
+            - data-collector-flink-ha:/opt/flink/ha
         networks:
             - data-collector-net
         deploy:
@@ -267,6 +397,54 @@ services:
             timeout: 5s
             retries: 3
             start_period: 40s
+
+    # S4 — post-mortem storage. Without it a JobManager restart takes every
+    # failed job's exception, failing subtask and metrics with it, and the only
+    # record left is whatever scrolled past in the container log. Independent of
+    # checkpointing, so it lands despite the postponement.
+    #
+    # Deliberately has no `depends_on: jobmanager`: the failure this exists for
+    # is a JobManager that died or is unhealthy, which is exactly when the
+    # archive has to stay readable. It only reads a directory and never joins
+    # the cluster, so it also gets none of the M3 HA keys.
+    #
+    # Same build as the cluster rather than the bare flink image: it is already
+    # built locally, so this adds no pull.
+    historyserver:
+        build: ./flink/normalizer
+        container_name: historyserver
+        hostname: historyserver
+        restart: unless-stopped
+        command: history-server
+        ports:
+            # 7071 because 8082 — the HistoryServer's own default — is
+            # schema-registry on the host and 8081 is NiFi. Container side stays
+            # 8082. Host-agnostic: a port, not an address (see M8's removal).
+            - "7071:8082"
+        environment:
+            FLINK_PROPERTIES: |
+                historyserver.archive.fs.dir: file:///opt/flink/archive
+                historyserver.archive.fs.refresh-interval: 10000
+
+                # An in-container bind, not a host binding: the published port
+                # above is unreachable if this ever defaults to loopback.
+                historyserver.web.address: 0.0.0.0
+                historyserver.web.port: 8082
+        volumes:
+            - data-collector-flink-archive:/opt/flink/archive
+        networks:
+            - data-collector-net
+        logging:
+            driver: json-file
+            options:
+                max-size: "100m"
+                max-file: "5"
+        healthcheck:
+            test: [ "CMD", "curl", "-f", "http://localhost:8082/config" ]
+            interval: 20s
+            timeout: 5s
+            retries: 3
+            start_period: 30s
 
     kafka:
         image: confluentinc/cp-kafka:7.8.0
@@ -561,6 +739,10 @@ volumes:
     data-collector-taskmanager-2-logs:
     data-collector-taskmanager-3-logs:
     data-collector-taskmanager-4-logs:
+    data-collector-flink-ha:
+    data-collector-flink-archive:
+    data-collector-zk-data:
+    data-collector-zk-datalog:
     data-collector-redis-data:
 
 networks:

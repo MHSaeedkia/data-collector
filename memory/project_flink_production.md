@@ -7,8 +7,8 @@ metadata:
 
 # Taking the Flink cluster to production
 
-Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5 and M4 are
-APPLIED** (2026-08-29, on `docs/flink-production-hardening`) — see "What has landed"
+Report of 2026-08-26, revised 2026-08-29 after review with the user. **M1, M7, M2a, M2b, S5, M4, M3 and S4
+are APPLIED** (2026-08-29 / 2026-08-31, on `docs/flink-production-hardening`); **M8 is DROPPED** — see "What has landed"
 below; everything else is still review-only. A formatted copy is published at
 <https://claude.ai/code/artifact/0bab2c11-7c5a-4928-b2cc-78a1aaacdc15>; nothing here depends on that
 link. The ordered apply-one-by-one list is in `todo.md` under `## flink (production readiness)`,
@@ -44,6 +44,90 @@ Applied to `docker-compose.yml` in apply-order, verified only by `docker compose
   `rejected` **and** `controlCommands` sinks (the todo said "job 2's dead-letter sink"; there are
   three extra sinks, not one). Verified by compiling all three Maven projects and running the
   suites: **105 + 16 + 23 = 144 tests, all passing**.
+
+**M8 was applied on 2026-08-31 and reverted the same day** — the port binding is back to a bare
+`"7070:8081"`. See the standing decisions below for why; section 07's `192.168.150.104:7070:8081`
+line is superseded and should not be applied.
+
+- **M3** (2026-08-31) — a `zookeeper:3.9` service plus `high-availability.{type,zookeeper.quorum,
+  storageDir,cluster-id}` and a shared `data-collector-flink-ha` volume. Host-agnostic by
+  construction, so it satisfies the 2026-08-31 constraint: `zookeeper:2181` is a compose service
+  name on the internal network and the storage dir is a container path. New volumes:
+  `data-collector-flink-ha`, `-zk-data`, `-zk-datalog`. Pure insertion, 125 lines, nothing removed.
+
+  **Two deliberate deviations from section 07, both believed necessary:**
+  1. **The HA keys are on all four TaskManagers, not just the JobManager.** With HA on, the leader
+     publishes a random session id to ZooKeeper and fences RPC with it; a TaskManager left on the
+     default `NONE` uses the standalone leader id and should be rejected at registration. In an
+     ordinary standalone deployment this falls out of every node sharing one `flink-conf.yaml` —
+     compose is what splits config per service, which is why section 07 reads as if only the JM
+     needs it. **Reasoned from Flink's fencing model, not observed.** If the cluster comes up with
+     0 registered TaskManagers, this is the first thing to check — but the failure mode of the
+     *other* choice is the same symptom, so trying it is cheap either way.
+  2. **The `flink-ha` volume is mounted on the TaskManagers too**, not only the JobManager as
+     section 07 says. The HA storage dir doubles as the blob store, which is how a TaskManager
+     fetches job jars when the JobManager is unreachable; in a real cluster it is one shared
+     filesystem visible to every node.
+
+  **M3 as first applied was broken and was fixed on 2026-08-31 while doing S4** — see the S4 entry:
+  `/opt/flink/ha` does not exist in the image, so the named volume mounted there came up `root:root`
+  and the JobManager, which runs as uid 9999, could not write it. The fix is in
+  `flink/normalizer/Dockerfile`, not in compose.
+
+  **The healthcheck is `zkServer.sh status`, not section 07's `echo ruok | nc`.** `nc` is not
+  guaranteed present in `zookeeper:3.9` and there was no internet to check; `zkServer.sh` ships with
+  ZooKeeper and the image's own entrypoint uses it. Costs a JVM per probe, hence `timeout: 10s`.
+
+  **Two operational consequences of M3 that did not exist before, neither yet handled:**
+  - **Resubmission now duplicates.** Once HA recovers the 8 jobs on its own, a human running
+    `make run-all-jobs` out of habit gets **16 running jobs**, all consuming and producing. Check
+    `/jobs` before submitting anything.
+  - **Recovery ignores submission order.** HA restores all 8 job graphs at once in no particular
+    order, but sources use `OffsetsInitializer.latest()` and downstream-first submission ordering is
+    load-bearing (S1). A recovered upstream job can emit before its downstream consumer is running,
+    and those records are gone. This is inside the re-baseline semantics the user already accepted,
+    but it is a *new* place that semantic gets exercised — automatically, unattended.
+
+- **S4** (2026-08-31) — `jobmanager.archive.fs.dir: file:///opt/flink/archive` on the JobManager,
+  a new `historyserver` service on the same `./flink/normalizer` build (`command: history-server`),
+  and a shared `data-collector-flink-archive` volume. 57 lines in compose, pure insertion.
+
+  **The volume-ownership bug, found here and fixed for both S4 and M3.** Docker creates a missing
+  mount destination as `root:root`, and this image runs as **uid 9999 (`flink`)**. Neither
+  `/opt/flink/ha` (M3) nor `/opt/flink/archive` (S4) exists in `flink:2.2.0-scala_2.12-java21`, so
+  both named volumes came up unwritable by the process that has to write them. **Verified by probe,
+  not reasoned**: `touch` into a fresh volume at `/opt/flink/archive` returned `Permission denied`,
+  and the same probe against an image that pre-creates and `chown`s the directories returned
+  `WRITE OK`. The fix is four lines appended to `flink/normalizer/Dockerfile`
+  (`mkdir -p` + `chown flink:flink` for both paths, as root, then back to `USER flink`).
+  **Consequence: the next deploy must rebuild the Flink image** — `up -d` alone reuses the old one
+  and M3's HA silently has nowhere to write. `/opt/flink/log` was never affected because it exists
+  in the image already, which is why M7's log volumes worked.
+
+  **Deviations from section 05/07, all deliberate:**
+  1. **Published on host port 7071, not 8082.** 8082 — the HistoryServer's own default — is
+     schema-registry on this host and 8081 is NiFi. Container side stays 8082. A port choice, not an
+     address, so the host-agnostic decision is unaffected.
+  2. **No `depends_on: jobmanager`.** The failure this exists for *is* a dead or unhealthy
+     JobManager, which is exactly when the archive has to stay readable. It only reads a directory
+     and never joins the cluster, so it also gets **none** of the M3 HA keys.
+  3. **`historyserver.web.address: 0.0.0.0` and `.web.port: 8082` set explicitly.** In-container
+     binds, not host binds; the published port is unreachable if the address ever defaults to
+     loopback. Unverified which way the default goes in 2.2.0, so it is pinned rather than assumed.
+  4. **Same build as the cluster** rather than the bare `flink` image — already built locally, so it
+     adds no pull. The connector jars it inherits are dead weight and harmless.
+
+  **What S4 does not cover: only jobs that reach a *terminal* state are archived.** A job caught in
+  M1's exponential-delay restart loop is running, not terminal, so it never appears in the
+  HistoryServer no matter how many times it has failed. Repeated-restart diagnosis is M9's
+  `numRestarts` alert plus the container log, not this. S4 is for jobs that died and stayed dead.
+
+**`jobmanager.memory.process.size: 2g`: decided 2026-08-31, NOT applied — loose end closed.** It
+appears in section 07's jobmanager block, belongs to no M-item, and carries no attribution or
+measurement. The image default is 1600m and nothing shows it is short; M3 adds only a ZK client and
+the job-graph store to the JobManager. With the file now committed to running on 5+ dev and test
+environments, raising a memory floor without evidence is the wrong direction. Revisit only with a
+measured JobManager heap number.
 
 **What M4 does and does not buy.** It closes: transient broker-side failures (infinite `retries`
 bounded by `delivery.timeout.ms`), acceptance of an under-replicated write (`acks=all`), and
@@ -90,7 +174,7 @@ not that M4 works (M4).
 
 ---
 
-## Two standing decisions (user, 2026-08-29)
+## Three standing decisions (user, 2026-08-29 / 2026-08-31)
 
 - **Checkpointing is POSTPONED, not rejected.** Leave it off and the pipeline as it is for now.
   Section 03 records the reason and what would have to be true to revisit it. Everything that only
@@ -98,6 +182,16 @@ not that M4 works (M4).
 - **NiFi is out of scope entirely.** It is not managed from our side and its compose entry is
   development-only. Nothing in this document proposes a NiFi change, and NiFi is not part of any
   sizing, hazard or configuration item here.
+- **`docker-compose.yml` must stay host-agnostic — no host IPs, no host-specific bindings**
+  (user, 2026-08-31). This one file runs on **five-plus dev and test environments**, so a literal
+  like `192.168.150.104` is not merely unportable: the container **fails to start** on any host
+  that does not own that address (`bind: cannot assign requested address`). `127.0.0.1` is no
+  better — it makes the UI unreachable from anywhere but the box itself, which breaks the normal
+  dev workflow of hitting a shared test box from a laptop. **This is why M8 was dropped**, and it
+  binds every later item too: **M3** must not hard-code a ZooKeeper host address and **M9** must
+  not hard-code scrape targets or a Grafana root URL. If a per-host binding is ever wanted, it
+  belongs in a `docker-compose.override.yml` on that host or in an env var with a permissive
+  default — not in this file.
 
 ---
 
@@ -404,7 +498,7 @@ checkpoint**, worst case ≈ interval + checkpoint duration, average ≈ half th
 
 ## 05 · Should — after the section 02 items land
 
-### S4 — Run the HistoryServer
+### S4 — Run the HistoryServer *(APPLIED 2026-08-31 — see "What has landed")*
 
 When a job fails overnight and the JobManager restarts, the exception, the failing subtask and the
 metrics vanish with it. Archiving is what makes post-mortems possible. Works without checkpointing.
@@ -416,6 +510,11 @@ jobmanager.archive.fs.dir: file:///opt/flink/archive
 historyserver.archive.fs.dir: file:///opt/flink/archive
 historyserver.archive.fs.refresh-interval: 10000
 ```
+
+As applied this also needs `historyserver.web.address: 0.0.0.0` + `.web.port: 8082`, publishes on
+**host 7071** (8082 and 8081 are taken), takes no `depends_on`, and required the Dockerfile
+`mkdir`/`chown` for `/opt/flink/archive` — without which the JobManager cannot write the archive at
+all. Only terminal jobs are archived; a job stuck restarting never appears.
 
 ### S5 — Health check the TaskManagers
 
@@ -486,7 +585,7 @@ jobmanager:
         zookeeper:
             condition: service_healthy
     ports:
-        - "192.168.150.104:7070:8081"             # M8 — was "7070:8081"
+        - "7070:8081"                             # M8 DROPPED — see standing decisions
         - "9249:9249"
     environment:
         FLINK_PROPERTIES: |
