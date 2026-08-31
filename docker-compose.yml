@@ -17,10 +17,11 @@ services:
                 jobmanager.rpc.address: jobmanager
 
                 # Explicit on purpose: Flink defaults restart-strategy.type to
-                # `disable` only because checkpointing is off, so today the first
-                # exception in any job kills it permanently. Backoff is longer
-                # than Flink's defaults because with no checkpoints every restart
-                # costs a full resync.
+                # `disable` when checkpointing is off. Checkpointing is now enabled
+                # per-job (CheckpointingConfigurer) and deliberately does NOT set its
+                # own restart strategy, so every job still inherits this one — infinite
+                # retries with backoff, rather than giving up after a bounded number
+                # of attempts.
                 restart-strategy.type: exponential-delay
                 restart-strategy.exponential-delay.initial-backoff: 10 s
                 restart-strategy.exponential-delay.max-backoff: 5 min
@@ -32,6 +33,7 @@ services:
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         logging:
@@ -82,6 +84,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-1-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -136,6 +139,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-2-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -190,6 +194,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-3-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -244,6 +249,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-4-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -561,6 +567,7 @@ volumes:
     data-collector-taskmanager-2-logs:
     data-collector-taskmanager-3-logs:
     data-collector-taskmanager-4-logs:
+    data-collector-flink-checkpoints:
     data-collector-redis-data:
 
 networks:
