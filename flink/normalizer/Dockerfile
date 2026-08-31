@@ -34,9 +34,15 @@ RUN apt-get update -qq && apt-get install -y -q --no-install-recommends maven \
  && apt-get purge -y maven && apt-get autoremove -y -q \
  && rm -rf /root/.m2 /tmp/confluent-deps-pom.xml /var/lib/apt/lists/*
 
-# Pre-create with flink:flink ownership — Docker copies this into a fresh named
-# volume on first mount, so without it /opt/flink/checkpoints comes up root-owned
-# and the non-root flink user below can't write checkpoints (every checkpoint
-# fails, and Flink's default tolerable-failure-number is 0, so the job fails too).
-RUN mkdir -p /opt/flink/checkpoints && chown flink:flink /opt/flink/checkpoints
+# Mount points for the HA store (M3), the job archive (S4) and the checkpoint
+# directory. All three have to exist in the image and be owned by `flink`: Docker
+# creates a missing mount destination as root:root, and this image runs as uid 9999,
+# so a named volume mounted at a path the image does not already have is unwritable.
+# Verified by probe for ha/archive — without this the JobManager cannot write either.
+# Same failure for checkpoints, with a sharper edge: every checkpoint fails, and
+# Flink's default tolerable-failed-checkpoints is 0, so the job fails with it.
+# /opt/flink/log needs no entry here; it already exists in the image.
+USER root
+RUN mkdir -p /opt/flink/ha /opt/flink/archive /opt/flink/checkpoints \
+ && chown flink:flink /opt/flink/ha /opt/flink/archive /opt/flink/checkpoints
 USER flink
