@@ -145,3 +145,30 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       downstream monotonicity guard (⚠ conflicts with the user-stated "job 2 is the only sequence
       validator" invariant — reopen deliberately, see [[project_type_validator]]), or checkpoint only
       terminal jobs
+
+## flink job 2 — staleness-triggered resync (branch `feat/flink-check-staleness`)
+
+Built 2026-08-31. Design, the four user decisions, and the traps are in [[project_control_plane]]
+§"Silence closes the last gap". **Code complete and unit-verified; nothing has run live.**
+
+- [ ] **Run it live — the only thing that matters now.** Submit job 2, let a subscribed market go
+      quiet past its `staleness_threshold_seconds`, and confirm a `snapshot_request` with
+      `reason: "stale"` lands on `control-plane` and the exchange drops out of the aggregated view.
+      Then confirm the other state: a market subscribed but never fed produces `no_data_received`
+      and **no** reset
+- [ ] **Watch the first submit.** Every subscribed market is watched from its first tick, so if
+      `watchingSince` is wrong the whole book of markets asks at once — the same cold-start burst
+      the control-plane section already worries about. Check the `control-plane` topic in the first
+      two minutes after a submit before trusting it
+- [ ] **Verify the postgres driver and datagen really load on the cluster.** Both are shaded into
+      the job jar (verified in the jar, not on the cluster — no flink-dist or container was
+      available locally). A `NoClassDefFoundError` or the `Class.forName` child-first trap would
+      show up at submit, not at build
+- [ ] **e2e coverage.** Silence is time-based, so it inherits the same "no e2e" gap as re-asking.
+      Decide whether a scenario with a short `STALENESS_POLL_MS` + tiny threshold is worth it, or
+      whether the 12 unit tests plus a live check are enough
+- [ ] **`STALENESS_POLL_MS` / `REFRESH_INTERVAL_MS` are set nowhere in `docker-compose.yml`** and
+      take their in-code defaults (10 s / 60 s), exactly like `SNAPSHOT_RETRY_MS` above. Same
+      decision, same place to make it
+- [ ] Optional: re-register `control-command` so the registry carries the updated `reason` doc.
+      Doc-only, not a compatibility change — the two new values work without it

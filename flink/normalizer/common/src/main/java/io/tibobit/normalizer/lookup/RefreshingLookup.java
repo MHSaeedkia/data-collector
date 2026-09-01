@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
+import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,6 +62,16 @@ public class RefreshingLookup<K, V> implements Serializable {
     /** Current value for the key, or null if unknown. */
     public V get(K key) {
         return snapshot.get(key);
+    }
+
+    /**
+     * Read-only view of the whole current map, for the callers that need to
+     * iterate the reference data rather than look one key up in it. A view, not
+     * a copy: refresh replaces the map wholesale, so an iteration in flight
+     * keeps reading the snapshot it started on.
+     */
+    public Map<K, V> snapshot() {
+        return Collections.unmodifiableMap(snapshot);
     }
 
     /** Call from the operator's close(). */

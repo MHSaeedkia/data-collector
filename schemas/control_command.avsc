@@ -13,7 +13,7 @@
 			"name": "reason",
 			"type": "string",
 			"default": "",
-			"doc": "Why the snapshot is being asked for: `no_baseline` (job 2 has never seen a snapshot for this market, so there is nothing to apply updates to) or `sequence_gap` (a hole in the sequence invalidated the book it had). Same vocabulary as `reject_reason` on the dead-letter topic, and the two are the only conditions that make a re-snapshot worth asking for — a duplicate or a late snapshot leaves the book intact. On a repeated request the reason is the one that OPENED the episode, not `awaiting_snapshot`: the retry asks for the same thing for the same cause."
+			"doc": "Why the snapshot is being asked for. Two reasons come from a REJECTED event: `no_baseline` (job 2 has never seen a snapshot for this market, so there is nothing to apply updates to) and `sequence_gap` (a hole in the sequence invalidated the book it had). Two come from SILENCE instead, when nothing arrived at all for longer than that market's `exchange_markets.staleness_threshold_seconds`: `no_data_received` (nothing has ever arrived since the job started watching this market - the subscription may never have been wired up, or the exchange may have been down throughout) and `stale` (it was sending and stopped, so the book downstream is frozen and has been emptied with a reset). The silent pair carry no `source_ids`: no event caused them. Same vocabulary as `reject_reason` on the dead-letter topic, and the two are the only conditions that make a re-snapshot worth asking for — a duplicate or a late snapshot leaves the book intact. On a repeated request the reason is the one that OPENED the episode, not `awaiting_snapshot`: the retry asks for the same thing for the same cause."
 		},
 		{
 			"name": "exchange_id",

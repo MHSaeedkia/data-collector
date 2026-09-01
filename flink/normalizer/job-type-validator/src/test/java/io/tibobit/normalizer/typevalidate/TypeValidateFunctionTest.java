@@ -5,9 +5,9 @@ import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
-import org.apache.flink.streaming.api.operators.KeyedProcessOperator;
+import org.apache.flink.streaming.api.operators.co.KeyedCoProcessOperator;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
-import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
+import org.apache.flink.streaming.util.KeyedTwoInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -29,16 +29,29 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class TypeValidateFunctionTest {
 
-    private KeyedOneInputStreamOperatorTestHarness<String, RawOrderBookEvent, RawOrderBookEvent> harness;
+    private KeyedTwoInputStreamOperatorTestHarness<String, RawOrderBookEvent, StalenessTick,
+            RawOrderBookEvent> harness;
 
     @BeforeEach
     void openHarness() throws Exception {
-        KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator = new KeyedProcessOperator<>(
-                new TypeValidateFunction());
-        KeySelector<RawOrderBookEvent, String> byKey = e -> e.getExchangeId() + "|" + e.getPairId();
-        harness = new KeyedOneInputStreamOperatorTestHarness<>(
-                operator, byKey, TypeInformation.of(String.class));
-        harness.open();
+        harness = openHarness(new TypeValidateFunction());
+    }
+
+    /**
+     * Two inputs now: the raw events, and the staleness ticks that let the function
+     * notice a market which is not sending any. Both keyed the same way as the job.
+     */
+    private static KeyedTwoInputStreamOperatorTestHarness<String, RawOrderBookEvent, StalenessTick,
+            RawOrderBookEvent> openHarness(TypeValidateFunction function) throws Exception {
+        KeyedCoProcessOperator<String, RawOrderBookEvent, StalenessTick,
+                RawOrderBookEvent> operator = new KeyedCoProcessOperator<>(function);
+        KeySelector<RawOrderBookEvent, String> byEvent = e -> e.getExchangeId() + "|" + e.getPairId();
+        KeySelector<StalenessTick, String> byTick = StalenessTick::key;
+        KeyedTwoInputStreamOperatorTestHarness<String, RawOrderBookEvent, StalenessTick,
+                RawOrderBookEvent> opened = new KeyedTwoInputStreamOperatorTestHarness<>(
+                        operator, byEvent, byTick, TypeInformation.of(String.class));
+        opened.open();
+        return opened;
     }
 
     @AfterEach
@@ -86,7 +99,12 @@ class TypeValidateFunctionTest {
     }
 
     private void send(RawOrderBookEvent e) throws Exception {
-        harness.processElement(new StreamRecord<>(e));
+        harness.processElement1(new StreamRecord<>(e));
+    }
+
+    /** One staleness poll for this market, with the threshold its DB row would carry. */
+    private void tick(int ex, int pair, int thresholdSeconds) throws Exception {
+        harness.processElement2(new StreamRecord<>(new StalenessTick(ex, pair, thresholdSeconds)));
     }
 
     private List<RawOrderBookEvent> valid() {
@@ -818,12 +836,7 @@ class TypeValidateFunctionTest {
     /** Reopens the harness with a short retry interval, clock at zero. */
     private void withRetryInterval(long ms) throws Exception {
         harness.close();
-        KeyedProcessOperator<String, RawOrderBookEvent, RawOrderBookEvent> operator =
-                new KeyedProcessOperator<>(new TypeValidateFunction(ms));
-        KeySelector<RawOrderBookEvent, String> byKey = e -> e.getExchangeId() + "|" + e.getPairId();
-        harness = new KeyedOneInputStreamOperatorTestHarness<>(
-                operator, byKey, TypeInformation.of(String.class));
-        harness.open();
+        harness = openHarness(new TypeValidateFunction(ms));
         harness.setProcessingTime(0L);
     }
 
@@ -1007,4 +1020,223 @@ class TypeValidateFunctionTest {
         send(delta(8, 1, "update", 1900L, 300L));
         assertThat(controlCommands()).isEmpty();
     }
+
+    // ---- staleness: silence detection (ticks) -----------------------------------
+    //
+    // Two conditions, told apart by whether the market has EVER spoken, per the
+    // user's requirement that they be separate states. Every test drives the clock
+    // by hand: silence is measured in processing time and nothing here is timer-driven.
+
+    @Test
+    @DisplayName("staleness: the first tick only starts the clock, it never judges on it")
+    void firstTickDoesNotAsk() throws Exception {
+        withRetryInterval(60_000L);
+        harness.setProcessingTime(500_000L); // job submitted long after epoch
+        tick(6, 1, 60);
+
+        // Without this, every subscribed market fires a request in the first second
+        // after a submit, because "now - 0" exceeds every threshold.
+        assertThat(controlCommands()).isEmpty();
+        assertThat(valid()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("staleness: a market that never sends anything asks with reason no_data_received")
+    void neverReceivedAsksAfterTheThreshold() throws Exception {
+        withRetryInterval(600_000L);
+        tick(6, 1, 60); // starts watching at t=0
+        harness.setProcessingTime(59_000L);
+        tick(6, 1, 60);
+        assertThat(controlCommands()).as("still inside the threshold").isEmpty();
+
+        harness.setProcessingTime(61_000L);
+        tick(6, 1, 60);
+
+        assertThat(controlCommands()).hasSize(1);
+        ControlCommand command = controlCommands().get(0);
+        assertThat(command.getAction()).isEqualTo(ControlCommand.SNAPSHOT_REQUEST);
+        assertThat(command.getReason()).isEqualTo(TypeValidateFunction.NO_DATA_RECEIVED);
+        assertThat(command.getExchangeId()).isEqualTo(6);
+        assertThat(command.getPairId()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("staleness: a never-received market emits NO reset - there is no book to empty")
+    void neverReceivedEmitsNoReset() throws Exception {
+        withRetryInterval(600_000L);
+        tick(6, 1, 60);
+        harness.setProcessingTime(61_000L);
+        tick(6, 1, 60);
+
+        // A reset here would create keyed state in jobs 3-5 for a market that has never
+        // produced a single event.
+        assertThat(valid()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("staleness: a market that spoke and stopped asks with reason stale")
+    void wentSilentAsksWithStaleReason() throws Exception {
+        withRetryInterval(600_000L);
+        tick(6, 1, 60);
+        send(delta(6, 1, "snapshot", 1000L, 1L));
+        harness.setProcessingTime(30_000L);
+        tick(6, 1, 60);
+        assertThat(controlCommands()).as("spoke at t=0, only 30s of silence").isEmpty();
+
+        harness.setProcessingTime(61_000L);
+        tick(6, 1, 60);
+
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.STALE);
+    }
+
+    @Test
+    @DisplayName("staleness: going silent empties the book with a reset, exactly once per episode")
+    void wentSilentEmitsOneReset() throws Exception {
+        withRetryInterval(60_000L);
+        tick(6, 1, 60);
+        send(delta(6, 1, "snapshot", 1000L, 1L));
+
+        harness.setProcessingTime(61_000L);
+        tick(6, 1, 60);
+        harness.setProcessingTime(130_000L); // past the retry interval, so it re-asks
+        tick(6, 1, 60);
+        harness.setProcessingTime(200_000L);
+        tick(6, 1, 60);
+
+        List<RawOrderBookEvent> resets = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .collect(Collectors.toList());
+        assertThat(resets).as("the book is emptied once; re-asking does not re-empty it").hasSize(1);
+        assertThat(controlCommands().size()).as("but the ask does repeat").isGreaterThan(1);
+    }
+
+    @Test
+    @DisplayName("staleness: the silence reset carries no parent - nothing caused it but time")
+    void silenceResetHasEmptyLineage() throws Exception {
+        withRetryInterval(600_000L);
+        tick(6, 1, 60);
+        send(delta(6, 1, "snapshot", 1000L, 1L));
+        harness.setProcessingTime(61_000L);
+        tick(6, 1, 60);
+
+        RawOrderBookEvent reset = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .findFirst().orElseThrow();
+        // Empty, never [""] - a blank id passes every "is the field set" check while
+        // being untraceable, which is a bug the timer implementation actually shipped.
+        assertThat(reset.getSourceIds()).isEmpty();
+        assertThat(reset.getId()).isNotBlank();
+        assertThat(controlCommands().get(0).getSourceIds()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("staleness: a silent SIMULATED market must not make the collector call a real exchange")
+    void silenceCarriesTheSimulationFlagOfTheLastEvent() throws Exception {
+        withRetryInterval(600_000L);
+        tick(5, 1, 60);
+        RawOrderBookEvent simulated = delta(5, 1, "snapshot", 1000L, 1L);
+        simulated.setSimulation(1);
+        send(simulated);
+
+        harness.setProcessingTime(61_000L);
+        tick(5, 1, 60);
+
+        assertThat(controlCommands().get(0).getSimulation()).isEqualTo(1);
+        RawOrderBookEvent reset = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .findFirst().orElseThrow();
+        assertThat(reset.getSimulation()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("staleness: data arriving resets the silence clock")
+    void arrivalResetsTheClock() throws Exception {
+        withRetryInterval(600_000L);
+        tick(6, 1, 60);
+        send(delta(6, 1, "snapshot", 1000L, 1L));
+
+        harness.setProcessingTime(50_000L);
+        send(delta(6, 1, "update", 1001L, 1L)); // spoke again at t=50s
+        harness.setProcessingTime(100_000L); // 100s since start, but only 50s since it spoke
+        tick(6, 1, 60);
+
+        assertThat(controlCommands()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("staleness: a REJECTED event still counts as arriving - the feed is alive")
+    void rejectedEventsCountAsArrival() throws Exception {
+        withRetryInterval(600_000L);
+        tick(8, 1, 60);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        harness.setProcessingTime(50_000L);
+        send(delta(8, 1, "snapshot", 1L, 300L)); // stale_or_duplicate - rejected
+
+        harness.setProcessingTime(100_000L);
+        tick(8, 1, 60);
+
+        assertThat(rejects()).hasSize(1);
+        // Silence means nothing ARRIVED. A key rejecting everything is alive and is
+        // already re-asking on the rejection path; calling it stale too would be one
+        // fault asking twice.
+        assertThat(controlCommands()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("staleness: each market's own threshold is used, not a shared one")
+    void thresholdIsPerMarket() throws Exception {
+        withRetryInterval(600_000L);
+        tick(6, 1, 30);
+        tick(8, 1, 300);
+        send(delta(6, 1, "snapshot", 1000L, 1L));
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+
+        harness.setProcessingTime(60_000L);
+        tick(6, 1, 30); // 60s of silence, threshold 30 -> stale
+        tick(8, 1, 300); // 60s of silence, threshold 300 -> fine
+
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(controlCommands().get(0).getExchangeId()).isEqualTo(6);
+    }
+
+    @Test
+    @DisplayName("staleness: silence and rejection share ONE suppression window, never two")
+    void silenceAndRejectionDoNotDoubleAsk() throws Exception {
+        withRetryInterval(600_000L);
+        tick(8, 1, 60);
+        // no_baseline: an update with no snapshot ever - asks on the rejection path.
+        send(delta(8, 1, "update", 1000L, 300L));
+        assertThat(controlCommands()).hasSize(1);
+
+        // Now let it go silent too. Both conditions hold, but the interval has not
+        // passed, so the market must not ask twice for the same thing.
+        harness.setProcessingTime(61_000L);
+        tick(8, 1, 60);
+
+        assertThat(controlCommands()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("staleness: a feed that resumes after a silence reset is accepted, not rejected")
+    void resumingAfterSilenceIsNotRejectedAsOutOfOrder() throws Exception {
+        withRetryInterval(600_000L);
+        tick(3, 1, 60);
+        send(nullSeqSnapshot(3, 1, 5_000L)); // exchange clock is nowhere near wall clock
+
+        harness.setProcessingTime(61_000L);
+        tick(3, 1, 60); // silence: asks, and empties the book with a reset
+
+        // The feed comes back on its own clock, far "older" than the wall-clock instant
+        // the reset was stamped with. It must be accepted: a silence episode is a resync
+        // like any other, so the ordering guards are suspended until it is answered.
+        // Without that exemption the key would reject every returning event forever and
+        // the market could never recover - the 2026-08-19 deadlock, reached from a new
+        // direction.
+        send(nullSeqSnapshot(3, 1, 2_000L)); // BEHIND the last accepted event time
+
+        assertThat(rejects()).isEmpty();
+        assertThat(validBusiness()).hasSize(2);
+    }
+
 }

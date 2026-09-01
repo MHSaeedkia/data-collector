@@ -373,3 +373,82 @@ gap, the loop flagged in todo.md. The deadlock fix means the market will keep *a
 going silently dark, so this degrades into a request loop rather than a black hole, but it is the
 ex5-specific failure mode to look for on the live feed. `31-ex5-rest-snapshot-resync` is the e2e
 scenario that covers the happy version of this path.
+
+## Silence closes the last gap (2026-08-31) — staleness-triggered resync
+
+The deliberate hole above — *"a market that goes SILENT after the gap gets no retries"* — is now
+closed, on user request, and closed the way that note prescribed: **on top of the event-driven ask,
+and without re-introducing a timer.**
+
+**The four decisions were the user's**, asked before any code: reuse the existing DB column, define
+silence as *nothing ARRIVED* (not "nothing accepted"), include markets that have **never** sent
+anything, and keep re-asking while the silence lasts.
+
+**No new DB column.** `exchange_markets.staleness_threshold_seconds INT NOT NULL DEFAULT 60` already
+existed, seeded on every row and already read by [[staleness-exporter]] — which only ever
+*reported* it to Prometheus. Job 2 now acts on the same number. One knob drives both "warn a human"
+and "auto-resync"; that coupling is the accepted cost of not adding a column and not hand-running
+another `ALTER TABLE` on the provisioned server DB.
+
+**A tick stream, not a timer — and not for the reason you would guess.** The timer was already
+rejected once here for cancellation bugs, but the decisive argument this time is different and
+stronger: **a keyed function cannot register a timer for a key that does not exist, and a market
+that has never sent a byte has no key.** Cold-start detection is impossible with timers at any level
+of care. So a `DataGeneratorSource` pulses on a fixed cadence, `StalenessTickFanOut` turns each pulse
+into one `StalenessTick` per SUBSCRIBED market (from Postgres via `RefreshingLookup`, so threshold
+edits and new subscriptions land without resubmitting), and the ticks are `connect`ed to the main
+stream keyed identically. `TypeValidateFunction` became a `KeyedCoProcessFunction`. A tick creates
+the key, so "never spoken" becomes observable — and a tick has no lifecycle to leak, so the
+duplicate-chain defect has nowhere to live.
+
+**Two states, told apart by nullness, not by a flag** (the user asked for them separate):
+`lastArrivalMs == null` ⇒ `no_data_received`; non-null and older than the threshold ⇒ `stale`. A
+third field `watchingSince` exists only so a submit does not fire a request for every market at
+once — the first tick starts the clock, it never judges on it. `lastArrivalMs` is stamped on EVERY
+arriving event **whatever its verdict**, which is what "nothing arrived" means: a key rejecting
+everything is alive and already re-asking on the rejection path, and treating it as stale too would
+make one fault ask twice. Both silence paths go through the SAME `askForSnapshot` suppression
+window as the rejection paths, so the two can never combine into two commands per interval.
+
+**Deliberate asymmetry: only `stale` emits a `RESET`.** A never-received market has no book
+downstream to empty, and emitting one would create keyed state in jobs 3–5 for a market that has
+never existed. The reset fires once per episode (guarded on `resyncRequestedAt` having been null),
+while the ask repeats.
+
+**`reason` needed no schema change** — it is a plain `string` with `default: ""`, so
+`no_data_received` and `stale` are free; only the `.avsc` doc was updated, and re-registering is
+optional (docs only, not compatibility). Contrast the `type` ENUM trap in [[type-validator]].
+
+**⚠ Parentless records, the exact problem that sank the timer.** A silence command has no trigger
+event, so: `source_ids` is **empty**, never `[""]`; `event_time` on the reset is processing time;
+and `simulation` comes from a new `lastSimulation` state field — without it a silent SIMULATED
+market would send `simulation: 0` and make NiFi call the real exchange. **Known limitation:** a
+market that has NEVER spoken has no flag to carry and sends 0, because the DB has no simulation
+column — the flag exists only on the wire.
+
+**⚠ Job 2 gained its first DB dependency and two bundled jars.** `flink-connector-datagen` arrived
+only as a *provided* transitive of `flink-streaming-java`, and no local flink-dist or running
+container existed to confirm the cluster carries it — so it is declared at compile scope and shaded
+in, as is the postgres driver. Both were verified present in the shaded jar rather than assumed.
+`StalenessThresholdLoader` needs the same explicit `Class.forName` as `ExchangeMarketsLoader`.
+**⚠ Parallelism 1 is load-bearing** on both the pulse source and the fan-out: each parallel instance
+would hold the same watch list and multiply every market's re-ask rate.
+
+**No compose change.** `POSTGRES_URL`/`POSTGRES_USER`/`POSTGRES_PASSWORD` appear nowhere in
+`docker-compose.yml`; jobs 3 and 4 run on the in-code defaults and job 2 now uses identical names
+and defaults. New knobs: `STALENESS_POLL_MS` (10 s — must stay well under the smallest threshold)
+and `REFRESH_INTERVAL_MS` (60 s).
+
+**Verification, including what it did NOT prove.** Job 2 is now **71 tests** (65 in
+`TypeValidateFunctionTest` + 6 new in `StalenessTickFanOutTest`); the **53 pre-existing tests pass
+unchanged** on the two-input harness, which is the evidence that going two-input altered no
+behaviour. Full normalizer build green, 287 tests across 7 modules. Six mutations killed. **One
+mutation SURVIVED and is worth remembering: advancing `lastEventTime` inside the silence reset
+changes nothing observable**, because asking opens a resync episode and the ordering guards are
+suspended while one is outstanding, so the returning event is accepted and overwrites the poisoned
+value before any guard reads it. Not routing the reset through `emit()` is therefore defence in
+depth, not the load-bearing protection — **the exemption is**, and it has been deleted by accident
+once already. The test that claimed to cover this was passing **vacuously** (ascending event times
+never exercised the guard) and was retargeted to the property that does bite.
+**⚠ NOT run live, and no e2e coverage** — the same standing gap as re-asking itself.
+⚠ The counts recorded above this section (43 unit tests) were stale; it was 53 before this change.

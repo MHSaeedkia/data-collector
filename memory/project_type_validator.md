@@ -304,3 +304,14 @@ Any future feed whose "sequence" is a timestamp should be assumed non-contiguous
 live frames and plot the interval distribution — the 2026-08-22 `600 ± 10` came from two captured
 frames 22 ms apart and was wrong in both directions. And a REST body that answers a resync must be
 null-seq unless its clock is provably the same one the deltas use. See [[project_pair_extractor]].
+
+## 2026-08-31 — job 2 became two-input (staleness)
+
+`TypeValidateFunction` is now a `KeyedCoProcessFunction<String, RawOrderBookEvent, StalenessTick,
+RawOrderBookEvent>`: `processElement1` is the rule set above, unchanged, and `processElement2`
+handles a per-market silence tick fed from `exchange_markets`. Three new state fields
+(`lastArrivalMs`, `watchingSince`, `lastSimulation`) — 4 → 7. Tests moved from
+`KeyedOneInputStreamOperatorTestHarness` to `KeyedTwoInputStreamOperatorTestHarness`; **all 53
+pre-existing tests pass unchanged**, which is the proof the rule set was not touched. The design,
+the four user decisions, the parentless-record traps and the one surviving mutation are all in
+[[project_control_plane]] — this note exists so nobody looks for them here.
