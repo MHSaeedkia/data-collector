@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.tibobit</groupId>
+    <artifactId>merger</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <!-- Price-merging cross-exchange order book: a SINGLE Flink job, deliberately outside
+         flink/normalizer/. It is not a stage of the raw-normalization pipeline — it reads that
+         pipeline's finished output (p{id}-{side}) and publishes a second, parallel view
+         (p{id}-{side}-merged). One module, no parent/common split: there is one job here, and
+         an abstraction shared by one caller is not an abstraction.
+
+         Self-contained on purpose. It duplicates a small amount of normalizer-common
+         (the schema loader, the canonical-decimal helper) rather than depending on
+         io.tibobit:normalizer-common, which is never installed to a repository — depending on it
+         would mean building flink/normalizer before this project could compile at all. -->
+
+    <properties>
+        <java.version>21</java.version>
+        <!-- S7: overridden by run-job.sh (-Dgit.sha=...); `unknown` when built by hand. -->
+        <git.sha>unknown</git.sha>
+        <flink.version>2.2.0</flink.version>
+        <flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
+        <avro.version>1.11.4</avro.version>
+        <confluent.schema.registry.client.version>7.5.3</confluent.schema.registry.client.version>
+        <junit.version>5.10.2</junit.version>
+        <assertj.version>3.25.3</assertj.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- Everything below is `provided`: the job runs on the same Flink image as the
+             normalizer (flink/normalizer/Dockerfile), which already carries these in
+             /opt/flink/lib/. Nothing here needs to ship inside the shaded jar — unlike the
+             normalizer's DB-reading jobs, this one never touches postgres. -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-streaming-java</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-kafka</artifactId>
+            <version>${flink.kafka.connector.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- Required by flink-connector-kafka at runtime, not a transitive dep of it; on the
+             cluster it comes in with flink-dist. Needed only when run-local.sh runs this
+             off-cluster, but provided either way — the image has it. -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-base</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro</artifactId>
+            <version>${avro.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-avro</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-avro-confluent-registry</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>kafka-schema-registry-client</artifactId>
+            <version>${confluent.schema.registry.client.version}</version>
+            <scope>provided</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.avro</groupId>
+                    <artifactId>avro</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- ===== Test dependencies (TDD: see memory/project_tdd_workflow.md) =====
+             No flink-test-utils here: the merge is a plain MapFunction with no keyed state, so
+             it is tested by calling it, not by driving an operator harness. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Not used by any test: it is what lets run-local.sh and an IDE launch start this job on
+             an in-process MiniCluster (env.execute() looks up LocalExecutorFactory, which lives
+             here). `provided` says what is true — the cluster's /opt/flink/lib supplies it — and is
+             as invisible to shade as `test` was, but unlike `test` it is on the classpath the IDE
+             hands a src/main class, which is what an F5 launch runs on. -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-clients</artifactId>
+            <version>${flink.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <!-- Serde tests parse the CANONICAL schemas from schemas/ rather than a copy
+                         checked in here, so a schema edit that breaks a (de)serializer fails the
+                         build instead of drifting silently. Same wiring as normalizer/common. -->
+                    <execution>
+                        <id>copy-avro-schemas</id>
+                        <phase>generate-test-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.testOutputDirectory}/avro</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../schemas</directory>
+                                    <includes>
+                                        <include>aggregated_order_book_event.avsc</include>
+                                        <include>merged_order_book_event.avsc</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>io.tibobit.merger.MergerJob</mainClass>
+                                    <manifestEntries>
+                                        <Git-Commit>${git.sha}</Git-Commit>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

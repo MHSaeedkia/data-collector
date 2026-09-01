@@ -81,6 +81,9 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>io.tibobit.normalizer.rebase.RebaserJob</mainClass>
+                                    <manifestEntries>
+                                        <Git-Commit>${git.sha}</Git-Commit>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                             <filters>

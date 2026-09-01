@@ -28,8 +28,10 @@ import java.util.regex.Pattern;
  */
 public class PairExtractorJob {
 
-    // Also matches the postponed ex7-raw on purpose: scope lives in Parsers.byExchangeId(),
-    // and PairExtractFunction drops unparsered exchanges with a counter.
+    // Deliberately matches every ex{n}-raw topic, including exchanges with no parser yet:
+    // scope lives in Parsers.byExchangeId(), and PairExtractFunction drops unparsered exchanges
+    // with a counter. Landing ex7 (2026-08-24) and ex9 (2026-08-25) both needed no change here,
+    // and with ex9 the map now covers every seeded exchange.
     private static final Pattern RAW_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-raw");
 
     public static void main(String[] args) throws Exception {
@@ -63,6 +65,13 @@ public class PairExtractorJob {
 
         events.sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)
+                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                        // failure drops records silently. Idempotence is the load-bearing one:
+                        // plain retries can reorder writes, which corrupts the book downstream.
+                        .setProperty("acks", "all")
+                        .setProperty("enable.idempotence", "true")
+                        .setProperty("retries", "2147483647")
+                        .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
                                 .setTopicSelector((TopicSelector<RawOrderBookEvent>) event ->
                                         "ex" + event.getExchangeId() + "-p" + event.getPairId() + "-raw-flink")

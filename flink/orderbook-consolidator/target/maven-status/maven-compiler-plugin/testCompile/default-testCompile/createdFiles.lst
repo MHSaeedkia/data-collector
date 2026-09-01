@@ -1,4 +1,0 @@
-io/tibobit/consolidator/deserializer/PriceLevelEventDeserializerTest.class
-io/tibobit/consolidator/operator/PerExchangeBookBuilderTest.class
-io/tibobit/consolidator/operator/CrossExchangeConsolidatorTest.class
-io/tibobit/consolidator/serializer/ConsolidatedOrderBookSerializerTest.class

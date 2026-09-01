@@ -38,6 +38,8 @@ public class OkxParser implements RawExchangeParser {
                     ts, 300L, ts,
                     book.has("asks") ? Levels.fromStringPairs(book.get("asks")) : null,
                     book.has("bids") ? Levels.fromStringPairs(book.get("bids")) : null);
+            event.setSimulation(Json.simulation(root));
+            event.setSourceIds(Json.sourceIds(root));
             events.add(new ParsedBookEvent(market, event));
         }
         return events;

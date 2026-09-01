@@ -54,6 +54,8 @@ public class BitpinParser implements RawExchangeParser {
                 null, 0L, root.get("event_time").asLong(),
                 Levels.fromStringPairs(root.get("asks")),
                 Levels.fromStringPairs(root.get("bids")));
+        event.setSimulation(Json.simulation(root));
+        event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(root.get("pair").asText(), event));
     }
 
@@ -73,6 +75,8 @@ public class BitpinParser implements RawExchangeParser {
                 Instant.parse(data.get("event_time").asText()).toEpochMilli(),
                 Levels.fromStringPairs(data.get("asks")),
                 Levels.fromStringPairs(data.get("bids")));
+        event.setSimulation(Json.simulation(root));
+        event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));
     }
 }

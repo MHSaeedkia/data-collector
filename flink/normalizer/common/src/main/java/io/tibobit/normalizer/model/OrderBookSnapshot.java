@@ -7,11 +7,24 @@ import java.util.List;
  * event (schema schemas/order_book_snapshot.avsc, subject order-book-snapshot). Both sides are
  * required here — a built book always has both, possibly empty. {@code lastSequenceId} is null
  * only for feeds with no ordering field (ex3 wallex).
+ *
+ * <p>{@code simulation} is NiFi's flag carried up the pipeline (0 = live, 1 = simulation). The book
+ * is state built from many events, so the emitted snapshot carries the flag of the LAST accepted
+ * event for this (exchange, pair) — in practice a feed does not switch mid-stream. Job 6 stamps it
+ * onto every level so the aggregated book stays attributable per exchange.
+ *
+ * <p>Lineage is split across two granularities here, because this is where the pipeline genuinely
+ * fans in: {@code triggerId} is the event that caused this emit, and each level names the event that
+ * SET it ({@link PriceLevel#getSourceId()}). Everywhere else a record has one parent and that is the
+ * whole story. See memory/project_record_lineage.md.
  */
 public class OrderBookSnapshot {
 
     private int exchangeId;
     private int pairId;
+    private int simulation;
+    private String id = "";
+    private String triggerId = "";
     private long eventTime;
     private Long lastSequenceId;
     private List<PriceLevel> asks;
@@ -45,6 +58,30 @@ public class OrderBookSnapshot {
 
     public void setPairId(int pairId) {
         this.pairId = pairId;
+    }
+
+    public int getSimulation() {
+        return simulation;
+    }
+
+    public void setSimulation(int simulation) {
+        this.simulation = simulation;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public String getTriggerId() {
+        return triggerId;
+    }
+
+    public void setTriggerId(String triggerId) {
+        this.triggerId = triggerId;
     }
 
     public long getEventTime() {
