@@ -78,6 +78,10 @@ public class RebaserJob {
                         // broker hiccups without failing the transaction.
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
+                        // KafkaSink defaults transaction.timeout.ms to 1h, which exceeds
+                        // the broker's transaction.max.timeout.ms (15m default) and fails
+                        // InitProducerId. Keep this comfortably under that ceiling.
+                        .setProperty("transaction.timeout.ms", "600000")
                         .setProperty("retries", "2147483647")
                         .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
@@ -101,6 +105,10 @@ public class RebaserJob {
                         // broker hiccups without failing the transaction.
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
+                        // KafkaSink defaults transaction.timeout.ms to 1h, which exceeds
+                        // the broker's transaction.max.timeout.ms (15m default) and fails
+                        // InitProducerId. Keep this comfortably under that ceiling.
+                        .setProperty("transaction.timeout.ms", "600000")
                         .setProperty("retries", "2147483647")
                         .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<RejectedOrderBookEvent>builder()
