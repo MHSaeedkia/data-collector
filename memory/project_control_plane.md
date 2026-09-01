@@ -538,3 +538,52 @@ once. (c) Still no e2e coverage. (d) Only `stale` exists to test — the never-r
 scope by design, and the assumption that [[staleness-exporter]] covers it is STILL unverified.
 
 ⚠ The counts recorded above this section (43 unit tests) were stale; it was 53 before this change.
+
+## 2026-09-01 — unsubscribe empties the book (the phantom-book bug)
+
+**Found by the user in live testing, and it was two bugs wearing one coat.** Stopping NiFi
+altogether behaved correctly (threshold passes → `stale` → reset → web empty). *Unsubscribing* a
+market did not: the book blinked empty and then **came back and stayed forever**.
+
+**The mechanism, in order.** `REFRESH_INTERVAL_MS` was **60 s** and the default
+`staleness_threshold_seconds` is **60 s**, and on an unsubscribe both clocks start at the same
+instant — so whether the silence timer found the market still on the watch list was a coin flip.
+Losing the race sent a `snapshot_request`; NiFi answered it **for a market it had just been told to
+unsubscribe**; the returning snapshot was accepted (the resync exemption suspends the ordering
+guards); and by then the refresh had dropped the market, so `armSilenceTimer` armed nothing and
+**nothing ever watched that key again**.
+
+**But the race was the smaller half.** `onTimer`'s unwatched branch was a bare `return` — it stopped
+watching and *left the book standing*. Job 5 keeps its `MapState`, job 6 keeps the exchange in the
+union, and every consumer is served a book with no feed behind it for the life of the job. **A clean
+unsubscribe with no race at all had the same outcome.** The 2026-09-01 live run's
+"unwatched-market rule confirmed" note recorded exactly this behaviour as *correct* — it verified
+that nothing is ASKED for, and never asked what happens to the book.
+
+**Fix, and where the user put the boundary.** The obvious cheap fix — an age guard in the web that
+blanks a stale book — **was rejected by the user, correctly**: each pipeline stage is going to be
+handed to a different team, so a consumer-side guard protects one consumer and leaves the bad record
+on the topic for everyone else. **Correctness belongs at the producer.** So the unwatched branch now
+emits a `RESET` (`emitUnsubscribeReset`) and **deliberately no `snapshot_request`** — we are dropping
+the market, not recovering it, and asking is what told NiFi to reopen a closed feed. NiFi ignoring
+requests for unsubscribed markets is the user's separate fix on their side; with both in place the
+two race outcomes converge on the same end state, which is why the race stops mattering.
+
+**`REFRESH_INTERVAL_MS` 60 s → 15 s**, with the constraint written at the declaration: it must stay
+well below the SMALLEST `staleness_threshold_seconds` in the table. A quarter is the chosen margin.
+⚠ Still set nowhere in `docker-compose.yml` — same standing gap as `SNAPSHOT_RETRY_MS`.
+
+**Two new `ValueState<Integer>` (`lastExchangeId`/`lastPairId`), 7 → 9.** The unwatched branch has to
+name the market at the one moment the watch list no longer holds a row to name it from, and
+**parsing the key string stays forbidden** ([[project_type_validator]], and `WatchedMarket`'s own
+javadoc). Stored from the arriving event next to `lastSimulation`, and set BEFORE `armSilenceTimer`,
+which is what makes them provably non-null wherever the branch reads them.
+
+**Verification: 69 tests in job 2 (66 unchanged + 3 new), 285 across 7 modules, all green.**
+Mutations: dropping the reset — killed; also asking on unsubscribe — killed. **One SURVIVED, and it
+is the interesting one: clearing `lastExchangeId`/`lastPairId` is unobservable**, because the branch
+does not re-arm, so nothing can reach it twice. The no-re-arm is load-bearing; the clearing is
+defence in depth against a future re-arm. Javadoc says so rather than implying the pair is
+symmetric — the same vacuous-guard trap this file has now hit three times.
+⚠ **NOT run live.** The live check is the same one as before: unsubscribe a fed market and watch for
+exactly ONE reset, NO command, and the exchange dropping out of `p{id}-{side}`.

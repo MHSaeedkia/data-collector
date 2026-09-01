@@ -83,6 +83,17 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * for why the never-received case is deliberately somebody else's job.
  *
  * <p>
+ * <b>Unsubscribe is the same problem wearing a different hat.</b> A market
+ * dropped from the watch list also stops arriving, and leaving its book
+ * standing is worse than leaving a silent one: nothing will ever look at that
+ * key again, so the phantom persists for the life of the job. So the timer
+ * empties the book on its way out too — a {@link #RESET} and no request, since
+ * the market is being dropped, not recovered. Correctness has to live here and
+ * not in a consumer: every stage of this pipeline is read by a different team,
+ * and a book with no feed behind it must not be on the topic in the first
+ * place.
+ *
+ * <p>
  * State per key: {@code lastSeq} (last accepted sequence id),
  * {@code lastEventTime} (ordering for null-seq snapshots),
  * {@code baselinePending} (the ex1 REST resync bootstrap),
@@ -208,6 +219,22 @@ public class TypeValidateFunction
     private transient ValueState<Integer> lastSimulation;
 
     /**
+     * The exchange and pair ids of the last event that arrived. They exist for
+     * exactly one caller: the unsubscribe reset in {@link #onTimer}, which has
+     * to name the market it is emptying at the one moment the watch list no
+     * longer holds a row to name it from. Stored rather than parsed out of the
+     * key string, for the reason in {@link WatchedMarket}'s javadoc.
+     *
+     * <p>
+     * Cleared once that reset is emitted, so the book is emptied once per
+     * unsubscribe rather than once per surviving timer.
+     */
+    private transient ValueState<Integer> lastExchangeId;
+
+    /** @see #lastExchangeId */
+    private transient ValueState<Integer> lastPairId;
+
+    /**
      * Default re-ask interval; overridden per job by SNAPSHOT_RETRY_MS.
      */
     static final long DEFAULT_SNAPSHOT_RETRY_MS = 300_000L;
@@ -243,6 +270,10 @@ public class TypeValidateFunction
                 new ValueStateDescriptor<>("stalenessTimerAt", Long.class));
         lastSimulation = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastSimulation", Integer.class));
+        lastExchangeId = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("lastExchangeId", Integer.class));
+        lastPairId = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("lastPairId", Integer.class));
         // Propagates: a job that cannot read its watch list must not start up watching
         // nothing, because "watching nothing" and "everything is healthy" look identical
         // from outside.
@@ -266,6 +297,8 @@ public class TypeValidateFunction
         long arrivedAt = ctx.timerService().currentProcessingTime();
         lastArrivalMs.update(arrivedAt);
         lastSimulation.update(event.getSimulation());
+        lastExchangeId.update(event.getExchangeId());
+        lastPairId.update(event.getPairId());
         armSilenceTimer(arrivedAt, ctx);
 
         // No ordering field (ex3 wallex; ex1 nobitex REST snapshot): there is no
@@ -389,8 +422,16 @@ public class TypeValidateFunction
 
         WatchedMarket market = watched.get(ctx.getCurrentKey());
         if (market == null) {
-            // Unsubscribed (or the row is gone) while the timer was in flight: stop
-            // watching. An arriving event would arm a fresh timer if it comes back.
+            // Unsubscribed (or the row is gone) while the timer was in flight. Stop
+            // watching -- but empty the book on the way out, because "we no longer
+            // carry this market" is downstream indistinguishable from "the book is
+            // still what it was" otherwise: job 5 keeps its MapState, job 6 keeps the
+            // exchange in the union, and every consumer of the snapshot and aggregated
+            // topics goes on being served a book with no feed behind it, forever.
+            // Deliberately NO snapshot_request -- we are dropping this market, not
+            // trying to recover it, and asking would tell NiFi to reopen a feed it was
+            // just told to close.
+            emitUnsubscribeReset(ctx, out);
             return;
         }
 
@@ -414,10 +455,48 @@ public class TypeValidateFunction
         askForSnapshot(STALE, market.getExchangeId(), market.getPairId(),
                 simulationOfLastEvent(), List.of(), ctx);
         if (firstOfEpisode) {
-            emitSilenceReset(market, now, out);
+            emitSilenceReset(market.getExchangeId(), market.getPairId(), now, out);
         }
         // Still silent, so keep watching: the ask repeats until something arrives.
         armSilenceTimerAt(now + market.thresholdMs(), ctx);
+    }
+
+    /**
+     * Empties the book for a key whose market has left the watch list.
+     *
+     * <p>
+     * Reaching here proves the market WAS watched: a timer is only ever armed
+     * from a successful lookup, so a market that was never subscribed has no
+     * timer and never arrives at this branch at all. That is what makes the
+     * stored ids safe to trust as "the market this key is".
+     *
+     * <p>
+     * Fires at most once per unsubscribe. What actually guarantees that is the
+     * <b>absence of a re-arm</b> on the way out: no timer, so no second firing.
+     * Clearing the ids is defence in depth and is NOT observable — a mutation
+     * that drops those two lines kills no test, and cannot, because nothing can
+     * reach here twice. Keep them anyway: they are what makes "once" survive
+     * somebody later deciding this branch should re-arm.
+     *
+     * <p>
+     * The ids are always non-null here, for the same reason {@link
+     * #lastArrivalMs} is: the key only exists once an event has arrived and set
+     * them, and that happens before the timer that leads here is armed. The
+     * check is the same unreachable-by-construction guard the silence path
+     * already keeps, and a market that never spoke is covered a step earlier —
+     * no event, no timer, nothing to empty.
+     */
+    private void emitUnsubscribeReset(OnTimerContext ctx, Collector<RawOrderBookEvent> out)
+            throws Exception {
+        Integer exchangeId = lastExchangeId.value();
+        Integer pairId = lastPairId.value();
+        if (exchangeId == null || pairId == null) {
+            return;
+        }
+        emitSilenceReset(exchangeId, pairId,
+                ctx.timerService().currentProcessingTime(), out);
+        lastExchangeId.update(null);
+        lastPairId.update(null);
     }
 
     /**
@@ -489,10 +568,10 @@ public class TypeValidateFunction
      * the exemption has been removed by accident once already (the 2026-08-19
      * deadlock).
      */
-    private void emitSilenceReset(WatchedMarket market, long now, Collector<RawOrderBookEvent> out)
-            throws Exception {
+    private void emitSilenceReset(int exchangeId, int pairId, long now,
+            Collector<RawOrderBookEvent> out) throws Exception {
         RawOrderBookEvent reset = new RawOrderBookEvent(
-                market.getExchangeId(), market.getPairId(), RESET, null, 0L, now, null, null);
+                exchangeId, pairId, RESET, null, 0L, now, null, null);
         reset.setSimulation(simulationOfLastEvent());
         reset.setSourceIds(List.of());
         reset.setId(Lineage.newId());

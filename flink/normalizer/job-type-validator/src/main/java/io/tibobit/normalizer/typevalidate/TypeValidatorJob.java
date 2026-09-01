@@ -51,10 +51,19 @@ public class TypeValidatorJob {
         // exchange_markets.staleness_threshold_seconds — these three only say how to
         // reach the DB, and REFRESH_INTERVAL_MS how often to re-read the list so a
         // threshold edit or an unsubscribe lands without resubmitting the job.
+        //
+        // REFRESH_INTERVAL_MS must stay WELL BELOW the smallest
+        // staleness_threshold_seconds in the table. Both clocks start at the same
+        // moment on an unsubscribe — the feed stops, and the silence deadline is one
+        // threshold away — so at 60s against a 60s threshold it is a coin flip whether
+        // the timer finds the market still listed. Losing that race is not fatal (the
+        // stale branch empties the book too, and NiFi must ignore a request for an
+        // unsubscribed market), but it sends a snapshot_request nobody should act on.
+        // A quarter of the smallest threshold keeps the unsubscribe on the clean path.
         String postgresUrl = getEnv("POSTGRES_URL", "jdbc:postgresql://postgres:5432/markets");
         String postgresUser = getEnv("POSTGRES_USER", "postgres");
         String postgresPassword = getEnv("POSTGRES_PASSWORD", "postgres");
-        long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
+        long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "15000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 

@@ -519,10 +519,26 @@ stack** — see the same memory section for the run and what it did not cover.
       Nothing has yet exercised many markets going stale at once, which is where the shared
       suppression window and the per-key timers actually matter
 - [ ] **e2e coverage.** Silence is time-based, so it inherits the same "no e2e" gap as re-asking.
-      Decide whether a scenario with a tiny threshold is worth it, or whether the 13 unit tests plus
+      Decide whether a scenario with a tiny threshold is worth it, or whether the 16 unit tests plus
       the live check are enough
-- [ ] **`REFRESH_INTERVAL_MS` is set nowhere in `docker-compose.yml`** and takes its in-code default
-      (60 s), exactly like `SNAPSHOT_RETRY_MS` above. Same decision, same place to make it
+- [x] **Unsubscribe left a phantom book on every downstream topic** — found by the user in live
+      testing 2026-09-01, fixed the same day. `onTimer`'s unwatched branch was a bare `return`, so a
+      dropped market's book stood in job 5's MapState and job 6's union forever with nothing ever
+      watching that key again. It now emits a `RESET` and deliberately **no** `snapshot_request`.
+      ⚠ **this revises the "unwatched market judged nothing" result of the 2026-09-01 live run —
+      that was verified as correct and was in fact the bug.** A web-side age guard was considered and
+      **rejected by the user**: each stage goes to a different team, so a book with no feed behind it
+      must not be on the topic at all. Full note in [[project_control_plane]].
+      ⚠ **Verification owed — run it live: unsubscribe a fed market, confirm exactly ONE reset, ZERO
+      control commands, and the exchange leaving `p{id}-{side}`**
+- [ ] **NiFi must ignore `snapshot_request` for an unsubscribed market.** The user's fix, on the NiFi
+      side, not in this repo. Until it lands, losing the (now much narrower) refresh race still lets
+      the control plane reopen a feed the operator just closed
+- [ ] **`REFRESH_INTERVAL_MS` is set nowhere in `docker-compose.yml`** and takes its in-code default,
+      exactly like `SNAPSHOT_RETRY_MS` above. Same decision, same place to make it. ⚠ the default is
+      now **15 s**, and the constraint is that it stays well below the SMALLEST
+      `staleness_threshold_seconds` in `exchange_markets` — whatever is set in compose must respect
+      that, or unsubscribes start racing the silence timer again
 - [ ] Optional: re-register `control-command` so the registry carries the updated `reason` doc.
       Doc-only, not a compatibility change — `stale` works without it (the live run proves it:
       `reason: "stale"` serialised fine against the registered schema)

@@ -1186,6 +1186,69 @@ class TypeValidateFunctionTest {
     }
 
     @Test
+    @DisplayName("unsubscribe: the book is emptied, so no consumer is left holding a phantom")
+    void unsubscribeEmptiesTheBook() throws Exception {
+        Map<String, WatchedMarket> roster = new HashMap<>();
+        roster.put(EX6.key(), EX6);
+        harness.close();
+        harness = openHarness(new TypeValidateFunction(600_000L,
+                new RefreshingLookup<>(() -> roster, Long.MAX_VALUE)));
+        harness.setProcessingTime(0L);
+        send(delta(6, 1, "snapshot", 1000L, 1L)); // a real book exists downstream now
+
+        roster.remove(EX6.key()); // operator unsubscribes it
+        harness.setProcessingTime(61_000L); // the outstanding deadline fires
+
+        List<RawOrderBookEvent> resets = valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .collect(Collectors.toList());
+        assertThat(resets).as("the book must be emptied, not abandoned").hasSize(1);
+        assertThat(resets.get(0).getExchangeId()).isEqualTo(6);
+        assertThat(resets.get(0).getPairId()).isEqualTo(1);
+        assertThat(resets.get(0).getSourceIds()).isEmpty();
+
+        // We are dropping the market, not recovering it. Asking would tell NiFi to
+        // reopen the very feed the operator just closed.
+        assertThat(controlCommands()).as("no request on an unsubscribe").isEmpty();
+    }
+
+    @Test
+    @DisplayName("unsubscribe: the book is emptied exactly once, never once per deadline")
+    void unsubscribeResetFiresOnce() throws Exception {
+        Map<String, WatchedMarket> roster = new HashMap<>();
+        roster.put(EX6.key(), EX6);
+        harness.close();
+        harness = openHarness(new TypeValidateFunction(600_000L,
+                new RefreshingLookup<>(() -> roster, Long.MAX_VALUE)));
+        harness.setProcessingTime(0L);
+        send(delta(6, 1, "snapshot", 1000L, 1L));
+
+        roster.remove(EX6.key());
+        harness.setProcessingTime(61_000L);
+        harness.setProcessingTime(10_000_000L); // long past many further deadlines
+
+        assertThat(valid().stream()
+                .filter(e -> TypeValidateFunction.RESET.equals(e.getType()))
+                .count()).isEqualTo(1L);
+        assertThat(harness.numProcessingTimeTimers())
+                .as("nothing re-armed: the key is not watched any more").isZero();
+    }
+
+    @Test
+    @DisplayName("unsubscribe: a market that never sent anything empties nothing")
+    void unsubscribeOfSilentMarketEmitsNoReset() throws Exception {
+        withRetryInterval(600_000L, EX6); // ex8 never watched, never fed
+
+        harness.setProcessingTime(10_000_000L);
+
+        // No book was ever built for ex8, so there is nothing to empty. Enforced a step
+        // earlier than emitUnsubscribeReset: no event means no timer, so the unsubscribe
+        // branch is never reached at all.
+        assertThat(valid()).isEmpty();
+        assertThat(controlCommands()).isEmpty();
+    }
+
+    @Test
     @DisplayName("staleness: a market unsubscribed and resubscribed mid-flight is watched again")
     void resubscribedMarketIsWatchedAgain() throws Exception {
         // A mutable roster, because this is exactly what RefreshingLookup exists for:

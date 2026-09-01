@@ -322,3 +322,12 @@ one fault ask twice.
 (a `no_data_received` reason and the whole tick-stream machinery were built and then removed), the
 watch-list dependency and the surviving mutations are all in [[project_control_plane]] — this note
 exists so nobody looks for them here.
+
+## 2026-09-01 — the unwatched branch is no longer a bare return
+
+`onTimer`'s "market is not on the watch list" branch used to `return` and walk away. It now emits a
+`RESET` first, because stopping watching and leaving the book standing means every downstream
+consumer keeps a book with no feed behind it forever. Two new states (`lastExchangeId`,
+`lastPairId`, 7 → 9) exist only so that branch can name the market without parsing the key. No
+`snapshot_request` on this path — dropping a market is not resyncing it. Full write-up, the race
+with `REFRESH_INTERVAL_MS` and the surviving mutation are in [[project_control_plane]].
