@@ -4,11 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.regex.Pattern;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.typeinfo.Types;
-import org.apache.flink.api.connector.source.util.ratelimit.RateLimiterStrategy;
 import org.apache.flink.api.java.functions.KeySelector;
-import org.apache.flink.connector.datagen.source.DataGeneratorSource;
-import org.apache.flink.connector.datagen.source.GeneratorFunction;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
@@ -51,18 +47,14 @@ public class TypeValidatorJob {
         long snapshotRetryMs = Long.parseLong(getEnv("SNAPSHOT_RETRY_MS",
                 String.valueOf(TypeValidateFunction.DEFAULT_SNAPSHOT_RETRY_MS)));
 
-        // Staleness watch. The thresholds themselves are per market and live in
+        // Staleness watch list. The thresholds themselves are per market and live in
         // exchange_markets.staleness_threshold_seconds — these three only say how to
-        // reach the DB, and REFRESH_INTERVAL_MS how often to re-read the watch list so a
-        // threshold edit or a new subscription lands without resubmitting the job.
+        // reach the DB, and REFRESH_INTERVAL_MS how often to re-read the list so a
+        // threshold edit or an unsubscribe lands without resubmitting the job.
         String postgresUrl = getEnv("POSTGRES_URL", "jdbc:postgresql://postgres:5432/markets");
         String postgresUser = getEnv("POSTGRES_USER", "postgres");
         String postgresPassword = getEnv("POSTGRES_PASSWORD", "postgres");
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
-        // How often every watched market is re-checked. Must be well under the smallest
-        // staleness_threshold_seconds (default 60) or a market stays stale for up to one
-        // extra poll before anyone notices.
-        long stalenessPollMs = Long.parseLong(getEnv("STALENESS_POLL_MS", "10000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
@@ -74,37 +66,17 @@ public class TypeValidatorJob {
                 .setValueOnlyDeserializer(new RawOrderBookEventDeserializer(schemaRegistryUrl))
                 .build();
 
-        // The staleness clock. A rate-limited generator supplies bare pulses and the
-        // fan-out turns each into one tick per subscribed market, so the CLOCK is fixed
-        // at submit time while the WATCH LIST is re-read from Postgres as the job runs.
-        //
-        // Parallelism 1 on both, deliberately: each parallel instance would hold the same
-        // full watch list and emit the same ticks, multiplying every market's re-ask rate
-        // by the parallelism.
-        DataGeneratorSource<Long> pulses = new DataGeneratorSource<>(
-                (GeneratorFunction<Long, Long>) index -> index,
-                Long.MAX_VALUE,
-                RateLimiterStrategy.perSecond(1000.0 / stalenessPollMs),
-                Types.LONG);
+        // The watch list rides along inside the operator: it is only ever read by key,
+        // so there is no second stream and no extra shuffle. A market missing from it is
+        // simply not watched for silence.
+        RefreshingLookup<String, WatchedMarket> watched = new RefreshingLookup<>(
+                new StalenessThresholdLoader(postgresUrl, postgresUser, postgresPassword),
+                refreshIntervalMs);
 
-        DataStream<StalenessTick> ticks = env
-                .fromSource(pulses, WatermarkStrategy.noWatermarks(), "staleness-pulse")
-                .setParallelism(1)
-                .flatMap(new StalenessTickFanOut(new RefreshingLookup<>(
-                        new StalenessThresholdLoader(postgresUrl, postgresUser,
-                                postgresPassword),
-                        refreshIntervalMs)))
-                .name("staleness-ticks")
-                .setParallelism(1);
-
-        // Both streams keyed the SAME way, so a tick lands on the state of the market it
-        // is asking about. If these two key selectors ever diverge, connect() pairs ticks
-        // with the wrong market's state and every verdict is silently wrong.
         SingleOutputStreamOperator<RawOrderBookEvent> validated = env
                 .fromSource(source, WatermarkStrategy.noWatermarks(), "raw-flink-source")
                 .keyBy(new ExchangePairKey())
-                .connect(ticks.keyBy(StalenessTick::key))
-                .process(new TypeValidateFunction(snapshotRetryMs))
+                .process(new TypeValidateFunction(snapshotRetryMs, watched))
                 .name("type-validate");
 
         // Valid events -> ex{id}-p{id}-type-validated-raw-flink (same shared

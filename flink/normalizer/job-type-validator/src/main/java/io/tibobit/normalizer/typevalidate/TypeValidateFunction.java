@@ -5,10 +5,11 @@ import java.util.List;
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
 
+import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.ControlCommand;
 import io.tibobit.normalizer.model.Lineage;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
@@ -34,7 +35,8 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * adopts its offset as a fresh baseline (see [[pair-extractor]]); for ex3 and
  * ex9 that flag is never consumed.
  *
- * <p>Note the comparison is {@code <}, not {@code <=}: a frame whose event time
+ * <p>
+ * Note the comparison is {@code <}, not {@code <=}: a frame whose event time
  * EQUALS the last accepted one is accepted and re-emitted (user decision
  * 2026-08-26). Only a strictly older frame is out of order. That matters most
  * for ex9, whose duplicate-timestamp frames are therefore a re-emitted book
@@ -48,13 +50,13 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * interval since the last update is the collector's choice, not the exchange's
  * cadence. Contiguity therefore has exactly two sites, both in the update
  * branch below — snapshot → next update, and update → update.</li>
- * <li><b>Update</b> ({@code type == "update"}, delta feeds ex1/ex2/ex5/ex6/ex8): needs
- * a baseline and a contiguous sequence. No baseline yet → {@code no_baseline};
- * still waiting to re-sync after a gap → {@code awaiting_snapshot};
- * {@code sequence_id} within {@code sequence_jump_tolerance} of
- * {@code lastSeq + sequence_jump} → valid (the tolerance is 0 for every
- * exchange but ex5/bitget, whose sequence is a millisecond clock — see the
- * window comment in {@code processElement});
+ * <li><b>Update</b> ({@code type == "update"}, delta feeds
+ * ex1/ex2/ex5/ex6/ex8): needs a baseline and a contiguous sequence. No baseline
+ * yet → {@code no_baseline}; still waiting to re-sync after a gap →
+ * {@code awaiting_snapshot}; {@code sequence_id} within
+ * {@code sequence_jump_tolerance} of {@code lastSeq + sequence_jump} → valid
+ * (the tolerance is 0 for every exchange but ex5/bitget, whose sequence is a
+ * millisecond clock — see the window comment in {@code processElement});
  * {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
  * forward jump is a gap → {@code sequence_gap}, and the stream is marked
  * untrusted (every update rejected until the next snapshot re-syncs).</li>
@@ -66,23 +68,33 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * that, by re-sending a snapshot. So the two untrustworthy branches also put a
  * {@code snapshot_request} on the {@link #CONTROL} side output, tagged with the
  * {@code reason} that made the stream untrustworthy and repeated on an interval
- * until something resolves the condition. That whole feature is one
- * piece of state, {@link #resyncRequestedAt}, and one method,
- * {@link #askForSnapshot}; there is no timer and no second flag. Job 2 is the
- * only producer of those commands.
+ * until something resolves the condition. That whole feature is one piece of
+ * state, {@link #resyncRequestedAt}, and one method, {@link #askForSnapshot}.
+ * Job 2 is the only producer of those commands.
+ *
+ * <p>
+ * <b>Silence.</b> The rules above can only fire when something arrives, so a
+ * market that simply stops sending is invisible to them and its book stays
+ * frozen downstream forever. {@link #onTimer} closes that: each key holds one
+ * processing-time deadline at {@code lastArrival +
+ * staleness_threshold_seconds}, and passing it empties the book with a
+ * {@link #RESET} and asks, through the same {@link #askForSnapshot} window.
+ * Only markets that have spoken at least once are watched — see {@link #STALE}
+ * for why the never-received case is deliberately somebody else's job.
  *
  * <p>
  * State per key: {@code lastSeq} (last accepted sequence id),
  * {@code lastEventTime} (ordering for null-seq snapshots),
- * {@code baselinePending} (the ex1 REST resync bootstrap) and
- * {@code resyncRequestedAt}. Topics are single-partition so per-key order
- * holds; no checkpointing configured (cold-start gap shared with the rest of
- * the platform — book is unvalidated until the first snapshot after a restart,
- * which on a delta feed means every key opens a {@code no_baseline} episode and
- * asks at once).
+ * {@code baselinePending} (the ex1 REST resync bootstrap),
+ * {@code resyncRequestedAt}, and for silence {@code lastArrivalMs},
+ * {@code lastSimulation} and {@code stalenessTimerAt}. Topics are
+ * single-partition so per-key order holds; no checkpointing configured
+ * (cold-start gap shared with the rest of the platform — book is unvalidated
+ * until the first snapshot after a restart, which on a delta feed means every
+ * key opens a {@code no_baseline} episode and asks at once).
  */
 public class TypeValidateFunction
-        extends KeyedCoProcessFunction<String, RawOrderBookEvent, StalenessTick, RawOrderBookEvent> {
+        extends KeyedProcessFunction<String, RawOrderBookEvent, RawOrderBookEvent> {
 
     /**
      * Dead-letter side output. Shared by the job wiring and the tests.
@@ -104,19 +116,21 @@ public class TypeValidateFunction
     static final String OUT_OF_ORDER = "out_of_order";
 
     /**
-     * Control-plane reasons for the two SILENCE conditions. Neither is a reject
-     * reason — no event was rejected, that is the whole point — so unlike the
-     * four above they appear only on {@code control-plane}, never on the
-     * dead-letter topic.
+     * Control-plane reason for SILENCE: this market was sending and stopped.
+     * Not a reject reason — no event was rejected, that is the whole point — so
+     * unlike the four above it appears only on {@code control-plane}, never on
+     * the dead-letter topic.
      *
      * <p>
-     * They are kept apart because they mean different things to the collector.
-     * {@link #NO_DATA_RECEIVED} says this market has produced nothing since the
-     * job started watching it: the subscription may never have been wired up,
-     * or the exchange may have been down the whole time. {@link #STALE} says it
-     * was working and stopped, which is a live feed that broke.
+     * There is deliberately no companion reason for a market that has NEVER
+     * sent anything. Job 2 can only notice a market it has heard from, because
+     * a keyed function has no state for a key no event ever created; noticing
+     * the rest would mean importing the full subscription roster, which is a
+     * monitoring question and already answered by the staleness exporter (see
+     * memory/project_staleness_exporter.md). It would also be a request the
+     * collector cannot act on: a snapshot does not start a subscription that
+     * was never wired up.
      */
-    static final String NO_DATA_RECEIVED = "no_data_received";
     static final String STALE = "stale";
 
     /**
@@ -164,48 +178,57 @@ public class TypeValidateFunction
      * the existing per-rejection retry already handles it.
      *
      * <p>
-     * Null carries meaning and is the discriminator between the two silence
-     * conditions: null means nothing has EVER arrived for this market, non-null
-     * means it spoke once and then stopped. They are told apart here rather
-     * than by a flag because the distinction is exactly "is there a last
-     * arrival", and inventing a second field for a condition already implied by
-     * the first is what made the resync deadlock unreadable.
+     * Always non-null wherever the silence path reads it, because the key
+     * itself only exists once an event has arrived and set it.
      */
     private transient ValueState<Long> lastArrivalMs;
 
     /**
-     * Processing-time millis at which this key was first ticked. Silence is
-     * measured from here until the first event arrives, so a market that has
-     * never spoken gets its full threshold from when we STARTED WATCHING rather
-     * than from time zero — otherwise every subscribed market would fire a
-     * request in the first second after every job submit.
+     * Timestamp of the ONE outstanding silence timer for this key, or null when
+     * none is armed. Its whole purpose is that "one" — the first timer-based
+     * control plane registered a timer per episode and cancelled none, so two
+     * episodes inside one interval left two live chains each re-arming forever.
+     * Here a timer is armed only when this field is null and is cleared the
+     * moment it fires, so a key can never accumulate a second chain.
+     *
+     * <p>
+     * It also means there is no per-event timer churn: an arriving event does
+     * not cancel and re-register anything. A timer that fires early simply
+     * re-arms itself for {@code lastArrivalMs + threshold}, so detection still
+     * lands exactly on the deadline.
      */
-    private transient ValueState<Long> watchingSince;
+    private transient ValueState<Long> stalenessTimerAt;
 
     /**
-     * The {@code simulation} flag of the last event that arrived, or null if
-     * none ever has. Needed because a silence-triggered command has no
-     * triggering event to copy it from, and the field's contract is that a
-     * request raised by simulated data must not make the collector call a real
-     * exchange.
+     * The {@code simulation} flag of the last event that arrived. Needed
+     * because a silence-triggered command has no triggering event to copy it
+     * from, and the field's contract is that a request raised by simulated data
+     * must not make the collector call a real exchange.
      */
     private transient ValueState<Integer> lastSimulation;
 
-    /** Default re-ask interval; overridden per job by SNAPSHOT_RETRY_MS. */
+    /**
+     * Default re-ask interval; overridden per job by SNAPSHOT_RETRY_MS.
+     */
     static final long DEFAULT_SNAPSHOT_RETRY_MS = 300_000L;
 
     private final long snapshotRetryMs;
 
-    public TypeValidateFunction() {
-        this(DEFAULT_SNAPSHOT_RETRY_MS);
-    }
+    /**
+     * Every SUBSCRIBED market and its {@code staleness_threshold_seconds},
+     * refreshed from Postgres while the job runs. Looked up by the operator's
+     * current key; a market absent from it is not watched at all, which is how
+     * an unsubscribe stops the silence timer without a resubmit.
+     */
+    private final RefreshingLookup<String, WatchedMarket> watched;
 
-    public TypeValidateFunction(long snapshotRetryMs) {
+    public TypeValidateFunction(long snapshotRetryMs, RefreshingLookup<String, WatchedMarket> watched) {
         this.snapshotRetryMs = snapshotRetryMs;
+        this.watched = watched;
     }
 
     @Override
-    public void open(OpenContext openContext) {
+    public void open(OpenContext openContext) throws Exception {
         lastSeq = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastSeq", Long.class));
         baselinePending = getRuntimeContext().getState(
@@ -216,14 +239,23 @@ public class TypeValidateFunction
                 new ValueStateDescriptor<>("resyncRequestedAt", Long.class));
         lastArrivalMs = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastArrivalMs", Long.class));
-        watchingSince = getRuntimeContext().getState(
-                new ValueStateDescriptor<>("watchingSince", Long.class));
+        stalenessTimerAt = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("stalenessTimerAt", Long.class));
         lastSimulation = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastSimulation", Integer.class));
+        // Propagates: a job that cannot read its watch list must not start up watching
+        // nothing, because "watching nothing" and "everything is healthy" look identical
+        // from outside.
+        watched.open();
     }
 
     @Override
-    public void processElement1(RawOrderBookEvent event, Context ctx,
+    public void close() {
+        watched.close();
+    }
+
+    @Override
+    public void processElement(RawOrderBookEvent event, Context ctx,
             Collector<RawOrderBookEvent> out) throws Exception {
         event.getPipelineTimings().setTypeValidateIn(System.currentTimeMillis());
 
@@ -231,8 +263,10 @@ public class TypeValidateFunction
         // verdict, because staleness here means "nothing arrived", not "nothing was
         // accepted": a key rejecting every update is alive and already re-asking on the
         // rejection path, and calling it stale as well would double-ask for one fault.
-        lastArrivalMs.update(ctx.timerService().currentProcessingTime());
+        long arrivedAt = ctx.timerService().currentProcessingTime();
+        lastArrivalMs.update(arrivedAt);
         lastSimulation.update(event.getSimulation());
+        armSilenceTimer(arrivedAt, ctx);
 
         // No ordering field (ex3 wallex; ex1 nobitex REST snapshot): there is no
         // sequence to order
@@ -321,93 +355,110 @@ public class TypeValidateFunction
     }
 
     /**
-     * The silence check: one tick per subscribed market per poll, carrying that
-     * market's own {@code staleness_threshold_seconds}. This is the input that
-     * exists so a market which has never sent anything still HAS a key — a
-     * keyed function cannot notice a market it has never heard of, and no timer
-     * can fire for a key that was never created.
+     * The silence check. A market that was sending and stopped is one nobody
+     * downstream can notice: no event arrives, so no rule runs, and job 5 keeps
+     * serving a frozen book as if it were live. So every key carries a
+     * processing-time deadline at
+     * {@code lastArrival + staleness_threshold_seconds}, and when it passes
+     * without anything arriving the book is emptied with a {@link #RESET} and a
+     * {@code snapshot_request} goes out — exactly what a sequence gap does,
+     * reached by silence instead of by a bad sequence.
      *
      * <p>
-     * Two conditions, told apart by {@link #lastArrivalMs} being null, and only
-     * one of them clears the book:
-     *
-     * <ul>
-     * <li><b>Never received</b> — nothing has arrived since we started
-     * watching. NO reset is emitted: there is no book downstream to empty, and
-     * emitting one would create keyed state in jobs 3-5 for a market that has
-     * never existed. Only the request goes out.</li>
-     * <li><b>Went silent</b> — it spoke and then stopped, so there IS a book
-     * downstream and it is now describing a market nobody is watching any more.
-     * That book is emitted away with a {@link #RESET} so the exchange drops out
-     * of the aggregated view, exactly as it does on a sequence gap.</li>
-     * </ul>
+     * <b>Only markets that have spoken are watched.</b> A market that has never
+     * sent a single event has no keyed state and therefore no deadline here,
+     * deliberately: seeing it at all would mean importing the whole
+     * subscription roster into a stream validator, and the answer would be an
+     * alert for a human rather than a command the collector can act on. That
+     * belongs to the staleness exporter, which already derives the same roster
+     * from the same table. See {@link #STALE}.
      *
      * <p>
-     * Both go through the same {@link #askForSnapshot} suppression as every
-     * other ask, so a stale key and a rejecting key can never combine into two
-     * commands per interval — the defect that the timer implementation shipped
-     * with, arrived at by a different route.
+     * The reset fires once per episode — guarded on {@link #resyncPending()},
+     * which asking sets — while the ask itself repeats, rate-limited by the
+     * SAME {@link #askForSnapshot} window every other reason uses. A silent key
+     * and a rejecting key can therefore never combine into two commands per
+     * interval.
      */
     @Override
-    public void processElement2(StalenessTick tick, Context ctx,
-            Collector<RawOrderBookEvent> out) throws Exception {
-        long now = ctx.timerService().currentProcessingTime();
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<RawOrderBookEvent> out)
+            throws Exception {
+        // This timer is spent. Cleared FIRST and unconditionally, so that every path
+        // out of here leaves at most the one timer it re-arms below.
+        stalenessTimerAt.update(null);
 
-        Long watching = watchingSince.value();
-        if (watching == null) {
-            // The first tick starts the clock, it does not judge on it. Without this a
-            // submit would fire a request for every subscribed market at once, before any
-            // of them had been given a chance to speak.
-            watchingSince.update(now);
+        WatchedMarket market = watched.get(ctx.getCurrentKey());
+        if (market == null) {
+            // Unsubscribed (or the row is gone) while the timer was in flight: stop
+            // watching. An arriving event would arm a fresh timer if it comes back.
             return;
         }
 
         Long lastArrival = lastArrivalMs.value();
-        long silentSince = lastArrival != null ? lastArrival : watching;
-        if (now - silentSince < tick.thresholdMs()) {
+        if (lastArrival == null) {
             return;
         }
 
-        if (lastArrival == null) {
-            askForSnapshot(NO_DATA_RECEIVED, tick.getExchangeId(), tick.getPairId(),
-                    simulationOrLive(), List.of(), ctx);
+        long now = ctx.timerService().currentProcessingTime();
+        if (now - lastArrival < market.thresholdMs()) {
+            // It spoke after this timer was armed. Arriving events deliberately do not
+            // cancel and re-register the timer, so this is where the deadline is moved
+            // instead — detection still lands exactly on lastArrival + threshold.
+            armSilenceTimerAt(lastArrival + market.thresholdMs(), ctx);
             return;
         }
 
         // Captured BEFORE asking, because asking is what opens the episode. Only the
-        // first tick past the threshold empties the book; the rest just re-ask.
+        // first deadline past the threshold empties the book; the rest just re-ask.
         boolean firstOfEpisode = !resyncPending();
-        askForSnapshot(STALE, tick.getExchangeId(), tick.getPairId(),
-                simulationOrLive(), List.of(), ctx);
+        askForSnapshot(STALE, market.getExchangeId(), market.getPairId(),
+                simulationOfLastEvent(), List.of(), ctx);
         if (firstOfEpisode) {
-            emitSilenceReset(tick, now, out);
+            emitSilenceReset(market, now, out);
         }
+        // Still silent, so keep watching: the ask repeats until something arrives.
+        armSilenceTimerAt(now + market.thresholdMs(), ctx);
     }
 
     /**
-     * The {@code simulation} flag to put on a command or reset that no event
-     * triggered. The last arriving event's flag if this market has ever spoken;
-     * 0 (live) if it never has, because then nothing has ever told us
-     * otherwise.
-     *
-     * <p>
-     * The never-spoke case is a real limitation, not a safe default: a market
-     * configured as simulated that has produced nothing will have a live
-     * snapshot requested for it. The DB has no simulation column to read it
-     * from — the flag exists only on the wire — so there is nowhere better to
-     * get it, and requesting a real snapshot for a market that is not
-     * collecting is inert.
+     * Arms the silence deadline for this key if none is outstanding, measured
+     * from the event that just arrived. Does nothing when the market is not in
+     * the watch list — an unsubscribed market is supposed to be silent.
      */
-    private int simulationOrLive() throws Exception {
-        Integer simulation = lastSimulation.value();
-        return simulation == null ? 0 : simulation;
+    private void armSilenceTimer(long from, Context ctx) throws Exception {
+        if (stalenessTimerAt.value() != null) {
+            return;
+        }
+        WatchedMarket market = watched.get(ctx.getCurrentKey());
+        if (market == null) {
+            return;
+        }
+        armSilenceTimerAt(from + market.thresholdMs(), ctx);
+    }
+
+    /**
+     * Registers the one outstanding timer and records it, so nothing arms a
+     * second.
+     */
+    private void armSilenceTimerAt(long at, Context ctx) throws Exception {
+        ctx.timerService().registerProcessingTimeTimer(at);
+        stalenessTimerAt.update(at);
+    }
+
+    /**
+     * The {@code simulation} flag for a command or reset that no event
+     * triggered: the one the last arriving event carried. Silence is only ever
+     * judged on a key that has spoken, so there is always one to copy.
+     */
+    private int simulationOfLastEvent() throws Exception {
+        return lastSimulation.value();
     }
 
     /**
      * Emits a {@link #RESET} for a market that stopped speaking. Same purpose
      * as the gap reset — empty the book so the exchange drops out of the
      * aggregated view rather than serving a frozen one — but built from the
-     * tick, because no event triggered it.
+     * watch-list row, because no event triggered it.
      *
      * <p>
      * Three fields cannot be inherited and are set deliberately:
@@ -422,7 +473,7 @@ public class TypeValidateFunction
      * untraceable id that satisfies every "is the field set" check while
      * meaning nothing — a bug the timer implementation actually shipped.</li>
      * <li>{@code simulation} comes from the last event seen; see
-     * {@link #simulationOrLive()}.</li>
+     * {@link #simulationOfLastEvent()}.</li>
      * </ul>
      *
      * <p>
@@ -433,15 +484,16 @@ public class TypeValidateFunction
      * advances {@code lastEventTime} here is not observable, because asking
      * opens a resync episode and the ordering guards are suspended while one is
      * outstanding, so the returning event is accepted and overwrites the
-     * poisoned value before any guard reads it. The exemption is the load-bearing
-     * part; this is a second lock on the same door. Keep both — the exemption
-     * has been removed by accident once already (the 2026-08-19 deadlock).
+     * poisoned value before any guard reads it. The exemption is the
+     * load-bearing part; this is a second lock on the same door. Keep both —
+     * the exemption has been removed by accident once already (the 2026-08-19
+     * deadlock).
      */
-    private void emitSilenceReset(StalenessTick tick, long now, Collector<RawOrderBookEvent> out)
+    private void emitSilenceReset(WatchedMarket market, long now, Collector<RawOrderBookEvent> out)
             throws Exception {
         RawOrderBookEvent reset = new RawOrderBookEvent(
-                tick.getExchangeId(), tick.getPairId(), RESET, null, 0L, now, null, null);
-        reset.setSimulation(simulationOrLive());
+                market.getExchangeId(), market.getPairId(), RESET, null, 0L, now, null, null);
+        reset.setSimulation(simulationOfLastEvent());
         reset.setSourceIds(List.of());
         reset.setId(Lineage.newId());
         reset.getPipelineTimings().setTypeValidateIn(now);
@@ -481,7 +533,9 @@ public class TypeValidateFunction
         return resyncRequestedAt.value() != null;
     }
 
-    /** The book can be trusted again: whatever we asked for has arrived. */
+    /**
+     * The book can be trusted again: whatever we asked for has arrived.
+     */
     private void resyncTrusted() throws Exception {
         resyncRequestedAt.clear();
     }
@@ -526,12 +580,13 @@ public class TypeValidateFunction
      * when a retry is worth sending and carry all four fields already.
      *
      * <p>
-     * The one case a timer covers and this does not is a market that goes
-     * SILENT after the gap: no events, so no retries. That is deliberate. A
-     * feed sending nothing cannot be re-synced by anything we put on the topic
-     * — and the moment it speaks again, its first update is rejected and asks.
-     * Both triggers ({@code no_baseline}, {@code sequence_gap}) are themselves
-     * updates, so the feed is by definition alive when an episode opens.
+     * The one case this does not cover is a market that goes SILENT after the
+     * gap: no events, so no retries. That is handled separately by
+     * {@link #onTimer}, which does use a processing-time timer — but exactly
+     * one per key, tracked in {@link #stalenessTimerAt} and cleared the moment
+     * it fires, so the multiplying-chain defect above has nowhere to live. It
+     * needs none of the fields copied into state that a retry timer would
+     * either: the market's identity comes from its watch-list row.
      *
      * <p>
      * The command carries a {@code reason} saying why the snapshot is wanted,
@@ -558,12 +613,12 @@ public class TypeValidateFunction
 
     /**
      * The ask itself, shared by the event-driven callers above and the
-     * silence-driven ones in {@link #processElement2}. Everything the command
-     * needs is a parameter, so no caller has to smuggle a trigger event in to
-     * reach it — which is what a rejection has and a tick does not.
+     * silence-driven one in {@link #onTimer}. Everything the command needs is a
+     * parameter, so no caller has to smuggle a trigger event in to reach it —
+     * which is what a rejection has and an expiring deadline does not.
      *
      * <p>
-     * ONE suppression window governs all four reasons. An event-driven ask and
+     * ONE suppression window governs all three reasons. An event-driven ask and
      * a silence-driven ask for the same market are the same episode wanting the
      * same thing, so they must share the interval rather than each get one.
      */

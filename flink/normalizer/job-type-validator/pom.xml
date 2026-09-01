@@ -33,12 +33,6 @@
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
         </dependency>
-        <!-- Bundled, not provided: DataGeneratorSource drives the staleness clock and
-             flink-dist is not guaranteed to carry it. Connectors belong in the job jar. -->
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-connector-datagen</artifactId>
-        </dependency>
         <!-- Job 2's first DB dependency: the staleness watch list comes from
              exchange_markets. Must be shaded in AND loaded with an explicit
              Class.forName - see StalenessThresholdLoader. -->

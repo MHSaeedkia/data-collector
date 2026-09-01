@@ -148,27 +148,39 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
 
 ## flink job 2 — staleness-triggered resync (branch `feat/flink-check-staleness`)
 
-Built 2026-08-31. Design, the four user decisions, and the traps are in [[project_control_plane]]
-§"Silence closes the last gap". **Code complete and unit-verified; nothing has run live.**
+Built 2026-08-31 (`d78d84d`), then **cut back**: the `no_data_received` half was removed and the
+`stale` half re-implemented on a per-key timer instead of a tick stream. Design, the reasoning for
+the cut, and the two vacuous-test lessons are in [[project_control_plane]] §"Silence closes the last
+gap". 66 job-2 tests, 282 across the normalizer. **Verified LIVE 2026-09-01 on the local docker
+stack** — see the same memory section for the run and what it did not cover.
 
-- [ ] **Run it live — the only thing that matters now.** Submit job 2, let a subscribed market go
-      quiet past its `staleness_threshold_seconds`, and confirm a `snapshot_request` with
-      `reason: "stale"` lands on `control-plane` and the exchange drops out of the aggregated view.
-      Then confirm the other state: a market subscribed but never fed produces `no_data_received`
-      and **no** reset
-- [ ] **Watch the first submit.** Every subscribed market is watched from its first tick, so if
-      `watchingSince` is wrong the whole book of markets asks at once — the same cold-start burst
-      the control-plane section already worries about. Check the `control-plane` topic in the first
-      two minutes after a submit before trusting it
-- [ ] **Verify the postgres driver and datagen really load on the cluster.** Both are shaded into
-      the job jar (verified in the jar, not on the cluster — no flink-dist or container was
-      available locally). A `NoClassDefFoundError` or the `Class.forName` child-first trap would
-      show up at submit, not at build
+- [x] ~~Run it live~~ — done 2026-09-01. ex1/BTCUSDT, threshold 20s: snapshot accepted → 21s silence
+      → `RESET` (`source_ids: []`, `simulation: 1`, null book) + `snapshot_request` `reason: "stale"`.
+      Held at exactly 1 reset / 1 command through 4+ deadlines; recovery snapshot with an OLDER
+      `event_time` was ACCEPTED (0 rejects), then a NEW episode opened 21s later
+- [x] ~~Verify the postgres driver really loads on the cluster~~ — done: the job reached RUNNING with
+      both vertices up, which only happens if `RefreshingLookup.open()` read the watch list.
+      Confirmed `flink-connector-datagen` is NOT on the cluster classpath — bundling it would have
+      been necessary, which is one more reason the tick-stream design was the wrong one
+- [x] ~~An unwatched market is never judged silent~~ — done: pair 2 (`status='unsubscribe'`) held a
+      live key in job 2 state, went silent 2.5× the threshold, and produced nothing
+- [ ] **Test the threshold-edit / unsubscribe path live.** `RefreshingLookup` was only ever read at
+      `open()` in this run — the 60 s refresh was never exercised, so "edit the threshold in
+      Postgres and it lands without a resubmit" is still UNPROVEN live (it is unit-tested via
+      `resubscribedMarketIsWatchedAgain`)
+- [ ] **Confirm never-heard-from markets really are covered by the exporter.** The cut assumed a
+      subscribed market that has produced nothing already reads `stale=1` in
+      `lpa-staleness-exporter`. That was reasoned from [[project_staleness_exporter]], NOT verified
+      against `exporter.py` or a live dashboard. **If it turns out not to be covered, that is a gap
+      to close in the exporter — not by putting the roster back into job 2**
+- [ ] **Watch a cold start with a REAL watch list.** The live run had exactly ONE subscribed market.
+      Nothing has yet exercised many markets going stale at once, which is where the shared
+      suppression window and the per-key timers actually matter
 - [ ] **e2e coverage.** Silence is time-based, so it inherits the same "no e2e" gap as re-asking.
-      Decide whether a scenario with a short `STALENESS_POLL_MS` + tiny threshold is worth it, or
-      whether the 12 unit tests plus a live check are enough
-- [ ] **`STALENESS_POLL_MS` / `REFRESH_INTERVAL_MS` are set nowhere in `docker-compose.yml`** and
-      take their in-code defaults (10 s / 60 s), exactly like `SNAPSHOT_RETRY_MS` above. Same
-      decision, same place to make it
+      Decide whether a scenario with a tiny threshold is worth it, or whether the 13 unit tests plus
+      the live check are enough
+- [ ] **`REFRESH_INTERVAL_MS` is set nowhere in `docker-compose.yml`** and takes its in-code default
+      (60 s), exactly like `SNAPSHOT_RETRY_MS` above. Same decision, same place to make it
 - [ ] Optional: re-register `control-command` so the registry carries the updated `reason` doc.
-      Doc-only, not a compatibility change — the two new values work without it
+      Doc-only, not a compatibility change — `stale` works without it (the live run proves it:
+      `reason: "stale"` serialised fine against the registered schema)
