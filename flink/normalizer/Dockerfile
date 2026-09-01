@@ -34,3 +34,13 @@ RUN apt-get update -qq && apt-get install -y -q --no-install-recommends maven \
  && apt-get purge -y maven && apt-get autoremove -y -q \
  && rm -rf /root/.m2 /tmp/confluent-deps-pom.xml /var/lib/apt/lists/*
 USER flink
+
+# Mount points for the HA store (M3) and the job archive (S4). They have to
+# exist in the image and be owned by `flink`: Docker creates a missing mount
+# destination as root:root, and this image runs as uid 9999, so a named volume
+# mounted at a path the image does not already have is unwritable. Verified by
+# probe — without this the JobManager cannot write either directory.
+USER root
+RUN mkdir -p /opt/flink/ha /opt/flink/archive \
+ && chown flink:flink /opt/flink/ha /opt/flink/archive
+USER flink

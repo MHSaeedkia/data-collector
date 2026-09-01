@@ -227,3 +227,20 @@ across ~20 submit cycles") — here it surfaced after 3 back-to-back `make run-a
 within ~3 minutes on a stack that had been up 3 hours. Not root-caused further (Flink/Pekko RPC
 internals); the restart is a working mitigation, not a fix. **If `NoResourceAvailableException`
 shows up again, check `freeSlots` vs actual `RUNNING` jobs before assuming a code regression.**
+
+## 2026-08-31 — the compose split changed what `run-job.sh` can assume
+
+There are now two stacks: `docker-compose.yml` (dev, **one** `taskmanager` with 8 slots) and
+`docker-compose.prod.yml` (prod, `taskmanager-1..4` with 3 slots each). `run-job.sh` therefore no
+longer hard-codes TaskManager container names — it discovers them with
+`docker ps --format '{{.Names}}' | grep -E '^taskmanager(-[0-9]+)?$'`. Anything else in this file
+that names a TaskManager container (the slot-leak procedure's `docker compose restart taskmanager`)
+is **dev-only wording**; on prod that is four containers.
+
+`run-job.sh` also stamps the git SHA now (S7): `-Dgit.sha=` into the build, and the jar is uploaded
+under `<artifact>-1.0-SNAPSHOT-<sha>.jar` so Flink's `/jars` listing says which commit is running.
+`-dirty` is appended when the tree is not clean. A plain `mvn package` outside the script leaves
+`Git-Commit: unknown` in the manifest, which is intended, not a bug.
+
+Deploy targets: `make prod-up` / `prod-deploy` / `prod-verify` / `prod-logs` drive the prod file.
+`make refresh-normalizer` is **dev-only** — it still runs `docker compose down -v`.

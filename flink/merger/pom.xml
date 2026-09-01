@@ -22,6 +22,8 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- S7: overridden by run-job.sh (-Dgit.sha=...); `unknown` when built by hand. -->
+        <git.sha>unknown</git.sha>
         <flink.version>2.2.0</flink.version>
         <flink.kafka.connector.version>5.0.0-2.2</flink.kafka.connector.version>
         <avro.version>1.11.4</avro.version>
@@ -176,6 +178,9 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>io.tibobit.merger.MergerJob</mainClass>
+                                    <manifestEntries>
+                                        <Git-Commit>${git.sha}</Git-Commit>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                             <filters>
