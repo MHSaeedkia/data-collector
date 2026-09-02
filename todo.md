@@ -547,22 +547,32 @@ User's call: put production in its own file and give the developers theirs back.
       sub-second before. `lpa-staleness-exporter`'s `output_threshold_seconds: 10` is now below the
       last hop's added latency alone. Options: accept, drop the interval to ~2s, or keep the middle
       hops `AT_LEAST_ONCE` and reserve `EXACTLY_ONCE` for the terminal sinks. **Nothing decided.**
-- [ ] **`tolerableCheckpointFailureNumber` is the default 0** — one failed checkpoint fails the job,
-      which is exactly how the 2026-08-31 root-owned-volume incident became a permanent 6-job restart
-      loop. `CheckpointConfig.setTolerableCheckpointFailureNumber(int)` exists in 2.2.0. A value of
-      2-3 turns a transient failure into an alert instead of an outage. Durability/availability
-      tradeoff, user's call
-- [ ] **`RETAIN_ON_CANCELLATION` currently only leaks.** `run-job.sh` submits with no `savepointPath`,
-      so a resubmitted job never restores from a retained checkpoint — and `run-all-jobs`/`prod-deploy`
-      cancel all 8 first. Every deploy strands 8 checkpoint directories on the shared volume, never
-      collected (`num-retained` prunes only a *running* job's history). Unbounded growth, no disk
-      alert; when the volume fills, checkpoints fail and tolerable=0 restart-loops every job. Either
-      switch to `DELETE_ON_CANCELLATION` or keep retention and add a prune step + a volume-usage alert
-- [ ] **Dead line: `CheckpointingOptions.CHECKPOINT_STORAGE` in `CheckpointingConfigurer`.**
-      `CheckpointConfig.configure()` does not read that key (verified against the 2.2.0 jar). It works
-      only because `CheckpointStorageLoader` falls back to filesystem when a directory is set. Either
-      drop the line and say so, or set `state.checkpoint-storage: filesystem` in the cluster config
-      where it is actually read
+- [x] **`tolerableCheckpointFailureNumber` raised from Flink's default 0 to 3** (2026-09-02). One
+      failed checkpoint used to fail the job, which is how the 2026-08-31 root-owned-volume incident
+      became a permanent 6-job restart loop. A transient failure is now an alert, not an outage; a
+      persistent one still ends the job, just after 4 rather than 1. `FlinkCheckpointsFailing` fires
+      on the FIRST failure regardless, so the budget hides nothing. The comments in `Dockerfile`,
+      `flink.yml` and `alertmanager.yml` that asserted "tolerable is 0" were updated with it
+- [x] **`RETAIN_ON_CANCELLATION` → `DELETE_ON_CANCELLATION`** (2026-09-02). Retention only leaked:
+      `run-job.sh` submits with no `savepointPath`, so a resubmitted job never restores from a retained
+      checkpoint — and `run-all-jobs`/`prod-deploy` cancel all 8 first, stranding 8 directories per
+      deploy, forever (`num-retained` prunes only a *running* job's history). It also contradicted S1
+      (restart from `latest` and re-baseline). ⚠ This governs CANCELLATION only — a job that FAILS
+      still keeps its checkpoint and automatic restarts restore from it, which is the whole feature.
+      **Still open: no disk-usage alert on `data-collector-flink-checkpoints`.** The leak is closed so
+      it is no longer urgent, but a full volume is still a checkpoint failure and nothing watches it
+- [x] **`CheckpointingOptions.CHECKPOINT_STORAGE` made load-bearing instead of dead** (2026-09-02).
+      `CheckpointConfig.configure()` reads `execution.checkpointing.dir` but ignores
+      `execution.checkpointing.storage` outright, so the key was silently dropped and filesystem
+      storage was in effect only via `CheckpointStorageLoader`'s undocumented directory fallback (which
+      logs a warning asking for the explicit value). Fixed by routing the storage `Configuration`
+      through `env.configure()` rather than `env.getCheckpointConfig().configure()` — `env.configure()`
+      does `configuration.addAll(...)` of every key AND delegates to `CheckpointConfig.configure()`,
+      so both the storage type and the directory land where the loader reads them. Kept job-side
+      rather than moved to compose `FLINK_PROPERTIES` on purpose: dev compose sets no checkpoint
+      properties and `run-local.sh` has no cluster at all. ⚠ **In Flink 2.x the keys are
+      `execution.checkpointing.storage` / `execution.checkpointing.dir`** — the 1.x names
+      (`state.checkpoint-storage`, `state.checkpoints.dir`) are gone; do not reach for them
 - [ ] **Nits from the review, none blocking:** package `io.tibobit.normalizer.checkpointingConfigurer`
       is camelCase while every sibling is lowercase; trailing whitespace on 7 lines; the
       `control-plane` sink in `TypeValidatorJob` still carries the now-false "Without checkpointing,

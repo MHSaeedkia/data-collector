@@ -454,12 +454,18 @@ kafka-python past 2.0.2 will silently break the exporter** on exactly the mechan
   `flink-runtime-2.2.0.jar`, so the `flink_jobmanager_job_*` prefix in the rules is right. The ⚠ "only
   names not from a live scrape" caveat in `monitoring/prometheus/rules/flink.yml` can be softened to
   "verified against the jar, not yet scraped" — it is no longer an unknown.
-- **`CheckpointingOptions.CHECKPOINT_STORAGE` is a no-op where it is set.** `CheckpointConfig.configure()`
-  in 2.2.0 reads 14 `CheckpointingOptions` keys and that is **not** one of them (`CHECKPOINTS_DIRECTORY`
-  is, via the private `setCheckpointDirectory`). Filesystem storage is in effect only because
-  `CheckpointStorageLoader` falls back to it when a directory is set — and logs "Users are strongly
-  encouraged to explicitly set this configuration" while doing so. The line in `CheckpointingConfigurer`
-  and the comment above it are therefore both misleading about *why* it works. Not fixed; see todo.
+- **`CheckpointingOptions.CHECKPOINT_STORAGE` was a no-op where it was set — FIXED 2026-09-02.**
+  `CheckpointConfig.configure()` in 2.2.0 reads 14 `CheckpointingOptions` keys and that is **not** one
+  of them (`CHECKPOINTS_DIRECTORY` is, via the private `setCheckpointDirectory`). Filesystem storage
+  was in effect only because `CheckpointStorageLoader` falls back to it when a directory is set — while
+  logging "Users are strongly encouraged to explicitly set this configuration". **The fix is which
+  `configure()` you call**: `env.configure(cfg)` does `configuration.addAll(cfg)` of every key *and*
+  delegates to `checkpointCfg.configure(cfg)`, so it applies both the storage type and the directory;
+  `env.getCheckpointConfig().configure(cfg)` applies only the subset CheckpointConfig knows. Storage now
+  goes through `env.configure()`. Deliberately kept job-side rather than moved to compose
+  `FLINK_PROPERTIES`: dev compose sets no checkpoint properties and `run-local.sh` has no cluster at all.
+  ⚠ **Flink 2.x key names are `execution.checkpointing.storage` / `execution.checkpointing.dir`** — the
+  1.x `state.checkpoint-storage` / `state.checkpoints.dir` are gone.
 - **The broker is already correct for transactions**: `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1`
   + `_MIN_ISR: 1` are set, and `transaction.timeout.ms=600000` sits under the 900000 broker default.
   This partly answers the S8 question left open below.
@@ -468,6 +474,32 @@ kafka-python past 2.0.2 will silently break the exporter** on exactly the mechan
   → job6 aggregator). Checked individually; do not re-check.
 - Leaving `job-type-validator`'s `control-plane` sink non-transactional is right — NiFi consumes it and
   would otherwise need `read_committed` too.
+
+**Two settings changed on review, 2026-09-02 (the "should fix" round).**
+- **`tolerableCheckpointFailureNumber` 0 → 3.** Flink's default of 0 means one failed checkpoint fails
+  the job, and that is precisely how a root-owned volume became a permanent 6-job restart loop on
+  2026-08-31. A budget of 3 makes a transient failure an alert instead of an outage while still killing
+  a job whose checkpoints genuinely all fail — just after 4 rather than 1. `FlinkCheckpointsFailing`
+  fires on the FIRST failure regardless, so the budget hides nothing from monitoring. **Three comments
+  elsewhere asserted "tolerable is 0" as load-bearing reasoning** (`flink/normalizer/Dockerfile`, the
+  `flink-checkpoints` group header and the `FlinkCheckpointsFailing` description in
+  `monitoring/prometheus/rules/flink.yml`, and the third inhibit rule in `alertmanager.yml`) — all
+  updated with the setting. The alert stays `critical`: the budget is the only thing between a first
+  failure and the restart loop, and state is already not being persisted.
+- **`RETAIN_ON_CANCELLATION` → `DELETE_ON_CANCELLATION`.** Retention could not be consumed by anything
+  here — `run-job.sh` submits with no `savepointPath`, and `run-all-jobs`/`prod-deploy` cancel all 8
+  jobs first — so every deploy stranded 8 checkpoint directories on the shared volume permanently
+  (`num-retained` prunes only a *running* job's own history). Unbounded growth on a named volume, and a
+  full volume is itself a checkpoint failure, which with the old tolerance of 0 took down every job. It
+  also contradicted the standing S1 decision to restart from `latest` and re-baseline rather than resume
+  possibly-wrong state. ⚠ **This governs CANCELLATION only** — a job that FAILS still keeps its
+  checkpoint and automatic restarts restore from it, which is the entire point of the feature.
+  **Still open: nothing watches disk usage on `data-collector-flink-checkpoints`.**
+
+Validation for that round: 269 tests pass, `promtool check rules` 13 rules SUCCESS, and
+**`amtool check-config` finally run for the first time** (memory previously recorded it as never
+executed, no image locally) — SUCCESS, 3 inhibit rules, 1 receiver, which is also the first confirmation
+that the receiver still delivers nowhere. Nothing deployed or observed running.
 
 **⚠ The unpriced consequence of EXACTLY_ONCE: end-to-end latency.** A record is invisible downstream
 until the producing job's checkpoint commits, so each of the 6 transactional hops adds up to one

@@ -40,10 +40,11 @@ inhibit_rules:
       target_matchers: ["alertname = FlinkJobRestarting"]
       equal: ["job_name"]
 
-    # A job that cannot checkpoint fails, restarts, fails again — Flink's
-    # tolerable-failed-checkpoints is 0. The restart alerts are the symptom and
-    # this is the cause, so let the cause through and silence the symptom, same
-    # job only. This is the exact failure the first live checkpointing run hit.
+    # A job that cannot checkpoint at all exhausts its failure budget (3, set in
+    # CheckpointingConfigurer), fails, restarts, and does it again. The restart
+    # alerts are the symptom and this is the cause, so let the cause through and
+    # silence the symptom, same job only. This is the exact failure the first live
+    # checkpointing run hit, when the budget was still Flink's default of 0.
     - source_matchers: ["alertname = FlinkCheckpointsFailing"]
       target_matchers: ["alertname =~ FlinkJobRestarting|FlinkJobRestartLoop"]
       equal: ["job_name"]

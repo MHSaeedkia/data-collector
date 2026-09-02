@@ -39,8 +39,9 @@ RUN apt-get update -qq && apt-get install -y -q --no-install-recommends maven \
 # creates a missing mount destination as root:root, and this image runs as uid 9999,
 # so a named volume mounted at a path the image does not already have is unwritable.
 # Verified by probe for ha/archive — without this the JobManager cannot write either.
-# Same failure for checkpoints, with a sharper edge: every checkpoint fails, and
-# Flink's default tolerable-failed-checkpoints is 0, so the job fails with it.
+# Same failure for checkpoints, with a sharper edge: EVERY checkpoint fails, so
+# the job burns through CheckpointingConfigurer's failure budget and dies with it.
+# The budget makes this slower to appear than it used to be, not survivable.
 # /opt/flink/log needs no entry here; it already exists in the image.
 USER root
 RUN mkdir -p /opt/flink/ha /opt/flink/archive /opt/flink/checkpoints \

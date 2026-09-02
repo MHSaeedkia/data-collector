@@ -157,9 +157,10 @@ groups:
     # the first live run of `feat/checkpointing` put all 6 normalizer jobs into a
     # permanent RESTARTING loop because the checkpoint volume was root-owned, and
     # nothing here would have said so — the job count stayed at 8 and the jobs
-    # stayed RUNNING. Flink's default tolerable-failed-checkpoints is 0, so a
-    # failing checkpoint fails the job, which M1's restart strategy then retries
-    # forever.
+    # stayed RUNNING. CheckpointingConfigurer now allows 3 consecutive failures
+    # before the job dies (Flink's default is 0), which buys time to act on these
+    # alerts but does not save a job whose checkpoints ALL fail — that still ends
+    # in the same loop, with M1's restart strategy retrying forever.
     - name: flink-checkpoints
       rules:
           - alert: FlinkCheckpointsFailing
@@ -170,9 +171,11 @@ groups:
             annotations:
                 summary: "Job {{ $labels.job_name }} failed a checkpoint in the last 15m"
                 description: >-
-                    Critical rather than warning because tolerable-failed-checkpoints
-                    is 0: the first failure fails the job. The likely causes are
-                    ownership or space on the shared checkpoint volume, not the job.
+                    Fires on the FIRST failure, while the job still has 2 of its 3
+                    tolerated failures left — critical because that budget is the only
+                    thing between here and a permanent restart loop, and because state
+                    is already not being persisted. Likely causes are ownership or
+                    space on the shared checkpoint volume, not the job.
 
           # No checkpoint completing at all is a different failure from one failing:
           # a stuck checkpoint (a task that will not acknowledge) increments nothing,
