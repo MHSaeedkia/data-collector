@@ -17,8 +17,8 @@
 
 | Topic     | Exchange | Sample status                 |
 | --------- | -------- | ----------------------------- |
-| `ex1-raw` | nobitex  | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-21 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
-| `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 — two streams: REST snapshot (`action`+`pair`) + WS delta (update) |
+| `ex1-raw` | nobitex  | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-21 (WS = delta) then **REVISED AGAIN 2026-09-02** (WS = snapshot) — two streams, BOTH full snapshots: REST (`action`+`pair`, null-seq) + WS (Centrifugo `pub`, ordered by `pub.offset`) |
+| `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 (WS = delta) then **REVISED AGAIN 2026-09-02** (WS = snapshot) — two streams, BOTH full snapshots: REST (`action`+`pair`, null-seq) + WS (Centrifugo `pub`, ordered by `pub.offset`) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
 | `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts`; **+ a REST snapshot stream captured 2026-08-23** (`data` object, `a`/`b`, NUMERIC levels, injected `pair`). ⚠ **RE-MEASURED live 2026-08-23**: the WS channel sends **no snapshots at all**, the REST body is the only baseline and is now **null-seq**, and the update window is **650 ± 110** |
@@ -60,20 +60,25 @@ are illustrative — every real record carries its own.
 
 ## ex1-raw — nobitex
 
-**⚠ REVISED 2026-07-21 — the "only snapshots" assumption was WRONG.** nobitex serves the initial
-book over a REST API and then only **deltas** over WebSocket; we had been treating every WS
-message as a full snapshot. The NiFi team now publishes **two distinct payloads** to `ex1-raw`:
+**⚠ REVISED 2026-07-21 — the "only snapshots" assumption was WRONG** (nobitex serves the initial
+book over REST and — we believed then — only **deltas** over WebSocket). **⚠ REVISED AGAIN
+2026-09-02 — that correction itself was wrong**: fresh live captures (`nobitex-snapshots.txt`)
+show every WS push resends the WHOLE book — a level absent from one push and present in the last
+is a silent delete, with no zero-quantity entry marking it, which a true delta feed cannot do. So
+`ex1-raw` publishes **two distinct payloads, BOTH full snapshots**:
 
 1. **REST snapshot** — NiFi tags it `"action": "snapshot"` and **injects the market as a
-   top-level `"pair"` field** (the REST body has no symbol of its own). This is the full book →
-   `type = "snapshot"`, `sequence_id = null` (no offset on the wire).
-2. **WebSocket delta** — the Centrifugo push we already consumed, **unchanged** and with **no
-   `action` field** → `type = "update"`, `sequence_id = pub.offset`, `sequence_jump = 1`
-   (Centrifugo offsets increment by exactly one per publication).
+   top-level `"pair"` field** (the REST body has no symbol of its own). `type = "snapshot"`,
+   `sequence_id = null` (no offset on the wire).
+2. **WebSocket snapshot** — the Centrifugo push we already consumed, **unchanged** and with **no
+   `action` field** → also `type = "snapshot"`, but ordered by its own counter rather than event
+   time: `sequence_id = pub.offset`, `sequence_jump = 0` (unchecked on a snapshot — job 2 never
+   jump-checks these, only rejects `seq <= last` as `stale_or_duplicate`).
 
-Because the REST snapshot carries no offset, job 2 treats a null-seq snapshot as a **resync
-signal**: the first WS update after it adopts its offset as the baseline (see
-memory/project_type_validator.md).
+Both branches are null-seq-or-sequenced SNAPSHOTS now, so the null-seq REST resync bootstrap in
+job 2 (`baselinePending`) is set on every accepted REST snapshot but never consumed — the same
+"set but never consumed" shape ex3/ex9 already have, since there is no `update` type on this
+exchange for a WS event to adopt a baseline from any more (see memory/project_type_validator.md).
 
 **REST snapshot sample** (level arrays trimmed):
 
@@ -81,7 +86,7 @@ memory/project_type_validator.md).
 {"id":"9f2b1c74-3d5e-4a81-b0c6-71e2d4a95c38","simulation":1,"action":"snapshot","pair":"BTCUSDT","status":"ok","lastUpdate":1784614865284,"lastTradePrice":"65708.96","bids":[["65660","0.000615"],["65636","0.002543"]],"asks":[["65708.76","0.00672"],["65708.79","0.09133"]]}
 ```
 
-**WebSocket delta sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — a real
+**WebSocket snapshot sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — a real
 message carried **24 levels per side**, so depth is NOT the fixed 50 bitpin uses; possibly
 variable):
 
@@ -115,19 +120,22 @@ variable):
 Parsing notes (job 1):
 
 - **Branch discriminator**: top-level `action == "snapshot"` ⇒ REST snapshot path; otherwise
-  try the Centrifugo `push` (WS delta); anything else is noise → dropped.
+  try the Centrifugo `push` (WS snapshot); anything else is noise → dropped.
 - **REST snapshot market**: from the injected top-level `"pair"` field (`BTCUSDT`). The REST
   body has no channel and no `symbol`.
-- **WS delta market**: from the channel `public:orderbook-{market}` (here `BTCUSDT`) — differs
+- **WS snapshot market**: from the channel `public:orderbook-{market}` (here `BTCUSDT`) — differs
   from bitpin's `orderbook:{market}`. NO `symbol` field inside `data`; the channel is the ONLY
   market key on the WS side.
 - **Levels** (both payloads): `bids`/`asks` are `[price, qty]` **string** pairs ✅ (asks listed
-  first; asks price-ascending, bids price-descending). Prices may lack decimals (`"62678"`).
+  first; asks price-ascending, bids price-descending). Prices may lack decimals (`"62678"`). Each
+  payload is the FULL current book — a price absent from one push and present in the last is a
+  silent delete, not "nothing changed there."
 - **`lastTradePrice` is a string** ✅ (unlike bitpin's numeric `price`); `lastUpdate` is
   epoch-millis as a JSON number → event time — both metadata, not book levels.
-- **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (resync).
-  The WS delta uses `pub.offset` as `sequence_id` with `sequence_jump = 1`, so job 2 does real
-  contiguity gap detection (was an out-of-order-only check when we thought it was a snapshot feed).
+- **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (event-time
+  ordered, out-of-order-only check). The WS snapshot uses `pub.offset` as `sequence_id` with
+  `sequence_jump = 0` — also an out-of-order-only check (`seq <= last` → `stale_or_duplicate`),
+  never a jump/gap check, because job 2 never jump-checks a snapshot of any kind.
 - **Multi-doc records: CLOSED 2026-07-14 (user)** — ex1 records always contain ONE JSON
   document; the discarded-capture 2-newline-concatenated-docs lead was an artifact. No
   splitting logic in job 1.
@@ -135,20 +143,23 @@ Parsing notes (job 1):
 ## ex2-raw — bitpin
 
 **⚠ REVISED 2026-07-25 — the "full snapshot on every message" assumption was WRONG**, exactly as
-it was for ex1. bitpin serves the initial book over a REST API and then only **deltas** over
-WebSocket; we had been treating every WS message as a full snapshot. NiFi publishes **two
-distinct payloads** to `ex2-raw`:
+it was for ex1. **⚠ REVISED AGAIN 2026-09-02 — that correction itself was wrong**, exactly as it
+was for ex1: fresh live captures (`bitpin-snapshots.txt`) show every WS push resends the WHOLE
+book (same silent-delete tell as ex1 — a level dropped between pushes with no zero-quantity entry
+marking it). So `ex2-raw` publishes **two distinct payloads, BOTH full snapshots**:
 
 1. **REST snapshot** — NiFi tags it `"action": "snapshot"` and **injects the market as a
-   top-level `"pair"` field** (the REST body has no symbol of its own). This is the full book →
-   `type = "snapshot"`, `sequence_id = null` (no offset on the wire).
-2. **WebSocket delta** — the Centrifugo push we already consumed, **unchanged** and with **no
-   `action` field** → `type = "update"`, `sequence_id = pub.offset`, `sequence_jump = 1`
-   (Centrifugo offsets increment by exactly one per publication).
+   top-level `"pair"` field** (the REST body has no symbol of its own). `type = "snapshot"`,
+   `sequence_id = null` (no offset on the wire).
+2. **WebSocket snapshot** — the Centrifugo push we already consumed, **unchanged** and with **no
+   `action` field** → also `type = "snapshot"`, ordered by its own counter: `sequence_id =
+   pub.offset`, `sequence_jump = 0` (unchecked on a snapshot — job 2 never jump-checks these, only
+   rejects `seq <= last` as `stale_or_duplicate`).
 
-Because the REST snapshot carries no offset, job 2 treats a null-seq snapshot as a **resync
-signal**: the first WS update after it adopts its offset as the baseline (see
-memory/project_type_validator.md) — the same exchange-agnostic path ex1 uses.
+Both branches are null-seq-or-sequenced SNAPSHOTS now — the same shape as ex1 (see its section
+above), including the null-seq REST resync bootstrap being set but never consumed since there is
+no `update` type on this exchange for a WS event to adopt a baseline from any more (see
+memory/project_type_validator.md).
 
 **REST snapshot sample** (level arrays trimmed):
 
@@ -161,7 +172,7 @@ memory/project_type_validator.md) — the same exchange-agnostic path ex1 uses.
 `"2|{market}"` is exact and case-sensitive, so `BTCUSDT` would drop silently as
 `dropped-unknown-market`. Confirmed with the user 2026-07-25.
 
-**WebSocket delta sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — the real
+**WebSocket snapshot sample** (Centrifugo envelope; pretty-printed; level arrays trimmed — the real
 message carried **50 levels per side**):
 
 ```json
@@ -198,10 +209,10 @@ message carried **50 levels per side**):
 Parsing notes (job 1):
 
 - **Branch discriminator**: top-level `action == "snapshot"` ⇒ REST snapshot path; otherwise
-  try the Centrifugo `push` (WS delta); anything else is noise → dropped.
+  try the Centrifugo `push` (WS snapshot); anything else is noise → dropped.
 - **REST snapshot market**: from the injected top-level `"pair"` field. The REST body has no
   channel and no `symbol`.
-- **WS delta market**: from `push.channel` (`orderbook:{market}`, here `BTC_USDT`) and
+- **WS snapshot market**: from `push.channel` (`orderbook:{market}`, here `BTC_USDT`) and
   duplicated in `data.symbol`.
 - **Levels** (both payloads): `bids`/`asks` are `[price, qty]` **string** pairs ✅
   (BigDecimal-from-string, no numeric-literal hazard for the levels). Bids sorted
@@ -214,7 +225,8 @@ Parsing notes (job 1):
   2026-07-25): the WS `data.event_time` is an **ISO-8601 string** with microseconds
   (`Instant.parse`), the REST `event_time` is **epoch millis as a JSON number** (read verbatim).
   Same field name, two types — don't share a code path. It is the ONLY ordering signal on the
-  REST snapshot, which is what job 2's null-seq `out_of_order` guard reads.
+  REST snapshot, which is what job 2's null-seq `out_of_order` guard reads; the WS snapshot is
+  ordered by `pub.offset` instead (`stale_or_duplicate` only, never jump-checked).
 - **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (resync).
   The WS delta uses `pub.offset` as `sequence_id` with `sequence_jump = 1`, so job 2 does real
   contiguity gap detection (was an out-of-order-only check when we thought it was a snapshot

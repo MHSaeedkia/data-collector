@@ -50,7 +50,7 @@
 - [x] ~~`onTimer` defaults a missing `pendingSourceId` to `""`~~ — **gone with the timer (2026-08-22)**. There is no pending state to be missing: the triggering event is in hand on every ask, so every command names a real dead-lettered record
 - [ ] `scripts/diagnose-stuck-markets.sh` declares `WINDOW_MS` and documents it as "how far back to read", but never uses it — the script always reads `--from-beginning`. Misleading in a tool reached for during an incident. It also consumes each dead-letter topic twice (8s timeout each) to get the summary and then the last reason; one pass gives both
 - [ ] Tune `SNAPSHOT_RETRY_MS` once the NiFi consumer exists — 5 min is a guess. It interacts with the cold-start burst below (every delta-feed key asks at once after a restart, then re-asks on the same interval), though the event-driven ask is naturally bounded by feed activity in a way the timer was not
-- [ ] **A gap on the FIRST update after a REST snapshot is silently swallowed (ex1/ex2)** — the `baselinePending` branch adopts that update's seq unconditionally, before any contiguity check and before the `awaitingSnapshot` check, so no gap is detected, no reset emitted, no dead-letter and no command. Deliberate for the resync bootstrap (see [[project_type_validator]]) but it is a real blind window, and intermittent exactly as a user would describe it. Not fixed — needs a decision on whether the first post-resync update should be range-checked
+- [x] ~~A gap on the FIRST update after a REST snapshot is silently swallowed (ex1/ex2)~~ — **MOOT 2026-09-02**. ex1/ex2 no longer send an `update` type at all (their WS pushes are snapshots — see [[project_pair_extractor]]), so the `baselinePending` branch this item was about is never reached by either exchange any more. The underlying "first update after a resync isn't contiguity-checked" question is still real for exchanges that DO use this bootstrap (ex6), but nobody had opened a todo item for it under that name — worth a fresh item if it matters there
 - [ ] **Job 2 trusts `sequence_jump` blindly** — `seq == last + jump` with `jump == 0` means `seq == last`, which also satisfies `seq <= last`; the first branch wins so a DUPLICATE is accepted as valid, and the genuine next update falls into the GAP branch. Nothing validates `jump >= 1` for an update. Depends entirely on the parsers ([[project_pair_extractor]]) stamping it right
 - [x] ~~`no_baseline` requests a snapshot but never sets `awaitingSnapshot`~~ — **resolved by the state collapse (2026-08-22)**. There is one flag now, and the two conditions are told apart by `lastSeq == null`, which is what chose the reject reason all along. This asymmetry was the thing that made the deadlock hard to reason about, so it is worth noting it was a design smell that predicted a real bug
 - [ ] `scripts/diagnose-stuck-markets.sh` (2026-08-19) reads `control-plane` and every `-rejected-flink` topic together and flags markets whose last rejection is `awaiting_snapshot`/`no_baseline` — the deadlock fingerprint. **Syntax-checked only, never executed** (docker was down); run it against the live stack to confirm whether any market is still wedged from before the fix
@@ -609,3 +609,36 @@ User's call: put production in its own file and give the developers theirs back.
       (`is_control_batch` is defined and referenced nowhere). A conformant client returns nothing for
       its `seek(end - 1)` and every Flink topic goes silently unmeasured. See
       [[project_flink_production]]
+- [x] **ex1/ex2 REVISED AGAIN 2026-09-02 — WS pushes are full snapshots, not deltas** (user
+      request, on fresh live captures `nobitex-snapshots.txt`/`bitpin-snapshots.txt`). Reverses the
+      2026-07-21/07-25 "WS = delta" classification: consecutive WS pushes carry the FULL book each
+      time, and a level absent from a later push with no `qty=0` entry marking it proves it cannot
+      be a delta feed. Confirmed with the user via two clarifying questions (treat WS as
+      `type=snapshot` matching ex4/ex5's ordered-but-never-jump-checked shape; trust the new
+      captures over the July finding) before touching any code. Fix confined to
+      `NobitexParser`/`BitpinParser` (`type` "update"→"snapshot", `sequence_jump` 1→0, kept
+      `sequence_id=pub.offset`) — **job 2 and job 5 needed ZERO code changes**, since both were
+      already exchange-agnostic and already supported a sequenced-but-unchecked snapshot (ex4/ex5's
+      shape). `baselinePending` now dead for ex1/ex2 (joins ex3/ex9); the control plane can no
+      longer engage for either exchange (`no_baseline`/`sequence_gap` live only in job 2's `update`
+      branch). Touched: both parsers + their unit tests + javadoc, `TypeValidateFunction`'s class
+      javadoc (removed ex1/ex2 from "delta feeds", relabeled the null-seq-REST-resync example from
+      ex1 to ex6), `TypeValidateFunctionTest` (relabeled the same block from "ex1 nobitex" to "ex6"
+      — logic unchanged, ex6's REST snapshot is the current live example of that shape),
+      `e2e/scenario/data_ex1.go`/`data_ex2.go` (3 of 6/8 scenarios renamed for a changed premise,
+      every WS-driven `WantSnapshots` entry recomputed for clear-then-replace instead of merge,
+      `PrecisionDust`/`RebaseToman`/`RebaseScaledUnit` each lost a previously-resting level from
+      their post-WS expectation as a worked example of the bug), `scenarios.go` (renamed 01–14, did
+      NOT renumber), `data_control.go` (`ControlEx1NoBaselineThenGap`/`ControlEx1LaggingRestResync`
+      DELETED — their premise is now unreachable; 45/47 retired, not reused), `sample-raw-data.md`
+      §§ ex1/ex2, and memory (`project_pair_extractor`, `project_type_validator`,
+      `project_raw_pipeline_decision`, `project_e2e_harness`, `project_control_plane`, `MEMORY.md`).
+      **Verified**: 189 Java tests green across `common`+`job-pair-extractor`+`job-type-validator`,
+      `job-book-builder`'s 28 tests green untouched (confirms it needed no change), `go build`/
+      `go vet` clean on `e2e/`. **Not run live** — no docker stack available this session, and no
+      CI exists in this repo to run instead. **Disclosed, not silently dropped**: e2e-level coverage
+      of the null-seq/event-time resync-accepted path (previously `ControlEx1LaggingRestResync`)
+      has no replacement this session — only the unit-level `TypeValidateFunctionTest` case covers
+      it now; recreating it needs ex6's real REST wire shape built out as a new scenario. See
+      [[project_pair_extractor]], [[project_type_validator]], [[project_e2e_harness]],
+      [[project_control_plane]]

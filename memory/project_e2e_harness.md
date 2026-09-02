@@ -348,9 +348,11 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   ex4 is the last member.
 - **ex5 scenarios rewritten + the whole list RENUMBERED 2026-08-22, then AGAIN 2026-08-23** — the
   ex5 block grew 5 → 6 → 7, so everything after it has now shifted by two from its 2026-08-22
-  numbering. **Current state: bybit 32–37, okx 38–43, control plane 44–47** (the deadlock pair that
-  memory once called "44/45", then "45/46", is now **46/47** — stop quoting numbers for it and grep
-  `ControlEx6StaleResyncAccepted` / `ControlEx1LaggingRestResync` instead). The ex5 seven are
+  numbering. **Current state: bybit 32–37, okx 38–43, control plane 44 and 46** (the deadlock pair
+  that memory once called "44/45", then "45/46", then "46/47", was `ControlEx6StaleResyncAccepted`
+  / `ControlEx1LaggingRestResync` at 46/47 — **`ControlEx1LaggingRestResync` (47) and
+  `ControlEx1NoBaselineThenGap` (45) were REMOVED 2026-09-02**, see the dated section near the end
+  of this file; 45 and 47 are retired numbers, not reused). The ex5 seven are
   `25-snapshot-then-updates`, `26-update-before-snapshot`, `27-jump-tolerance`,
   `28-multi-book-frame`, `29-noise-frames`, `30-precision-dust`, `31-rest-snapshot-resync`. Two
   were new capabilities ex5 could not have as a snapshot-only feed: it has a cold start
@@ -591,8 +593,10 @@ UPDATE (`"b": []`, the shape the live capture actually sends). `Ex6OneSidedDelta
 snapshots.
 
 Unlike ex5's REST scenario, the REST `cts` here is deliberately kept moving FORWARD (08:00:03,
-after the gap at 08:00:02) rather than lagging. The lagging-resync path is already covered by
-`47-control-ex1-lagging-rest-resync`, and on ex6 the novel hazard is the counter, not the clock.
+after the gap at 08:00:02) rather than lagging. The lagging-resync path used to be covered by
+`47-control-ex1-lagging-rest-resync`, **removed 2026-09-02** (see the dated section near the end
+of this file) — on ex6 the novel hazard is the counter, not the clock, so this scenario was never
+the lagging-clock case anyway.
 
 ⚠ **NOT run live.** `go build ./...`, `go vet` and `gofmt` are clean, but the harness needs the
 docker compose stack (and does a destructive `down -v`), which was not up. So this scenario is
@@ -754,3 +758,37 @@ JDK installed is 26, jacoco 0.8.12 cannot instrument class-file major version 70
 surefire fork dies. **The harness itself is unaffected** — `flink.build` runs
 `mvn clean package -q -DskipTests`, so jacoco never instruments anything. This is a LOCAL
 toolchain problem, not a repo one — do not "fix" it by editing the pom.
+
+## 2026-09-02 — ex1/ex2 scenarios rewritten (WS pushes are snapshots, not deltas) and two
+## control-plane scenarios removed
+
+See [[project_pair_extractor]]'s dated 2026-09-02 section for the full "why" — nobitex/bitpin WS
+pushes turned out to be full snapshots, not deltas, reversing the 2026-07-21/07-25 classification.
+Effects on this harness:
+
+- **`data_ex1.go`/`data_ex2.go` renamed 3 of their 6/8 scenarios and recomputed every WS-driven
+  `WantSnapshots` entry** (job 5's snapshot branch clears a side before applying an event's own
+  levels, so a WS push now REPLACES the book instead of merging into it): `Ex{1,2}RestThenWsResync`
+  → `Ex{1,2}WsSnapshotsReplaceWholesale`, `Ex{1,2}UpdateBeforeSnapshot` →
+  `Ex{1,2}WsSnapshotAloneEstablishesBaseline`, `Ex{1,2}SequenceGap` →
+  `Ex{1,2}WsGapAcceptedStaleRejected`. The other three/five (`NoiseFrames`, `StaleRestReplay`,
+  `PrecisionDust`, ex1's two `Rebase*`) kept their names; only their post-WS-event expected book
+  state changed. Source JSON payloads were left untouched — a small 2–3-level WS fixture is still
+  a valid (if sparse) snapshot, so only the expected OUTPUTS needed recomputing, not the wire
+  inputs. `scenarios.go` entries 01–14 renamed to match; numbers NOT shifted.
+- **`ControlEx1NoBaselineThenGap` (45) and `ControlEx1LaggingRestResync` (47) were DELETED**, not
+  rewritten — both asserted a `no_baseline`/`sequence_gap` episode reached via a WS "update" on
+  ex1, which is now permanently unreachable (ex1 sends no `update` type at all any more). Numbers
+  45/47 are retired, not reused — `scenarios.go` carries a comment explaining why, per the standing
+  "grep identifiers, not numbers" rule this file has stated since the ex5 renumbering. The generic
+  episode/resync-clears-the-flag machinery they exercised remains covered by the surviving
+  ex6-flavored pair (44, 46) and, at the unit level, by `TypeValidateFunctionTest`'s cases
+  (relabeled from "ex1 nobitex" to "ex6" — see [[project_type_validator]]). This is a real, disclosed
+  reduction in e2e-level coverage of the null-seq/event-time ordering guard specifically (46 covers
+  the sequenced guard; nothing at e2e level currently covers the event-time guard's resync-accepted
+  path — only the unit harness does) — recreating it would need ex6's real REST wire shape
+  (`result` envelope, see `data_ex6.go`) built out as a new scenario, not attempted this session.
+- **Verification**: `go build ./...` and `go vet ./...` clean on `e2e/`. **Not run live** — no
+  docker stack available this session, so (as with several blocks above) the exact recomputed
+  book states are reasoned from `BookBuildFunction`'s documented clear-then-apply semantics and
+  spot-checked against `job-book-builder`'s own 28 green unit tests, not observed end to end.

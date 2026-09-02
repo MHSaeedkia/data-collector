@@ -1,12 +1,20 @@
-// Scenarios for ex1/nobitex — a REST snapshot with no offset plus Centrifugo WS deltas.
+// Scenarios for ex1/nobitex — a REST snapshot with no offset plus Centrifugo WS pushes that are
+// themselves full snapshots (REVISED 2026-09-02 — see NobitexParser's javadoc; WS pushes were
+// wrongly treated as deltas before this).
 // The conventions these follow are in data.go.
 
 package scenario
 
 import "orderbook-e2e/events"
 
-// Ex1RestThenWsResync — a null-sequence REST snapshot arms a resync and the next WS update adopts its offset unconditionally.
-var Ex1RestThenWsResync = Scenario{
+// Ex1WsSnapshotsReplaceWholesale — REVISED 2026-09-02: WS pushes are full snapshots, not deltas
+// (see NobitexParser's javadoc). Each WS push REPLACES the book wholesale — it does not merge into
+// whatever REST or an earlier WS push left resting — and job 2 never checks the gap between WS
+// offsets (only the seq<=last stale check applies), so 05's jump from offset 1001 to 9000 is
+// silently accepted rather than treated as a hole. This scenario used to be named
+// Ex1RestThenWsResync and tested the opposite (delta) assumption's REST-resync bootstrap, which no
+// longer applies here — WS never needs a baseline from REST because each push carries its own.
+var Ex1WsSnapshotsReplaceWholesale = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
@@ -34,7 +42,7 @@ var Ex1RestThenWsResync = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 02 ws update
+		// 02 ws snapshot
 		`{
 	"id": "c37bfc4a-1c2b-402f-8cfe-503c45884d8b",
 	"simulation": 1,
@@ -58,7 +66,7 @@ var Ex1RestThenWsResync = Scenario{
 		}
 	}
 }`,
-		// 03 ws update
+		// 03 ws snapshot
 		`{
 	"id": "2bd58608-6a1b-47a2-aa5d-70b9de6afcb1",
 	"simulation": 1,
@@ -103,7 +111,7 @@ var Ex1RestThenWsResync = Scenario{
 		["62860", "0.40000000"]
 	]
 }`,
-		// 05 ws update
+		// 05 ws snapshot
 		`{
 	"id": "97e7d6c4-bb06-4309-9986-7d5718a52c3d",
 	"simulation": 1,
@@ -126,7 +134,7 @@ var Ex1RestThenWsResync = Scenario{
 		}
 	}
 }`,
-		// 06 ws update
+		// 06 ws snapshot
 		`{
 	"id": "1ca3217f-7f2a-45d3-ad98-e75f9021bfdb",
 	"simulation": 1,
@@ -171,45 +179,29 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 02 ws update
+		{ // after 02 ws snapshot — REPLACES the REST book wholesale; only 02's own levels survive
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
 				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
 				{Price: "62670", Quantity: "0.4"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
 				{Price: "62638", Quantity: "1.1"},
 			},
 		},
-		{ // after 03 ws update
+		{ // after 03 ws snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-				{Price: "62670", Quantity: "0.4"},
 				{Price: "62680", Quantity: "0.75"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
 				{Price: "62635", Quantity: "2"},
 			},
 		},
@@ -231,68 +223,52 @@ var Ex1RestThenWsResync = Scenario{
 				{Price: "62840", Quantity: "1.2"},
 			},
 		},
-		{ // after 05 ws update
+		{ // after 05 ws snapshot — offset jumps 1001->9000; no gap check on a snapshot, so it's just accepted
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62850", Quantity: "1.8"},
-				{Price: "62855", Quantity: "0.7"},
-				{Price: "62860", Quantity: "0.4"},
 				{Price: "62870", Quantity: "0.55"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62849", Quantity: "0.95"},
-				{Price: "62848", Quantity: "0.11"},
-				{Price: "62845", Quantity: "0.9"},
-				{Price: "62840", Quantity: "1.2"},
 				{Price: "62830", Quantity: "1.4"},
 			},
 		},
-		{ // after 06 ws update
+		{ // after 06 ws snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62850", Quantity: "1.8"},
-				{Price: "62855", Quantity: "0.7"},
-				{Price: "62860", Quantity: "0.4"},
 				{Price: "62880", Quantity: "0.3"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62849", Quantity: "0.95"},
-				{Price: "62848", Quantity: "0.11"},
-				{Price: "62845", Quantity: "0.9"},
-				{Price: "62840", Quantity: "1.2"},
 				{Price: "62825", Quantity: "1.1"},
 			},
 		},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62850", Quantity: "1.8"},
-			{ExchangeID: 1, Simulation: 1, Price: "62855", Quantity: "0.7"},
-			{ExchangeID: 1, Simulation: 1, Price: "62860", Quantity: "0.4"},
 			{ExchangeID: 1, Simulation: 1, Price: "62880", Quantity: "0.3"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62849", Quantity: "0.95"},
-			{ExchangeID: 1, Simulation: 1, Price: "62848", Quantity: "0.11"},
-			{ExchangeID: 1, Simulation: 1, Price: "62845", Quantity: "0.9"},
-			{ExchangeID: 1, Simulation: 1, Price: "62840", Quantity: "1.2"},
 			{ExchangeID: 1, Simulation: 1, Price: "62825", Quantity: "1.1"},
 		},
 	},
 }
 
-// Ex1UpdateBeforeSnapshot — a WS delta before any REST snapshot has no baseline to apply to.
-var Ex1UpdateBeforeSnapshot = Scenario{
+// Ex1WsSnapshotAloneEstablishesBaseline — REVISED 2026-09-02: a WS push is a full snapshot, so
+// unlike a true delta feed it needs no prior baseline from REST — the first-ever event on a key is
+// simply accepted as the book. Used to be named Ex1UpdateBeforeSnapshot and asserted the opposite:
+// a no_baseline rejection that no longer happens because there is no "update" type on this exchange
+// any more.
+var Ex1WsSnapshotAloneEstablishesBaseline = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
-		// 01 ws update no baseline
+		// 01 ws snapshot no baseline
 		`{
 	"id": "41d21fe3-dbd2-4516-b6fe-7b7fe0888c13",
 	"simulation": 1,
@@ -338,7 +314,7 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 03 ws update
+		// 03 ws snapshot
 		`{
 	"id": "10fc304a-a135-4f0b-b783-2a92552e6e32",
 	"simulation": 1,
@@ -364,7 +340,20 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 02 rest snapshot
+		{ // after 01 ws snapshot — accepted immediately, no baseline needed
+			ExchangeID: 1,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62651", Quantity: "0.29045069"},
+				{Price: "62670", Quantity: "0.4"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62649", Quantity: "0.55175335"},
+			},
+		},
+		{ // after 02 rest snapshot — replaces wholesale, as always
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
@@ -384,55 +373,42 @@ var Ex1UpdateBeforeSnapshot = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03 ws update
+		{ // after 03 ws snapshot — replaces the REST book wholesale in turn
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
 				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
 				{Price: "62670", Quantity: "0.4"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
 				{Price: "62638", Quantity: "1.1"},
 			},
 		},
 	},
-	WantRejects: []string{"no_baseline"},
-	// The cold delta is also what makes job 2 ask NiFi for a snapshot: it has no
-	// baseline, and only a snapshot can give it one.
-	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", Reason: "no_baseline", ExchangeID: 1, PairID: 1, Simulation: 1},
-	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62650", Quantity: "2.21924167"},
 			{ExchangeID: 1, Simulation: 1, Price: "62651", Quantity: "0.29045069"},
-			{ExchangeID: 1, Simulation: 1, Price: "62655", Quantity: "1.05"},
-			{ExchangeID: 1, Simulation: 1, Price: "62660", Quantity: "0.33476925"},
 			{ExchangeID: 1, Simulation: 1, Price: "62670", Quantity: "0.4"},
 		},
 		Bids: []events.AggregatedLevel{
 			{ExchangeID: 1, Simulation: 1, Price: "62649", Quantity: "0.55175335"},
-			{ExchangeID: 1, Simulation: 1, Price: "62648", Quantity: "0.02744953"},
-			{ExchangeID: 1, Simulation: 1, Price: "62647", Quantity: "0.20630833"},
-			{ExchangeID: 1, Simulation: 1, Price: "62645", Quantity: "0.9"},
-			{ExchangeID: 1, Simulation: 1, Price: "62640", Quantity: "1.31062803"},
 			{ExchangeID: 1, Simulation: 1, Price: "62638", Quantity: "1.1"},
 		},
 	},
 }
 
-// Ex1SequenceGap — Centrifugo offsets step by exactly one, so any skip is a gap; only a REST snapshot can re-arm.
-var Ex1SequenceGap = Scenario{
+// Ex1WsGapAcceptedStaleRejected — REVISED 2026-09-02: a WS push is a snapshot, so job 2 never
+// jump-checks it — 04's offset skip (1001 -> 1005, expected 1002) is silently ACCEPTED, unlike a
+// true delta feed where it would gap. The one ordering guard that DOES still apply to a sequenced
+// snapshot is seq<=last: 05 arrives with offset 1002, which is now behind the already-accepted
+// 1005, so it is rejected stale_or_duplicate and the book is untouched by it. No reset, no
+// snapshot_request — the control plane is never engaged, because that machinery lives entirely in
+// job 2's "update" branch and this exchange no longer sends that type. Used to be named
+// Ex1SequenceGap and asserted a sequence_gap/reset/resync episode that can no longer occur here.
+var Ex1WsGapAcceptedStaleRejected = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
 	Sources: []string{
@@ -460,7 +436,7 @@ var Ex1SequenceGap = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 02 ws update
+		// 02 ws snapshot
 		`{
 	"id": "8fc6cd1d-252d-49aa-ba8a-0d8cd3e611b3",
 	"simulation": 1,
@@ -482,7 +458,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 03 ws update ok
+		// 03 ws snapshot ok
 		`{
 	"id": "8e59c061-4a89-47ef-898d-e1dcb1d3481a",
 	"simulation": 1,
@@ -503,7 +479,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 04 ws update gap
+		// 04 ws snapshot gap
 		`{
 	"id": "4cd041a7-1125-4734-b7f7-fec7869897c0",
 	"simulation": 1,
@@ -524,7 +500,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 05 ws update awaiting
+		// 05 ws snapshot awaiting
 		`{
 	"id": "12840d39-d731-48e7-83c3-acae33029ffe",
 	"simulation": 1,
@@ -567,7 +543,7 @@ var Ex1SequenceGap = Scenario{
 		["63060", "0.40000000"]
 	]
 }`,
-		// 07 ws update
+		// 07 ws snapshot
 		`{
 	"id": "48172937-bec2-42c6-8026-52b4770dbd79",
 	"simulation": 1,
@@ -590,7 +566,7 @@ var Ex1SequenceGap = Scenario{
 		}
 	}
 }`,
-		// 08 ws update ok
+		// 08 ws snapshot ok
 		`{
 	"id": "9e0a8ea9-222b-4b28-87ac-f343c06fe7d6",
 	"simulation": 1,
@@ -635,58 +611,45 @@ var Ex1SequenceGap = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 02 ws update
+		{ // after 02 ws snapshot — replaces wholesale
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
 				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62652", Quantity: "0.19067482"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
 				{Price: "62670", Quantity: "0.4"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03 ws update ok
+		{ // after 03 ws snapshot ok
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62652", Quantity: "0.19067482"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-				{Price: "62670", Quantity: "0.4"},
 				{Price: "62680", Quantity: "0.75"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
 				{Price: "62635", Quantity: "2"},
 			},
 		},
-		{ // after 04 ws update gap (reset)
+		{ // after 04 ws snapshot — offset skips 1001->1005; accepted, no gap check on a snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
-			Asks:       []events.PriceLevel{},
-			Bids:       []events.PriceLevel{},
+			Asks: []events.PriceLevel{
+				{Price: "62690", Quantity: "9.999"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62630", Quantity: "9.999"},
+			},
 		},
+		// 05 (offset 1002) is REJECTED stale_or_duplicate — 1002 <= the already-accepted 1005 —
+		// so it produces no book output; the state from 04 stands until 06.
 		{ // after 06 rest snapshot resync
 			ExchangeID: 1,
 			PairID:     1,
@@ -705,69 +668,45 @@ var Ex1SequenceGap = Scenario{
 				{Price: "63040", Quantity: "1.2"},
 			},
 		},
-		{ // after 07 ws update
+		{ // after 07 ws snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "63050", Quantity: "1.8"},
-				{Price: "63055", Quantity: "0.7"},
-				{Price: "63060", Quantity: "0.4"},
 				{Price: "63070", Quantity: "0.55"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "63049", Quantity: "0.95"},
-				{Price: "63048", Quantity: "0.11"},
-				{Price: "63045", Quantity: "0.9"},
-				{Price: "63040", Quantity: "1.2"},
 				{Price: "63030", Quantity: "1.4"},
 			},
 		},
-		{ // after 08 ws update ok
+		{ // after 08 ws snapshot ok
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "63050", Quantity: "1.8"},
-				{Price: "63055", Quantity: "0.7"},
-				{Price: "63060", Quantity: "0.4"},
 				{Price: "63080", Quantity: "0.3"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "63049", Quantity: "0.95"},
-				{Price: "63048", Quantity: "0.11"},
-				{Price: "63045", Quantity: "0.9"},
-				{Price: "63040", Quantity: "1.2"},
 				{Price: "63025", Quantity: "1.1"},
 			},
 		},
 	},
-	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
-	// One command for the episode, not one per rejected event: the second update
-	// rejects on the same unresolved gap, and job 2 does not re-ask.
-	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
-	},
+	WantRejects: []string{"stale_or_duplicate"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "63050", Quantity: "1.8"},
-			{ExchangeID: 1, Simulation: 1, Price: "63055", Quantity: "0.7"},
-			{ExchangeID: 1, Simulation: 1, Price: "63060", Quantity: "0.4"},
 			{ExchangeID: 1, Simulation: 1, Price: "63080", Quantity: "0.3"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "63049", Quantity: "0.95"},
-			{ExchangeID: 1, Simulation: 1, Price: "63048", Quantity: "0.11"},
-			{ExchangeID: 1, Simulation: 1, Price: "63045", Quantity: "0.9"},
-			{ExchangeID: 1, Simulation: 1, Price: "63040", Quantity: "1.2"},
 			{ExchangeID: 1, Simulation: 1, Price: "63025", Quantity: "1.1"},
 		},
 	},
 }
 
-// Ex1NoiseFrames — Centrifugo noise is dropped without consuming an offset or arming a resync.
+// Ex1NoiseFrames — Centrifugo noise is dropped without consuming an offset; WS frames are
+// snapshots (2026-09-02), so 05/06 each replace the book wholesale rather than merging.
 var Ex1NoiseFrames = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
@@ -834,7 +773,7 @@ var Ex1NoiseFrames = Scenario{
 		}
 	}
 }`,
-		// 05 ws update
+		// 05 ws snapshot
 		`{
 	"id": "10c02102-cc81-4d00-be4d-65a8862a48ad",
 	"simulation": 1,
@@ -857,7 +796,7 @@ var Ex1NoiseFrames = Scenario{
 		}
 	}
 }`,
-		// 06 ws update
+		// 06 ws snapshot
 		`{
 	"id": "a357fea8-e985-4b91-b41b-cafa9f5db80e",
 	"simulation": 1,
@@ -900,63 +839,44 @@ var Ex1NoiseFrames = Scenario{
 				{Price: "62940", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 05 ws update
+		{ // after 05 ws snapshot — replaces the REST book wholesale
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62950", Quantity: "2.21924167"},
-				{Price: "62955", Quantity: "1.05"},
-				{Price: "62960", Quantity: "0.33476925"},
 				{Price: "62970", Quantity: "0.4"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62949", Quantity: "0.65"},
-				{Price: "62948", Quantity: "0.02744953"},
-				{Price: "62945", Quantity: "0.9"},
-				{Price: "62940", Quantity: "1.31062803"},
 				{Price: "62938", Quantity: "1.1"},
 			},
 		},
-		{ // after 06 ws update
+		{ // after 06 ws snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62950", Quantity: "2.21924167"},
-				{Price: "62955", Quantity: "1.05"},
-				{Price: "62960", Quantity: "0.33476925"},
 				{Price: "62980", Quantity: "0.3"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62949", Quantity: "0.65"},
-				{Price: "62948", Quantity: "0.02744953"},
-				{Price: "62945", Quantity: "0.9"},
-				{Price: "62940", Quantity: "1.31062803"},
 				{Price: "62935", Quantity: "1.1"},
 			},
 		},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62950", Quantity: "2.21924167"},
-			{ExchangeID: 1, Simulation: 1, Price: "62955", Quantity: "1.05"},
-			{ExchangeID: 1, Simulation: 1, Price: "62960", Quantity: "0.33476925"},
 			{ExchangeID: 1, Simulation: 1, Price: "62980", Quantity: "0.3"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62949", Quantity: "0.65"},
-			{ExchangeID: 1, Simulation: 1, Price: "62948", Quantity: "0.02744953"},
-			{ExchangeID: 1, Simulation: 1, Price: "62945", Quantity: "0.9"},
-			{ExchangeID: 1, Simulation: 1, Price: "62940", Quantity: "1.31062803"},
 			{ExchangeID: 1, Simulation: 1, Price: "62935", Quantity: "1.1"},
 		},
 	},
 }
 
-// Ex1StaleRestReplay — a REST snapshot carries no offset, so a replayed old one is caught by event time alone.
+// Ex1StaleRestReplay — a REST snapshot carries no offset, so a replayed old one is caught by event
+// time alone; WS frames (02, 03, 05) are snapshots (2026-09-02) that replace the book wholesale.
 var Ex1StaleRestReplay = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
@@ -981,7 +901,7 @@ var Ex1StaleRestReplay = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 02 ws update
+		// 02 ws snapshot
 		`{
 	"id": "510f6ac4-797c-495b-a883-86b1fa0b978a",
 	"simulation": 1,
@@ -1003,7 +923,7 @@ var Ex1StaleRestReplay = Scenario{
 		}
 	}
 }`,
-		// 03 ws update loud
+		// 03 ws snapshot loud
 		`{
 	"id": "6305c64d-4919-4539-b6de-3028dc727b1a",
 	"simulation": 1,
@@ -1044,7 +964,7 @@ var Ex1StaleRestReplay = Scenario{
 		["62660", "0.33476925"]
 	]
 }`,
-		// 05 ws update
+		// 05 ws snapshot
 		`{
 	"id": "b0e39084-ed3d-40ad-a2d0-d83e8162ecf9",
 	"simulation": 1,
@@ -1083,76 +1003,51 @@ var Ex1StaleRestReplay = Scenario{
 				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 02 ws update
+		{ // after 02 ws snapshot — replaces the REST book wholesale
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
 				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62660", Quantity: "0.33476925"},
 				{Price: "62670", Quantity: "0.4"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
 			},
 		},
-		{ // after 03 ws update loud
+		{ // after 03 ws snapshot loud
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62660", Quantity: "0.33476925"},
-				{Price: "62670", Quantity: "0.4"},
 				{Price: "62680", Quantity: "0.75"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
 				{Price: "60000", Quantity: "5"},
 			},
 		},
-		{ // after 05 ws update
+		{ // after 05 ws snapshot
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
 				{Price: "62651", Quantity: "0.1"},
-				{Price: "62660", Quantity: "0.33476925"},
-				{Price: "62670", Quantity: "0.4"},
-				{Price: "62680", Quantity: "0.75"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62649", Quantity: "0.6"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
-				{Price: "60000", Quantity: "5"},
 			},
 		},
 	},
 	WantRejects: []string{"out_of_order"},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62650", Quantity: "2.21924167"},
 			{ExchangeID: 1, Simulation: 1, Price: "62651", Quantity: "0.1"},
-			{ExchangeID: 1, Simulation: 1, Price: "62660", Quantity: "0.33476925"},
-			{ExchangeID: 1, Simulation: 1, Price: "62670", Quantity: "0.4"},
-			{ExchangeID: 1, Simulation: 1, Price: "62680", Quantity: "0.75"},
 		},
 		Bids: []events.AggregatedLevel{
 			{ExchangeID: 1, Simulation: 1, Price: "62649", Quantity: "0.6"},
-			{ExchangeID: 1, Simulation: 1, Price: "62648", Quantity: "0.02744953"},
-			{ExchangeID: 1, Simulation: 1, Price: "62640", Quantity: "1.31062803"},
-			{ExchangeID: 1, Simulation: 1, Price: "60000", Quantity: "5"},
 		},
 	},
 }
@@ -1160,7 +1055,9 @@ var Ex1StaleRestReplay = Scenario{
 // Ex1PrecisionDust — job 4 on a nobitex feed: prices that collide once truncated to the market's
 // 2 places merge into one level with their quantities summed, and a quantity below the market's 8
 // places truncates to zero, which job 5 reads as a delete. Pair 1 rebases by 10^0, so the numbers
-// that move here moved in job 4 and nowhere else.
+// that move here moved in job 4 and nowhere else. WS frames are snapshots (2026-09-02): 02 REPLACES
+// the REST book wholesale, so the 62649.5 bid that 02's payload never re-sends is GONE, not merely
+// left untouched — the same silent-loss shape the real capture that prompted this fix showed.
 var Ex1PrecisionDust = Scenario{
 	ExchangeID: 1,
 	PairID:     1,
@@ -1184,7 +1081,7 @@ var Ex1PrecisionDust = Scenario{
 		["62652", "0.000000005"]
 	]
 }`,
-		// 02 ws update
+		// 02 ws snapshot
 		`{
 	"id": "41ed1b1e-dfff-4ad2-89fa-6d0d41b449e0",
 	"simulation": 1,
@@ -1222,7 +1119,8 @@ var Ex1PrecisionDust = Scenario{
 				{Price: "62649.5", Quantity: "1"},
 			},
 		},
-		{ // after 02 ws update — dust deleted the 62651 ask that was already resting there
+		{ // after 02 ws snapshot — REPLACES the side wholesale: the dust delete at 62651 is a
+		  // no-op on the freshly-cleared side, and 62649.5 (not resent) is simply gone
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
@@ -1232,7 +1130,6 @@ var Ex1PrecisionDust = Scenario{
 			},
 			Bids: []events.PriceLevel{
 				{Price: "62650.12", Quantity: "0.3"},
-				{Price: "62649.5", Quantity: "1"},
 			},
 		},
 	},
@@ -1240,7 +1137,6 @@ var Ex1PrecisionDust = Scenario{
 		Asks: []events.AggregatedLevel{{ExchangeID: 1, Simulation: 1, Price: "62653.99", Quantity: "0.75"}},
 		Bids: []events.AggregatedLevel{
 			{ExchangeID: 1, Simulation: 1, Price: "62650.12", Quantity: "0.3"},
-			{ExchangeID: 1, Simulation: 1, Price: "62649.5", Quantity: "1"},
 		},
 	},
 }
@@ -1249,7 +1145,9 @@ var Ex1PrecisionDust = Scenario{
 // stores tomans, so `exchange_markets(1,'1K_SHIBIRT')` carries price_amount_rebase -1 and the
 // price is shifted one place down before anything else sees it. Volume is untouched (rebase 0).
 // The prices are chosen so the shift lands a third decimal on the market's 2 places, which
-// job 4 then truncates DOWN — proving rebase runs first and truncation second.
+// job 4 then truncates DOWN — proving rebase runs first and truncation second. The WS frame is a
+// snapshot (2026-09-02): it REPLACES the book wholesale, so 852.34 (bid) and 854.1 (ask) — not
+// resent by 02's payload — are gone from the result, not merely left untouched.
 var Ex1RebaseToman = Scenario{
 	ExchangeID: 1,
 	PairID:     52,
@@ -1273,7 +1171,7 @@ var Ex1RebaseToman = Scenario{
 		["8541", "800.00000000"]
 	]
 }`,
-		// 02 ws update
+		// 02 ws snapshot
 		`{
 	"id": "327631c0-1f27-4ca6-a5f0-ac1d5fbdb952",
 	"simulation": 1,
@@ -1312,31 +1210,26 @@ var Ex1RebaseToman = Scenario{
 				{Price: "851.09", Quantity: "3000"},
 			},
 		},
-		{ // after 02 ws update — the delete is matched on the rebased price, not the wire one
+		{ // after 02 ws snapshot — REPLACES wholesale; the delete (matched on the rebased price)
+		  // is a no-op on the freshly-cleared side, and levels not resent are simply gone
 			ExchangeID: 1,
 			PairID:     52,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
 				{Price: "853.59", Quantity: "500"},
-				{Price: "854.1", Quantity: "800"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "852.34", Quantity: "1500"},
 				{Price: "852", Quantity: "2500"},
-				{Price: "851.09", Quantity: "3000"},
 			},
 		},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
 			{ExchangeID: 1, Simulation: 1, Price: "853.59", Quantity: "500"},
-			{ExchangeID: 1, Simulation: 1, Price: "854.1", Quantity: "800"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "852.34", Quantity: "1500"},
 			{ExchangeID: 1, Simulation: 1, Price: "852", Quantity: "2500"},
-			{ExchangeID: 1, Simulation: 1, Price: "851.09", Quantity: "3000"},
 		},
 	},
 }
@@ -1349,7 +1242,8 @@ var Ex1RebaseToman = Scenario{
 //
 // The last ask of 01 is the ordering proof: 10^-17 of a 1M unit is 10^-11 whole PEPE, which
 // survives the +6 rebase and only then dies at the market's 10 places. Rebase first, truncate
-// second — the other order would have kept it.
+// second — the other order would have kept it. The WS frame is a snapshot (2026-09-02): it
+// REPLACES the book wholesale, so 01's other levels — not resent by 02's payload — are gone.
 var Ex1RebaseScaledUnit = Scenario{
 	ExchangeID: 1,
 	PairID:     17,
@@ -1373,7 +1267,7 @@ var Ex1RebaseScaledUnit = Scenario{
 		["12.6", "0.00000000000000001"]
 	]
 }`,
-		// 02 ws update
+		// 02 ws snapshot
 		`{
 	"id": "b2e3a6b2-6b0a-4e0d-b8ad-7b8d9d6b162e",
 	"simulation": 1,
@@ -1411,29 +1305,25 @@ var Ex1RebaseScaledUnit = Scenario{
 				{Price: "0.0000123", Quantity: "1500000"},
 			},
 		},
-		{ // after 02 ws update
+		{ // after 02 ws snapshot — REPLACES wholesale; 01's levels not resent here are gone
 			ExchangeID: 1,
 			PairID:     17,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "0.0000124567", Quantity: "1000"},
 				{Price: "0.0000125", Quantity: "500000"},
 			},
 			Bids: []events.PriceLevel{
 				{Price: "0.0000123456", Quantity: "0.01"},
-				{Price: "0.0000123", Quantity: "1500000"},
 			},
 		},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "0.0000124567", Quantity: "1000"},
 			{ExchangeID: 1, Simulation: 1, Price: "0.0000125", Quantity: "500000"},
 		},
 		Bids: []events.AggregatedLevel{
 			{ExchangeID: 1, Simulation: 1, Price: "0.0000123456", Quantity: "0.01"},
-			{ExchangeID: 1, Simulation: 1, Price: "0.0000123", Quantity: "1500000"},
 		},
 	},
 }
