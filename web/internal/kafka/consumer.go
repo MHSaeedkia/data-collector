@@ -56,6 +56,11 @@ func newConsumer(broker, group, pattern string, offset kgo.Offset) (*Consumer, e
 		kgo.SeedBrokers(broker),
 		kgo.ConsumeRegex(),
 		kgo.ConsumeTopics(pattern),
+		// Every Flink sink feeding these topics writes transactionally
+		// (EXACTLY_ONCE) since checkpointing landed. franz-go defaults to
+		// read-uncommitted, which would render records from transactions
+		// that later abort.
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 		kgo.ConsumerGroup("orderbook-web-"+group+"-"+strconv.FormatInt(time.Now().UnixNano(), 10)),
 		kgo.ConsumeResetOffset(offset),
 	)

@@ -12,9 +12,13 @@
 #     underscores (host="172_20_0_3"), which changes on every recreate. Group
 #     and report on Prometheus's own `instance` label instead.
 #
-# The two checkpoint alerts from the original review
-# (numberOfFailedCheckpoints, lastCheckpointDuration) are deliberately absent:
-# they are parked with the checkpointing postponement.
+# The two checkpoint alerts from the original review were parked with the
+# checkpointing postponement. Checkpointing was UN-postponed on
+# `feat/checkpointing` (2026-08-31), so they are now in the flink-checkpoints
+# group below. ⚠ Their metric names are the ONLY ones in this file not taken
+# from a live scrape — the probe cluster predates checkpointing. Confirm with
+# `curl -s localhost:9249/metrics | grep -i checkpoint` on the first deploy; a
+# wrong name here is silent, exactly like FlinkKafkaSourceLag.
 #
 # No rules for kafka-exporter / redis-exporter / lpa-staleness-exporter. They
 # are scraped and queryable, but their thresholds were never part of this
@@ -108,9 +112,11 @@ groups:
                 summary: "Job {{ $labels.job_name }} restarted {{ $value }} times in an hour"
                 description: >-
                     Restarting rather than failing, so the job count alert stays
-                    clear and the data is stale anyway. With no checkpointing
-                    every restart re-reads from `latest` and re-baselines, so a
-                    loop here also means a resync loop against the exchanges.
+                    clear and the data is stale anyway. Since checkpointing
+                    landed a restart restores state instead of re-reading from
+                    `latest`, so this no longer implies a resync loop — but see
+                    FlinkCheckpointsFailing: a job that cannot checkpoint
+                    restarts from the last good one and can loop here forever.
 
           # backPressuredTimeMsPerSecond rather than the isBackPressured gauge:
           # the gauge is a 0/1 sample that a 15s scrape interval will mostly
@@ -146,6 +152,58 @@ groups:
                 severity: warning
             annotations:
                 summary: "{{ $labels.job_name }} is {{ $value }} records behind"
+
+    # Un-parked 2026-08-31 when checkpointing landed. These are not theoretical:
+    # the first live run of `feat/checkpointing` put all 6 normalizer jobs into a
+    # permanent RESTARTING loop because the checkpoint volume was root-owned, and
+    # nothing here would have said so — the job count stayed at 8 and the jobs
+    # stayed RUNNING. CheckpointingConfigurer now allows 3 consecutive failures
+    # before the job dies (Flink's default is 0), which buys time to act on these
+    # alerts but does not save a job whose checkpoints ALL fail — that still ends
+    # in the same loop, with M1's restart strategy retrying forever.
+    - name: flink-checkpoints
+      rules:
+          - alert: FlinkCheckpointsFailing
+            expr: increase(flink_jobmanager_job_numberOfFailedCheckpoints[15m]) > 0
+            for: 0m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Job {{ $labels.job_name }} failed a checkpoint in the last 15m"
+                description: >-
+                    Fires on the FIRST failure, while the job still has 2 of its 3
+                    tolerated failures left — critical because that budget is the only
+                    thing between here and a permanent restart loop, and because state
+                    is already not being persisted. Likely causes are ownership or
+                    space on the shared checkpoint volume, not the job.
+
+          # No checkpoint completing at all is a different failure from one failing:
+          # a stuck checkpoint (a task that will not acknowledge) increments nothing,
+          # so FlinkCheckpointsFailing above stays silent forever.
+          - alert: FlinkCheckpointsNotCompleting
+            expr: increase(flink_jobmanager_job_numberOfCompletedCheckpoints[30m]) == 0
+            for: 10m
+            labels:
+                severity: critical
+            annotations:
+                summary: "Job {{ $labels.job_name }} has completed no checkpoint in 30m"
+                description: >-
+                    The interval is 10s, so 30 minutes without one means checkpointing
+                    has stopped, not that it is slow. State survival is gone until this
+                    clears, even though the job still reports RUNNING.
+
+          # 120_000 is the configured checkpoint timeout; alert well before it, since
+          # a checkpoint that times out fails, and a failed checkpoint fails the job.
+          - alert: FlinkCheckpointDurationHigh
+            expr: flink_jobmanager_job_lastCheckpointDuration > 60000
+            for: 15m
+            labels:
+                severity: warning
+            annotations:
+                summary: "Job {{ $labels.job_name }} checkpoints take {{ $value }}ms"
+                description: >-
+                    Sustained above half the 120s timeout. Usually back-pressure or
+                    state growth; cross-check FlinkTaskBackPressured.
 
     - name: flink-jvm
       rules:

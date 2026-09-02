@@ -86,10 +86,11 @@ services:
                 jobmanager.rpc.address: jobmanager
 
                 # Explicit on purpose: Flink defaults restart-strategy.type to
-                # `disable` only because checkpointing is off, so today the first
-                # exception in any job kills it permanently. Backoff is longer
-                # than Flink's defaults because with no checkpoints every restart
-                # costs a full resync.
+                # `disable` when checkpointing is off. Checkpointing is now enabled
+                # per-job (CheckpointingConfigurer) and deliberately does NOT set its
+                # own restart strategy, so every job still inherits this one — infinite
+                # retries with backoff, rather than giving up after a bounded number
+                # of attempts.
                 restart-strategy.type: exponential-delay
                 restart-strategy.exponential-delay.initial-backoff: 10 s
                 restart-strategy.exponential-delay.max-backoff: 5 min
@@ -119,6 +120,17 @@ services:
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
+            # Jobs enable checkpointing themselves (CheckpointingConfigurer, default
+            # file:///opt/flink/checkpoints), and `filesystem` storage means the
+            # JobManager writes the metadata while the TaskManagers write the state
+            # files — so the directory has to be the SAME one in every container.
+            # Without this shared volume each container gets its own copy from the
+            # image and recovery reads an empty directory.
+            #
+            # ⚠ A local volume only shares across containers on ONE host. This is the
+            # same single-host limitation the HA store has; a real distributed FS is
+            # what both would need to survive losing the box.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             - data-collector-flink-ha:/opt/flink/ha
             - data-collector-flink-archive:/opt/flink/archive
         networks:
@@ -183,6 +195,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-1-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -254,6 +267,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-2-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -325,6 +339,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-3-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -396,6 +411,7 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-4-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -871,6 +887,7 @@ volumes:
     data-collector-taskmanager-3-logs:
     data-collector-taskmanager-4-logs:
     data-collector-flink-ha:
+    data-collector-flink-checkpoints:
     data-collector-flink-archive:
     data-collector-zk-data:
     data-collector-zk-datalog:
