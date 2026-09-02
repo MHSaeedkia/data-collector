@@ -24,6 +24,13 @@ services:
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
+            # Jobs enable checkpointing themselves (CheckpointingConfigurer, default
+            # file:///opt/flink/checkpoints), and `filesystem` storage means the
+            # JobManager writes the metadata while the TaskManagers write the state
+            # files — so the directory has to be the SAME one in every container.
+            # Without this shared volume each container gets its own copy from the
+            # image and recovery reads an empty directory.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         healthcheck:
@@ -46,11 +53,34 @@ services:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 8
+                # M2a's dev half. The image default gives 1728m process and only 512m
+                # JVM heap for ALL jobs, which was survivable until checkpointing
+                # landed. With 6 jobs checkpointing every 10s it GCs hard enough to
+                # miss checkpoint RPC and heartbeat deadlines, taking the JobManager
+                # down with it. Observed 2026-09-02, when the e2e suite died at
+                # scenario 22 of 59 exactly this way.
+                #
+                # managed.fraction carries most of the win at no footprint cost. The
+                # hashmap state backend barely touches managed memory, so 0.4 to 0.1
+                # hands ~360m back to task heap. process.size is only nudged to 2g
+                # because dev boxes are small (this file runs on 5+ of them). Together
+                # they lift JVM heap from 512m to ~1.1g for +312m of container size.
+                # NEVER set env.java.opts.all here. The image uses that key for the
+                # Java 21 --add-opens list.
+                #
+                # Every comment line in a FLINK_PROPERTIES block is loaded as a bogus
+                # config key (the text with its spaces stripped). Harmless, since Flink
+                # ignores unknown keys, and it is how every commented block in
+                # docker-compose.prod.yml already behaves. Noted so the startup log's
+                # "Loading configuration property #..." lines are not mistaken for a bug.
+                taskmanager.memory.process.size: 2g
+                taskmanager.memory.managed.fraction: 0.1
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-logs:/opt/flink/log
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
 
@@ -366,6 +396,7 @@ volumes:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
     data-collector-taskmanager-logs:
+    data-collector-flink-checkpoints:
     data-collector-taskmanager-2-logs:
     data-collector-redis-data:
 

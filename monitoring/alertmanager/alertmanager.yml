@@ -31,13 +31,22 @@ inhibit_rules:
     # match the source alert itself.
     - source_matchers: ["alertname = FlinkJobManagerDown"]
       target_matchers:
-          - "alertname =~ FlinkJobCountWrong|FlinkTaskManagersMissing|FlinkJobRestarting|FlinkJobRestartLoop|FlinkTaskBackPressured|FlinkKafkaSourceLag"
+          - "alertname =~ FlinkJobCountWrong|FlinkTaskManagersMissing|FlinkJobRestarting|FlinkJobRestartLoop|FlinkTaskBackPressured|FlinkKafkaSourceLag|FlinkCheckpointsFailing|FlinkCheckpointsNotCompleting|FlinkCheckpointDurationHigh"
 
     # A job in a restart loop always trips the any-restart warning too. Keep the
     # critical one, drop the duplicate — matched on job_name so only the looping
     # job is silenced.
     - source_matchers: ["alertname = FlinkJobRestartLoop"]
       target_matchers: ["alertname = FlinkJobRestarting"]
+      equal: ["job_name"]
+
+    # A job that cannot checkpoint at all exhausts its failure budget (3, set in
+    # CheckpointingConfigurer), fails, restarts, and does it again. The restart
+    # alerts are the symptom and this is the cause, so let the cause through and
+    # silence the symptom, same job only. This is the exact failure the first live
+    # checkpointing run hit, when the budget was still Flink's default of 0.
+    - source_matchers: ["alertname = FlinkCheckpointsFailing"]
+      target_matchers: ["alertname =~ FlinkJobRestarting|FlinkJobRestartLoop"]
       equal: ["job_name"]
 
 receivers:

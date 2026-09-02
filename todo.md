@@ -212,6 +212,18 @@ M2a, M2b, S5, M4, M3, S4, M9 and S7 all applied; M8 dropped. Nothing deployed or
   re-baseline from a snapshot rather than resume from a possibly-wrong state. Parked with it:
   **M5** (`.uid()`), **S2** (`max-parallelism`), **M6** (checkpoint volumes), **S6** (savepoint
   deploys), **L4**. Revisit routes are in the report's section 03
+  - **⚠ UN-POSTPONED 2026-08-31 on `feat/checkpointing`.** Checkpointing landed (all 6 normalizer
+    jobs, `EXACTLY_ONCE`) and the user's call was to accept the cross-job replay risk above for now
+    rather than block on one of the three routes. See [[project_flink_production]]'s dated section for
+    what landed and what this review fixed (`isolation.level=read_committed`, a shared checkpoint
+    volume, and reverting a restart-strategy override back to M1's cluster policy). **M5/S2/M6/S6/L4
+    are still NOT done** — they were not part of this pass and remain open below.
+  - **⚠ Live symptom 2026-08-31: all 6 jobs stuck `RESTARTING` after this landed.** Root cause found —
+    the new checkpoint volume came up root-owned (Dockerfile never created `/opt/flink/checkpoints`
+    before `USER flink`), so every checkpoint write failed and Flink's default 0-tolerance failed the
+    job outright. Dockerfile fixed to pre-create it with `chown flink:flink`; the user's *existing*
+    volume still needs a one-off `chown -R flink:flink` (command given, not yet confirmed run/fixed —
+    verify before treating this as closed). Details in [[project_flink_production]]
 - **NiFi out of scope** — not managed from our side, development-only in this compose file. Do not
   change it and do not propose changes to it
 - **S1 CLOSED** — keep `OffsetsInitializer.latest()`. Downstream-first submission ordering in the
@@ -279,7 +291,12 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       All three projects compile; **144 tests pass** (105 + 16 + 23).
       ⚠ **Does NOT close everything**: `DeliveryGuarantee` is still `NONE`, so records buffered in
       the producer when a TM JVM dies are still lost, and idempotence is per-producer-session so a
-      restart can still duplicate at the seam. See **S8** — single-broker RF=1 means `acks=all` is
+      restart can still duplicate at the seam.
+      ⚠ **STALE AS OF 2026-08-31 — re-open this.** M4 was chosen *because* `AT_LEAST_ONCE` is inert
+      without checkpointing (it flushes on checkpoint). Checkpointing now exists, so that reasoning
+      no longer holds: `AT_LEAST_ONCE` would now actually flush, and it is the piece that would
+      close the buffered-record loss above. Not changed here — it is a code change across 11 sink
+      sites and was not part of resolving this merge. **Decide deliberately.** See **S8** — single-broker RF=1 means `acks=all` is
       "the one replica that exists".
       ⚠ **Verification owed: no test in the repo exercises sink configuration.** The 144 passing
       tests prove nothing broke, not that M4 works — read `ProducerConfig` in the TM startup log
@@ -370,6 +387,14 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
         default receiver is empty on purpose rather than pointed at a placeholder. Alerts are still
         visible on its UI and Prometheus's `/alerts`. Grouping + two inhibit rules are in place, so
         adding a receiver is a one-block edit
+      - **The two parked checkpoint alerts were un-parked 2026-08-31**, when checkpointing landed,
+        and a third added. `flink-checkpoints` group: `FlinkCheckpointsFailing` (critical — Flink's
+        tolerable-failed-checkpoints is 0, so one failure fails the job), `FlinkCheckpointsNotCompleting`
+        (a *stuck* checkpoint increments no failure counter, so the first rule stays silent forever)
+        and `FlinkCheckpointDurationHigh` (half the configured 120s timeout). Alertmanager gained a
+        third inhibit rule so the cause, not the restart symptom, is what pages. **This is the exact
+        failure the first live checkpointing run hit** — 6 jobs looping on a root-owned volume, job
+        count still 8, every existing rule silent. 13 rules now; `promtool check rules` passes
       - **Grafana ships the Prometheus datasource provisioned but no dashboards** — none have been
         authored, and an empty dashboards provider is just another directory to keep in sync
       - **Not validated:** `alertmanager.yml` parses as YAML and matches Alertmanager's schema by
@@ -380,6 +405,11 @@ corrected below — **[[project_flink_production]] still says 7 in places and ne
       `FlinkKafkaSourceLag` in `monitoring/prometheus/rules/flink.yml`; a wrong name is silent
 - [ ] **Deploy check for M9 — `prom/alertmanager:v0.27.0` and `grafana/grafana:11.1.0` are not
       cached locally** and need a pull. `prom/prometheus:v2.53.0` is already present
+- [ ] **Deploy check for the checkpoint alerts — confirm the three metric names.**
+      `curl -s localhost:9249/metrics | grep -i checkpoint`. They are the only names in
+      `monitoring/prometheus/rules/flink.yml` NOT taken from a live scrape — the probe cluster
+      predated checkpointing — so `numberOfFailedCheckpoints`, `numberOfCompletedCheckpoints` and
+      `lastCheckpointDuration` are from the documented convention. A wrong name is **silent**
 - [ ] **Deploy check for S7 — `docker pull provectuslabs/kafka-ui:v0.7.2`** before the first prod
       deploy. It is the one pin that could not be read off a cached image; a wrong tag stops `up`
       with `manifest unknown`
@@ -420,6 +450,13 @@ User's call: put production in its own file and give the developers theirs back.
       — identical apart from a 3-line header pointing at the prod file. Both parse
       (`docker compose config --quiet`). Prod-only services: `zookeeper`, `taskmanager-1..4`,
       `historyserver`, `prometheus`, `alertmanager`, `grafana`. Dev-only: `taskmanager`
+- [x] **Checkpointing is wired into BOTH files** (merge of `feat/checkpointing`, 2026-08-31). The
+      shared `data-collector-flink-checkpoints` volume is mounted on the JobManager and every
+      TaskManager in each — one TM in dev, four in prod — because `filesystem` storage has the JM
+      writing metadata and the TMs writing state files, so it has to be one directory. This is the
+      first real instance of the "edit both files by hand" cost below, and it arrived within a day
+      ⚠ A local volume shares across containers on **one host only** — same limitation as the HA
+      store. Neither survives losing the box; that needs a distributed FS
 - [x] **Two independent files, NOT a base + override.** An override file cannot *remove* a service
       or a volume, and prod has to drop dev's single `taskmanager` — so `-f a.yml -f b.yml` could
       never have produced the prod stack. The cost is real and is written into both headers:
@@ -482,11 +519,97 @@ User's call: put production in its own file and give the developers theirs back.
 - [ ] **L1 — application mode / one cluster per job**; **L2 — standby JM + 3-node ZooKeeper**;
       **L3 — parallelism > 1** (repartition topics first, or it gains nothing — and note there are
       no spare slots today)
-- [ ] **Revisit checkpointing** once one of the report's three routes is chosen: merge the normalizer
+- [x] **Checkpointing landed 2026-08-31** on `feat/checkpointing`, risk accepted rather than
+      mitigated — see the standing-decision note above. The three routes below are now about closing
+      the *residual* cross-job risk, not a precondition for checkpointing itself
+- [ ] **Close the cross-job replay risk** via one of the report's three routes: merge the normalizer
       chain into one JobGraph (only option giving both state survival and consistency), add a
       downstream monotonicity guard (⚠ conflicts with the user-stated "job 2 is the only sequence
       validator" invariant — reopen deliberately, see [[project_type_validator]]), or checkpoint only
       terminal jobs
+- [ ] **M5 — `.uid()` on every operator.** Needed before a checkpoint can be restored across a
+      topology-changing redeploy; not added as part of the 2026-08-31 checkpointing landing
+- [ ] **S2 — `pipeline.max-parallelism`**, **S6 — stop-with-savepoint deploys**, **M6 — checkpoint
+      volumes were added ad hoc (`data-collector-flink-checkpoints`), revisit against the report's
+      proposed values (num-retained, tolerable-failed-checkpoints) in section 03
+
+### From the PR #11 review (2026-09-02)
+
+- [ ] **⚠ DEV STACK IS NOW UNDER-PROVISIONED FOR CHECKPOINTING — found live 2026-09-02.** The e2e
+      harness ran 21 PASS / 38 FAIL; 37 of the 38 are a cascade from a starved TaskManager (checkpoint
+      RPC timeouts -> JobManager down -> `connection refused` for every later scenario), only 1 was
+      data-shaped and it fell inside the same window. Dev's single TaskManager has
+      `Total Process Memory: 1.688gb` (the image default) on a 4.1 GB Docker VM. **M2a gave the TMs
+      real memory in `docker-compose.prod.yml` ONLY** — the compose split handed dev back an
+      image-default TM, survivable until checkpointing landed. Pick one: raise the Docker Desktop
+      allocation to ~8 GB, give dev's TM explicit memory (M2a's dev half), or raise
+      `CHECKPOINT_INTERVAL_MS` in dev. **Until then the e2e suite cannot validate this branch.**
+- [ ] **Make the e2e harness rebuild images, or document that it does not.** `stack.Provision` runs
+      `up -d --wait` with no `--build` ("Images are not rebuilt: a missing one is built by `up`"), so
+      it builds the job JARs from source but runs them on a stale image. On this PR that produced
+      **59/59 failures** whose stack trace (`Failed to create directory for shared state:
+      file:/opt/flink/checkpoints/<jobid>/shared`) points at checkpoint storage and never mentions the
+      image. One `--build` fixes it; the diagnostic dead-end is the expensive part
+- [ ] **Two checkpoint volumes exist on the dev box; only the project-prefixed one is mounted.**
+      `data-collector-flink-checkpoints` (unprefixed, healthy) vs
+      `data-collector_data-collector-flink-checkpoints` (what compose actually uses). A `chown`
+      remediation aimed at the wrong one silently does nothing — **verify against
+      `docker inspect <container>` mounts before trusting it, including on prod**
+- [ ] **`FlinkCheckpointsNotCompleting` cannot fire when no job is running.** The
+      `flink_jobmanager_job_*` series are job-scope and disappear entirely with the jobs, so
+      `increase(...) == 0` has no series to evaluate — same blind spot as `numRunningJobs != 8` when
+      the JobManager is down. Consider an `absent()` companion rule
+
+- [x] **Blocker — `read_committed` on every consumer outside `flink/normalizer`.** The earlier round
+      stopped at the module boundary. Added `isolation.level=read_committed` to `flink/merger` and
+      `flink/adjustment` (both consume `^p[0-9]+-(asks|bids)$`, which job 6 now writes
+      transactionally), and `kgo.FetchIsolationLevel(kgo.ReadCommitted())` to
+      `web/internal/kafka/consumer.go` and `e2e/consumer/consumer.go`. All four build clean.
+      **Rule going forward: making a sink transactional is a change to every consumer of that topic,
+      in every language.**
+- [ ] **OPEN PRODUCT DECISION — EXACTLY_ONCE latency.** Records are invisible downstream until the
+      producing job checkpoints, so 6 transactional hops add ~30s average / 60s worst case, against
+      sub-second before. `lpa-staleness-exporter`'s `output_threshold_seconds: 10` is now below the
+      last hop's added latency alone. Options: accept, drop the interval to ~2s, or keep the middle
+      hops `AT_LEAST_ONCE` and reserve `EXACTLY_ONCE` for the terminal sinks. **Nothing decided.**
+- [x] **`tolerableCheckpointFailureNumber` raised from Flink's default 0 to 3** (2026-09-02). One
+      failed checkpoint used to fail the job, which is how the 2026-08-31 root-owned-volume incident
+      became a permanent 6-job restart loop. A transient failure is now an alert, not an outage; a
+      persistent one still ends the job, just after 4 rather than 1. `FlinkCheckpointsFailing` fires
+      on the FIRST failure regardless, so the budget hides nothing. The comments in `Dockerfile`,
+      `flink.yml` and `alertmanager.yml` that asserted "tolerable is 0" were updated with it
+- [x] **`RETAIN_ON_CANCELLATION` → `DELETE_ON_CANCELLATION`** (2026-09-02). Retention only leaked:
+      `run-job.sh` submits with no `savepointPath`, so a resubmitted job never restores from a retained
+      checkpoint — and `run-all-jobs`/`prod-deploy` cancel all 8 first, stranding 8 directories per
+      deploy, forever (`num-retained` prunes only a *running* job's history). It also contradicted S1
+      (restart from `latest` and re-baseline). ⚠ This governs CANCELLATION only — a job that FAILS
+      still keeps its checkpoint and automatic restarts restore from it, which is the whole feature.
+      **Still open: no disk-usage alert on `data-collector-flink-checkpoints`.** The leak is closed so
+      it is no longer urgent, but a full volume is still a checkpoint failure and nothing watches it
+- [x] **`CheckpointingOptions.CHECKPOINT_STORAGE` made load-bearing instead of dead** (2026-09-02).
+      `CheckpointConfig.configure()` reads `execution.checkpointing.dir` but ignores
+      `execution.checkpointing.storage` outright, so the key was silently dropped and filesystem
+      storage was in effect only via `CheckpointStorageLoader`'s undocumented directory fallback (which
+      logs a warning asking for the explicit value). Fixed by routing the storage `Configuration`
+      through `env.configure()` rather than `env.getCheckpointConfig().configure()` — `env.configure()`
+      does `configuration.addAll(...)` of every key AND delegates to `CheckpointConfig.configure()`,
+      so both the storage type and the directory land where the loader reads them. Kept job-side
+      rather than moved to compose `FLINK_PROPERTIES` on purpose: dev compose sets no checkpoint
+      properties and `run-local.sh` has no cluster at all. ⚠ **In Flink 2.x the keys are
+      `execution.checkpointing.storage` / `execution.checkpointing.dir`** — the 1.x names
+      (`state.checkpoint-storage`, `state.checkpoints.dir`) are gone; do not reach for them
+- [ ] **Nits from the review, none blocking:** package `io.tibobit.normalizer.checkpointingConfigurer`
+      is camelCase while every sibling is lowercase; trailing whitespace on 7 lines; the
+      `control-plane` sink in `TypeValidatorJob` still carries the now-false "Without checkpointing,
+      DeliveryGuarantee is NONE" comment the PR rewrote on all 9 other sinks; `CHECKPOINT_INTERVAL_MS`
+      and `CHECKPOINT_DIR` are read from env but set nowhere (and under REST submission `main()` runs
+      on the **JobManager**, so they would go on that service); no test for `CheckpointingConfigurer`
+- [ ] **⚠ Do not upgrade `kafka-python` past 2.0.2 without fixing `lpa-staleness-exporter` first.**
+      The exporter survives transactional topics only because 2.0.2 never filters control batches
+      (`is_control_batch` is defined and referenced nowhere). A conformant client returns nothing for
+      its `seek(end - 1)` and every Flink topic goes silently unmeasured. See
+      [[project_flink_production]]
+
 
 ## flink job 2 — staleness-triggered resync (branch `feat/flink-check-staleness`)
 
