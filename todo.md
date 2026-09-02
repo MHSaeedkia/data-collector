@@ -535,6 +535,20 @@ User's call: put production in its own file and give the developers theirs back.
 
 ### From the PR #11 review (2026-09-02)
 
+- [x] **E2E GREEN 2026-09-02 — 59/59 PASS on `developer-1.internal.tibobit.ir`** (8 CPU / 15 GB),
+      zero ERROR lines, 354 `Checkpoint storage is set to 'filesystem'` with ZERO fallback warnings
+      (= every job in the run). This was the gate on merging PR #11
+- [ ] **⚠ Version-control the NiFi flow, or accept it is unrecoverable.** `nifi/` holds only a
+      Dockerfile, so when a `down -v` took the NiFi volumes on `developer.internal.tibobit.ir` on
+      2026-09-02 the flow config was gone for good. Any `down -v` on any box with NiFi has this cost
+- [ ] **⚠ Two server aliases differ by ONE character**: `tibobit-data-collector-afra` =
+      `developer.internal.tibobit.ir` and `tibobit-data-collector-afra-me` =
+      `developer-1.internal.tibobit.ir`. A destructive run went to the wrong one on 2026-09-02.
+      **Check `hostname` before any `down -v`**
+- [ ] **Neither server can reach GitHub and neither has Go.** `origin` is HTTPS with no credentials
+      and there is no SSH key, so the laptop-commit-push-server-pull flow does NOT work today. Until
+      that is fixed, ship the branch as an incremental `git bundle` and the harness as a
+      cross-compiled static binary. Worth fixing properly — add a deploy key or switch origin to SSH
 - [ ] **⚠ DEV STACK IS NOW UNDER-PROVISIONED FOR CHECKPOINTING — found live 2026-09-02.** The e2e
       harness ran 21 PASS / 38 FAIL; 37 of the 38 are a cascade from a starved TaskManager (checkpoint
       RPC timeouts -> JobManager down -> `connection refused` for every later scenario), only 1 was

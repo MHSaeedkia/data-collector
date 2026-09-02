@@ -475,6 +475,40 @@ kafka-python past 2.0.2 will silently break the exporter** on exactly the mechan
 - Leaving `job-type-validator`'s `control-plane` sink non-transactional is right — NiFi consumes it and
   would otherwise need `read_committed` too.
 
+**GREEN E2E RUN, 2026-09-02 — 59/59 PASS on `developer-1.internal.tibobit.ir`.** The suite that
+21/59'd on the laptop passes completely on a properly-sized box (8 CPU / 15 GB), 14:38 to 15:39,
+**zero `level=ERROR` lines in the whole log**, scenarios 42s to ~1m18s. This is the branch's first
+end-to-end green and the evidence the merge was waiting on. Two hard numbers worth keeping:
+- **354 `Checkpoint storage is set to 'filesystem'` and ZERO fallback warnings.** 354 = 59 scenarios ×
+  6 jobs, i.e. EVERY job in the run took the explicit storage path. Fix #4 is verified at scale, not
+  anecdotally — before it, `CheckpointStorageLoader` would have logged its "strongly encouraged to
+  explicitly set this configuration" fallback each time.
+- **354 checkpoint directories totalling 4.3 MB** (~12 KB each) — confirms the corrected
+  `DELETE_ON_CANCELLATION` finding below precisely: the checkpoint DATA is deleted on cancel, the
+  per-job directory skeleton is not. One skeleton per job per submission, unbounded but inode-only.
+
+⚠ **WRONG-SERVER INCIDENT, same day — read before touching either host.** The first server run went to
+`tibobit-data-collector-afra` = **`developer.internal.tibobit.ir`**; the intended host was
+`tibobit-data-collector-afra-me` = **`developer-1.internal.tibobit.ir`**. The names differ by one
+character. The harness's unconditional `down -v` therefore destroyed the WRONG box's NiFi volumes
+(conf/flow, flowfile, content, database, provenance, state), Kafka, Postgres and Redis data — a stack
+with 2 days uptime and active NiFi hot-path work. **The repo does NOT version-control the NiFi flow**
+(`nifi/` holds only a Dockerfile), so it was not recoverable from git. Services from other compose
+projects (grafana, loki, prometheus, portainer, pgadmin, alloy, alert-gateway, nifi-token-refresher)
+were untouched. **Confirm `hostname` on the target before any `down -v`** — the SSH alias is not
+enough when two aliases differ by one character.
+
+**Operational notes for running the suite on a server (all learned the hard way 2026-09-02):**
+- **Neither server has Go, and neither has GitHub credentials.** `origin` is HTTPS with no auth and
+  there is no SSH key, so `git fetch` cannot reach GitHub from either box. The branch was delivered as
+  an **incremental `git bundle`** (`git bundle create x.bundle <server-HEAD>..feat/checkpointing`, 3.4 MB,
+  copied over SSH, then `git fetch /tmp/x.bundle`), and the harness as a **cross-compiled static
+  binary** (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`). Nothing had to be installed on either host.
+- **Launch it with `setsid ... < /dev/null > /tmp/log 2>&1 &`.** The run outlives an SSH drop and the
+  log is intact on reconnect — this actually happened mid-run and cost nothing. A plain backgrounded
+  command holds the SSH channel open and hangs the caller instead.
+- **`docker compose build jobmanager taskmanager` FIRST, always** — see the stale-image trap below.
+
 **FIRST LIVE RUN OF THIS BRANCH, 2026-09-02 — the code works; the DEV BOX does not fit it.**
 Ran the e2e harness (59 scenarios) against the dev stack. Result **21 PASS / 38 FAIL**, but the
 failures are one cascade, not 38 problems, and none of them is an assertion about pipeline output:
