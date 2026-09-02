@@ -535,6 +535,31 @@ User's call: put production in its own file and give the developers theirs back.
 
 ### From the PR #11 review (2026-09-02)
 
+- [ ] **⚠ DEV STACK IS NOW UNDER-PROVISIONED FOR CHECKPOINTING — found live 2026-09-02.** The e2e
+      harness ran 21 PASS / 38 FAIL; 37 of the 38 are a cascade from a starved TaskManager (checkpoint
+      RPC timeouts -> JobManager down -> `connection refused` for every later scenario), only 1 was
+      data-shaped and it fell inside the same window. Dev's single TaskManager has
+      `Total Process Memory: 1.688gb` (the image default) on a 4.1 GB Docker VM. **M2a gave the TMs
+      real memory in `docker-compose.prod.yml` ONLY** — the compose split handed dev back an
+      image-default TM, survivable until checkpointing landed. Pick one: raise the Docker Desktop
+      allocation to ~8 GB, give dev's TM explicit memory (M2a's dev half), or raise
+      `CHECKPOINT_INTERVAL_MS` in dev. **Until then the e2e suite cannot validate this branch.**
+- [ ] **Make the e2e harness rebuild images, or document that it does not.** `stack.Provision` runs
+      `up -d --wait` with no `--build` ("Images are not rebuilt: a missing one is built by `up`"), so
+      it builds the job JARs from source but runs them on a stale image. On this PR that produced
+      **59/59 failures** whose stack trace (`Failed to create directory for shared state:
+      file:/opt/flink/checkpoints/<jobid>/shared`) points at checkpoint storage and never mentions the
+      image. One `--build` fixes it; the diagnostic dead-end is the expensive part
+- [ ] **Two checkpoint volumes exist on the dev box; only the project-prefixed one is mounted.**
+      `data-collector-flink-checkpoints` (unprefixed, healthy) vs
+      `data-collector_data-collector-flink-checkpoints` (what compose actually uses). A `chown`
+      remediation aimed at the wrong one silently does nothing — **verify against
+      `docker inspect <container>` mounts before trusting it, including on prod**
+- [ ] **`FlinkCheckpointsNotCompleting` cannot fire when no job is running.** The
+      `flink_jobmanager_job_*` series are job-scope and disappear entirely with the jobs, so
+      `increase(...) == 0` has no series to evaluate — same blind spot as `numRunningJobs != 8` when
+      the JobManager is down. Consider an `absent()` companion rule
+
 - [x] **Blocker — `read_committed` on every consumer outside `flink/normalizer`.** The earlier round
       stopped at the module boundary. Added `isolation.level=read_committed` to `flink/merger` and
       `flink/adjustment` (both consume `^p[0-9]+-(asks|bids)$`, which job 6 now writes

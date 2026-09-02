@@ -475,6 +475,64 @@ kafka-python past 2.0.2 will silently break the exporter** on exactly the mechan
 - Leaving `job-type-validator`'s `control-plane` sink non-transactional is right — NiFi consumes it and
   would otherwise need `read_committed` too.
 
+**FIRST LIVE RUN OF THIS BRANCH, 2026-09-02 — the code works; the DEV BOX does not fit it.**
+Ran the e2e harness (59 scenarios) against the dev stack. Result **21 PASS / 38 FAIL**, but the
+failures are one cascade, not 38 problems, and none of them is an assertion about pipeline output:
+35 are `Get http://localhost:7070/jobs: connection refused` (the JobManager was gone), 2 are
+schema-registry HTTP timeouts, and exactly **1** is data-shaped (`22-ex4-noise-frames: got 0 records,
+want 2`) — and it landed inside the same degradation window, not before it. Scenarios 1-21 passed
+clean, including the multi-exchange and control-plane cases.
+
+**Root cause: the single dev TaskManager is starved once 6 jobs checkpoint every 10s.** Its
+`Total Process Memory` is **1.688gb — the Flink image default** — on a Docker VM with only 4.1 GB
+total. The JobManager logged, right before it went down:
+`Triggering Checkpoint 1 ... failed due to TimeoutException: Invocation of
+TaskExecutorGateway.triggerCheckpoint at recipient taskmanager_0 timed out ... 2) The recipient needs
+more time for responding, due to problems like slow machines`, and the TaskManager logged 4270
+timeout/heartbeat lines. No OOM kill on either container — this is starvation, not a leak.
+⚠ **This is M2a's dev half coming due.** M2a gave the TaskManagers real memory in
+`docker-compose.prod.yml` ONLY; the compose split handed dev back one image-default TaskManager, and
+that was survivable until checkpointing landed. **Checkpointing raises the resource floor of the dev
+stack**, so every developer running e2e on this branch hits this. Not a defect in the branch's logic
+— but a real cost of it, and it is not written down anywhere else.
+
+⚠ **The e2e harness cannot see a Dockerfile change.** The FIRST attempt failed **59/59**, every one at
+job submission with `java.io.IOException: Failed to create directory for shared state:
+file:/opt/flink/checkpoints/<jobid>/shared` — the 2026-08-31 incident's exact signature. Cause: the
+local `data-collector-jobmanager` image contained **none** of `/opt/flink/{checkpoints,ha,archive}`
+(its layer history has no mkdir/chown stanza at all), because `stack.Provision` runs `up -d --wait`
+with **no `--build`** — its own comment says "Images are not rebuilt: a missing one is built by `up`".
+The harness builds the job JARs from source but NOT the image, so it silently ran new jobs on a stale
+image. `docker compose build jobmanager taskmanager` fixed it outright. **The stack trace points at
+checkpoint storage and says nothing about a stale image — budget for that dead-end, or make the
+harness build.**
+
+⚠ **TWO checkpoint volumes exist on the dev machine and only one is used.**
+`data-collector-flink-checkpoints` (unprefixed, `9999:9999`, healthy) is NOT what compose mounts —
+compose uses the project-prefixed `data-collector_data-collector-flink-checkpoints`. The unprefixed
+one is presumably left over from the prod compose or from the incident remediation. **A `chown` aimed
+at the wrong one of these looks like it succeeded and changes nothing** — check
+`docker inspect <container> --format '{{range .Mounts}}...'` for the name actually mounted before
+trusting any remediation, including on the prod box.
+
+**Verified live against the running cluster (no longer inference):**
+- **Fix #4 works.** JobManager logs `Checkpoint storage is set to 'filesystem': (checkpoints
+  "file:/opt/flink/checkpoints")` and — the load-bearing part — does **NOT** log the
+  `Falling back to a default CheckpointStorage` / "strongly encouraged to explicitly set this
+  configuration" warning that the old dead-line code produced.
+- **All three checkpoint metric names confirmed by live scrape** of `:9249/metrics`:
+  `flink_jobmanager_job_numberOfFailedCheckpoints`, `..._numberOfCompletedCheckpoints`,
+  `..._lastCheckpointDuration`. The ⚠ caveat in `monitoring/prometheus/rules/flink.yml` is now closed.
+  ⚠ But these are **job-scope series that vanish when no job is running** — a host scrape between
+  scenarios returned nothing. So `FlinkCheckpointsNotCompleting` (`increase(...) == 0`) **cannot fire
+  when all jobs are gone**, the same blind spot `numRunningJobs != 8` has when the JobManager dies.
+- **Checkpoints genuinely written**: 102 job directories, 1.3 MB, volume `9999:9999`.
+- **CORRECTION to the DELETE_ON_CANCELLATION claim above.** It does NOT fully close the leak. The
+  checkpoint *data* is deleted — all 102 directories contained only empty `shared/` and `taskowned/`
+  subdirectories, no `chk-N`, no state files — but the **per-job directory skeleton is left behind**,
+  ~8 empty dirs per deploy, unbounded. Inodes only (1.3 MB for 102), so it is a large improvement over
+  retaining full checkpoints, but "the leak is closed" overstates it.
+
 **Two settings changed on review, 2026-09-02 (the "should fix" round).**
 - **`tolerableCheckpointFailureNumber` 0 → 3.** Flink's default of 0 means one failed checkpoint fails
   the job, and that is precisely how a root-owned volume became a permanent 6-job restart loop on
