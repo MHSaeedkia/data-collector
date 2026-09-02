@@ -532,3 +532,45 @@ User's call: put production in its own file and give the developers theirs back.
 - [ ] **S2 — `pipeline.max-parallelism`**, **S6 — stop-with-savepoint deploys**, **M6 — checkpoint
       volumes were added ad hoc (`data-collector-flink-checkpoints`), revisit against the report's
       proposed values (num-retained, tolerable-failed-checkpoints) in section 03
+
+### From the PR #11 review (2026-09-02)
+
+- [x] **Blocker — `read_committed` on every consumer outside `flink/normalizer`.** The earlier round
+      stopped at the module boundary. Added `isolation.level=read_committed` to `flink/merger` and
+      `flink/adjustment` (both consume `^p[0-9]+-(asks|bids)$`, which job 6 now writes
+      transactionally), and `kgo.FetchIsolationLevel(kgo.ReadCommitted())` to
+      `web/internal/kafka/consumer.go` and `e2e/consumer/consumer.go`. All four build clean.
+      **Rule going forward: making a sink transactional is a change to every consumer of that topic,
+      in every language.**
+- [ ] **OPEN PRODUCT DECISION — EXACTLY_ONCE latency.** Records are invisible downstream until the
+      producing job checkpoints, so 6 transactional hops add ~30s average / 60s worst case, against
+      sub-second before. `lpa-staleness-exporter`'s `output_threshold_seconds: 10` is now below the
+      last hop's added latency alone. Options: accept, drop the interval to ~2s, or keep the middle
+      hops `AT_LEAST_ONCE` and reserve `EXACTLY_ONCE` for the terminal sinks. **Nothing decided.**
+- [ ] **`tolerableCheckpointFailureNumber` is the default 0** — one failed checkpoint fails the job,
+      which is exactly how the 2026-08-31 root-owned-volume incident became a permanent 6-job restart
+      loop. `CheckpointConfig.setTolerableCheckpointFailureNumber(int)` exists in 2.2.0. A value of
+      2-3 turns a transient failure into an alert instead of an outage. Durability/availability
+      tradeoff, user's call
+- [ ] **`RETAIN_ON_CANCELLATION` currently only leaks.** `run-job.sh` submits with no `savepointPath`,
+      so a resubmitted job never restores from a retained checkpoint — and `run-all-jobs`/`prod-deploy`
+      cancel all 8 first. Every deploy strands 8 checkpoint directories on the shared volume, never
+      collected (`num-retained` prunes only a *running* job's history). Unbounded growth, no disk
+      alert; when the volume fills, checkpoints fail and tolerable=0 restart-loops every job. Either
+      switch to `DELETE_ON_CANCELLATION` or keep retention and add a prune step + a volume-usage alert
+- [ ] **Dead line: `CheckpointingOptions.CHECKPOINT_STORAGE` in `CheckpointingConfigurer`.**
+      `CheckpointConfig.configure()` does not read that key (verified against the 2.2.0 jar). It works
+      only because `CheckpointStorageLoader` falls back to filesystem when a directory is set. Either
+      drop the line and say so, or set `state.checkpoint-storage: filesystem` in the cluster config
+      where it is actually read
+- [ ] **Nits from the review, none blocking:** package `io.tibobit.normalizer.checkpointingConfigurer`
+      is camelCase while every sibling is lowercase; trailing whitespace on 7 lines; the
+      `control-plane` sink in `TypeValidatorJob` still carries the now-false "Without checkpointing,
+      DeliveryGuarantee is NONE" comment the PR rewrote on all 9 other sinks; `CHECKPOINT_INTERVAL_MS`
+      and `CHECKPOINT_DIR` are read from env but set nowhere (and under REST submission `main()` runs
+      on the **JobManager**, so they would go on that service); no test for `CheckpointingConfigurer`
+- [ ] **⚠ Do not upgrade `kafka-python` past 2.0.2 without fixing `lpa-staleness-exporter` first.**
+      The exporter survives transactional topics only because 2.0.2 never filters control batches
+      (`is_control_batch` is defined and referenced nowhere). A conformant client returns nothing for
+      its `seek(end - 1)` and every Flink topic goes silently unmeasured. See
+      [[project_flink_production]]

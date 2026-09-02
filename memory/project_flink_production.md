@@ -418,6 +418,66 @@ the same volume) — the Dockerfile fix only prevents this on a *fresh* volume, 
 that already exists. NOT yet confirmed fixed live (user was given the remediation command, result
 unseen from this session).
 
+**PR #11 review (2026-09-02) — three consumers outside the normalizer module were still
+read_uncommitted; fixed.** The earlier round added `isolation.level=read_committed` to the five
+`KafkaSource`s *inside* `flink/normalizer`, and stopped at the module boundary. `ALL_JOBS` is 8 jobs:
+`flink/merger` and `flink/adjustment` both consume `^p[0-9]+-(asks|bids)$`, which `AggregatorJob`
+(job 6) now writes transactionally, and neither had the property. Same defect one directory over.
+Also fixed the two Go consumers, which franz-go defaults to read-uncommitted:
+`web/internal/kafka/consumer.go` (reads both the aggregated family and job 5's snapshots) and
+`e2e/consumer/consumer.go` (where aborted records surface as a flaky record-count assertion, not as a
+visible bug) — both now pass `kgo.FetchIsolationLevel(kgo.ReadCommitted())`. **The rule this
+establishes: a sink turning transactional is a change to every consumer of that topic, in every
+language, not just to the Flink job next in the chain.** `merger`/`adjustment` still have no
+checkpointing and no transactional sink of their own — deliberately left alone, that is a separate
+decision with the same latency cost as below, not a correctness fix.
+
+**CORRECTION — `lpa-staleness-exporter` was NOT broken by transactional writes, contrary to the first
+read of PR #11.** The concern was that `latest_offset_and_ts` seeks to `end - 1`, which on a
+transactional topic is a commit marker, and that Kafka never delivers control records — so the poll
+would return nothing and every Flink topic would go permanently unmeasured. That is true of a
+*conformant* client. It is **not** true of `kafka-python==2.0.2`, which is what the exporter pins:
+`is_control_batch` is defined in `kafka/record/default_records.py:168` and **referenced nowhere else
+in the package** — the fetcher never filters control batches, so the marker comes back as an ordinary
+record. The exporter only reads `records[-1].timestamp`, never key or value, so it keeps working.
+Two consequences worth knowing: the timestamp it now reads on Flink topics is the transaction
+*commit* time rather than the produce time (a systematic optimistic bias of up to one checkpoint
+interval, which matters against `output_threshold_seconds: 10`), and an idle topic still correctly
+goes stale because **Flink does not commit empty transactions** — `ExactlyOnceKafkaWriter.prepareCommit`
+guards on `hasRecordsInTransaction()` and recycles the producer otherwise (verified in
+`flink-connector-kafka-5.0.0-2.2.jar`). ⚠ This safety is an accident of a client bug: **upgrading
+kafka-python past 2.0.2 will silently break the exporter** on exactly the mechanism described above.
+
+**Verified during the PR #11 review, so stop re-deriving these:**
+- **The three checkpoint metric names are real.** `numberOfFailedCheckpoints`,
+  `numberOfCompletedCheckpoints` and `lastCheckpointDuration` all exist as job-scope metrics in
+  `flink-runtime-2.2.0.jar`, so the `flink_jobmanager_job_*` prefix in the rules is right. The ⚠ "only
+  names not from a live scrape" caveat in `monitoring/prometheus/rules/flink.yml` can be softened to
+  "verified against the jar, not yet scraped" — it is no longer an unknown.
+- **`CheckpointingOptions.CHECKPOINT_STORAGE` is a no-op where it is set.** `CheckpointConfig.configure()`
+  in 2.2.0 reads 14 `CheckpointingOptions` keys and that is **not** one of them (`CHECKPOINTS_DIRECTORY`
+  is, via the private `setCheckpointDirectory`). Filesystem storage is in effect only because
+  `CheckpointStorageLoader` falls back to it when a directory is set — and logs "Users are strongly
+  encouraged to explicitly set this configuration" while doing so. The line in `CheckpointingConfigurer`
+  and the comment above it are therefore both misleading about *why* it works. Not fixed; see todo.
+- **The broker is already correct for transactions**: `KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1`
+  + `_MIN_ISR: 1` are set, and `transaction.timeout.ms=600000` sits under the 900000 broker default.
+  This partly answers the S8 question left open below.
+- **Transactional ID prefixes are unique** across all 9 transactional sinks, and the job number in
+  every prefix and every `isolation.level` comment matches the real pipeline order (job1 pair-extractor
+  → job6 aggregator). Checked individually; do not re-check.
+- Leaving `job-type-validator`'s `control-plane` sink non-transactional is right — NiFi consumes it and
+  would otherwise need `read_committed` too.
+
+**⚠ The unpriced consequence of EXACTLY_ONCE: end-to-end latency.** A record is invisible downstream
+until the producing job's checkpoint commits, so each of the 6 transactional hops adds up to one
+checkpoint interval — roughly **30s average, 60s worst case**, against sub-second before. Nothing in
+the branch or in this document acknowledged that, and `lpa-staleness-exporter`'s
+`output_threshold_seconds: 10` on the aggregated family is now below the added latency of the last hop
+alone. Three ways out, none chosen yet: accept it, drop the interval to ~2s, or keep the middle hops
+on `AT_LEAST_ONCE` and reserve `EXACTLY_ONCE` for the terminal sinks. **This is a product decision and
+is still open.**
+
 **Still not done** (out of scope for this pass — flag before relying on them): **M5** (`.uid()` on
 every operator — needed before a checkpoint can be restored across a topology-changing redeploy, and
 nobody added it here), **S2** (`pipeline.max-parallelism`), **S6** (stop-with-savepoint deploys), and
