@@ -567,6 +567,26 @@ User's call: put production in its own file and give the developers theirs back.
       `web/internal/kafka/consumer.go` and `e2e/consumer/consumer.go`. All four build clean.
       **Rule going forward: making a sink transactional is a change to every consumer of that topic,
       in every language.**
+- [ ] **⚠ ESCALATED 2026-09-02 by the user: "30 sec delay for an event in an ETL system is
+      catastrophic."** Full analysis in [[project_flink_production]] §11 and the published report.
+      `added_latency ≈ hops × interval ÷ 2` — 6 transactional hops × the 10 s default = ~30 s avg /
+      ~60 s worst, and it is NOT tunable (1 s avg would need a ~330 ms interval; `minPause` is
+      `interval/5` and `maxConcurrentCheckpoints` is 1). **Recommended: `AT_LEAST_ONCE` on the six
+      intermediate sinks, keep checkpointing — zero added latency, consumers need no change, and
+      duplicates are near-harmless because job 2 rejects them as `stale_or_duplicate` (not a resync
+      trigger). NOT yet decided.** Do this in order:
+    - [ ] **Measure first with `pipeline_timings`** (`book_build_out − event_time`) under
+          `EXACTLY_ONCE`. Nothing above is measured — it is arithmetic
+    - [ ] **Put a FLOOR under `staleness_threshold_seconds`.** Arrivals now step at the commit
+          cadence, so any threshold near the interval fires on healthy markets. The 2026-09-01 live
+          run used **20 s** — two commit cycles. No market below ~3 × the interval; a `CHECK`
+          constraint would make it hard to get wrong
+    - [ ] **A checkpoint-failure storm now looks exactly like a market-wide outage.** Tolerable 3 ×
+          timeout 120 s ⇒ minutes with no commits, every market downstream silent, and job 2 asks for
+          a snapshot for EVERY one. The cold-start burst, triggerable by a slow disk
+    - [ ] **Pin `CHECKPOINT_INTERVAL_MS` in compose** — set nowhere today, same gap as
+          `SNAPSHOT_RETRY_MS` and `REFRESH_INTERVAL_MS`
+    - [ ] **Raise the exporter's `output_threshold_seconds`** from 10 s, which is below ONE hop
 - [ ] **OPEN PRODUCT DECISION — EXACTLY_ONCE latency.** Records are invisible downstream until the
       producing job checkpoints, so 6 transactional hops add ~30s average / 60s worst case, against
       sub-second before. `lpa-staleness-exporter`'s `output_threshold_seconds: 10` is now below the

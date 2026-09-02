@@ -1152,3 +1152,64 @@ See [[flink-deploy-tooling]] for what these scripts and targets actually do.
 - **Whether `enable.idempotence=true` conflicts with anything in the current producer setup.** It
   constrains `max.in.flight.requests.per.connection` and `retries`; on modern clients the defaults
   are compatible, but confirm no job overrides those.
+
+## 11 · EXACTLY_ONCE costs ~30 s of end-to-end latency (2026-09-02, user escalation)
+
+**The user's verdict, and it is the right one: "30 sec delay for an event in an ETL system is
+catastrophic."** This is a live order book. The backlog already carried this as an "OPEN PRODUCT
+DECISION"; it is not a tuning item, it is a product-killing one, and it needs deciding.
+
+**It is arithmetic, not a misconfiguration.** `added_latency ≈ hops × checkpoint_interval ÷ 2`. An
+`EXACTLY_ONCE` sink writes into an open Kafka transaction and commits only on checkpoint completion;
+every consumer is now `read_committed`, so the record does not exist downstream until that commit.
+Measured from the code: `CHECKPOINT_INTERVAL_MS` default **10 000 ms** (set NOWHERE in either compose
+file) × **6** transactional hops (jobs 1–6; **merger and adjustment were never converted — no
+EXACTLY_ONCE sink and no `CheckpointingConfigurer.configure` call — so they add nothing**) = **~30 s
+average, ~60 s worst**, and `checkpointTimeout` is 120 s so the real tail is worse than 60 s.
+
+**You cannot tune out of it.** 1 s average across 6 hops needs a ~330 ms interval; `minPause` is
+derived as `interval / 5` (66 ms) and `maxConcurrentCheckpoints` is 1, so that configuration does not
+run. **Six chained transactional hops and a live order book are incompatible requirements.**
+
+**Three downstream breakages nobody had noticed** (the reason this is worse than the latency alone —
+delivery is now BURSTY at commit boundaries, and several things were sized for a continuous stream):
+
+- **`staleness_threshold_seconds` now has a FLOOR.** Job 2 measures wall-clock gaps between
+  arrivals, which now step at job 1's ~10 s commit cadence. The 2026-09-01 live run used a threshold
+  of **20 s** — two commit cycles. One slow checkpoint and job 2 declares a HEALTHY market stale,
+  empties its book and asks NiFi for a snapshot. The seeded default of 60 s is safe by luck.
+  **Rule: no market below ~3 × checkpoint interval.**
+- **A checkpoint failure is indistinguishable from a market-wide outage.** Tolerable failures 3 ×
+  timeout 120 s ⇒ a job can go minutes without committing while still counting healthy; every market
+  downstream goes silent at once and job 2 fires a `snapshot_request` for EVERY one. That is the
+  cold-start burst, now triggerable by a slow disk.
+- **The 2026-09-01 unsubscribe RESET is slowed by 3 transactional hops** (jobs 2→3→4→5, ~15 s avg /
+  ~30 s worst) before the book actually clears, partly undoing the fix it was written for.
+- Plus the already-known `lpa-staleness-exporter` `output_threshold_seconds: 10`, below ONE hop.
+
+**One thing is right and must stay right: job 2's `control-plane` sink was NOT converted**, so
+snapshot requests reach NiFi immediately instead of waiting for a commit.
+
+**Be fair about what it bought.** The cross-job replay risk is genuinely closed: records written
+after a checkpoint sit in a transaction that gets aborted, so a downstream job that never restarted
+never saw them, and the replay is its first delivery. The question is not whether it works — it is
+whether the price is payable here.
+
+**Recommendation (NOT yet decided by the user): `AT_LEAST_ONCE` on the six intermediate sinks, keep
+checkpointing.** Zero added visibility latency — `AT_LEAST_ONCE` writes immediately and only FLUSHES
+at checkpoint for durability, there is no transaction gating visibility (⚠ do not confuse this with
+the older note that "`AT_LEAST_ONCE` is inert WITHOUT checkpointing"; that was about durability).
+State recovery is kept. Duplicates on restart are near-harmless in this specific pipeline: job 2
+rejects a replayed update as `stale_or_duplicate`, which is **not** a resync trigger so it is dropped
+silently; jobs 3/4 are stateless; job 5 writes `price → quantity` so a repeat writes the same value;
+replay preserves per-partition order, so this is duplication and not reordering. **Consumers need no
+change** — `read_committed` reads non-transactional topics normally. Rejected: lowering the interval
+(insufficient), EXACTLY_ONCE on terminal sinks only (worst of both — exactness at the last hop means
+little when the five feeding it can duplicate). Strategic answer if end-to-end exactness ever becomes
+a hard requirement is the one-JobGraph merge, keeping the per-stage topics as `AT_LEAST_ONCE` side
+outputs so each team still gets its stage.
+
+**⚠ NOTHING HERE IS MEASURED.** The numbers are arithmetic from the configured interval and hop
+count. `pipeline_timings` is on every record (`book_build_out − event_time`) and is the instrument to
+settle it — take the real number under `EXACTLY_ONCE` before and after. Full report published as an
+artifact 2026-09-02.
