@@ -1,0 +1,61 @@
+# ⚠ THIS DELIVERS NOWHERE UNTIL A RECEIVER IS FILLED IN.
+#
+# Alertmanager is here because M9 asked for it and because the grouping and
+# inhibition below are worth having in place, but the project has no agreed
+# notification channel — no Slack webhook, no SMTP host — so the default
+# receiver is intentionally empty (the upstream `- name: 'null'` idiom). Firing
+# alerts are still visible on Alertmanager's own UI at host port 9093 and at
+# Prometheus's /alerts; they just do not reach anyone who is not looking.
+#
+# To make it deliver, put a real integration under the `default` receiver.
+# Nothing else in this file needs to change.
+
+global:
+    resolve_timeout: 5m
+
+route:
+    receiver: default
+    # By alertname and severity rather than by instance: when a TaskManager
+    # dies it takes several jobs with it, and those belong in one notification.
+    group_by: ["alertname", "severity"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+inhibit_rules:
+    # A dead JobManager makes every job-scope series disappear, so the derived
+    # alerts fire in the same minute and resolve on their own once it comes
+    # back. No `equal:` — there is no label shared between the JobManager alert
+    # and the job-scope ones, and an empty `equal` inhibits every match, which
+    # is exactly the intent. Targets are named explicitly so the rule cannot
+    # match the source alert itself.
+    - source_matchers: ["alertname = FlinkJobManagerDown"]
+      target_matchers:
+          - "alertname =~ FlinkJobCountWrong|FlinkTaskManagersMissing|FlinkJobRestarting|FlinkJobRestartLoop|FlinkTaskBackPressured|FlinkKafkaSourceLag|FlinkCheckpointsFailing|FlinkCheckpointsNotCompleting|FlinkCheckpointDurationHigh"
+
+    # A job in a restart loop always trips the any-restart warning too. Keep the
+    # critical one, drop the duplicate — matched on job_name so only the looping
+    # job is silenced.
+    - source_matchers: ["alertname = FlinkJobRestartLoop"]
+      target_matchers: ["alertname = FlinkJobRestarting"]
+      equal: ["job_name"]
+
+    # A job that cannot checkpoint at all exhausts its failure budget (3, set in
+    # CheckpointingConfigurer), fails, restarts, and does it again. The restart
+    # alerts are the symptom and this is the cause, so let the cause through and
+    # silence the symptom, same job only. This is the exact failure the first live
+    # checkpointing run hit, when the budget was still Flink's default of 0.
+    - source_matchers: ["alertname = FlinkCheckpointsFailing"]
+      target_matchers: ["alertname =~ FlinkJobRestarting|FlinkJobRestartLoop"]
+      equal: ["job_name"]
+
+receivers:
+    - name: default
+      # Fill this in. For example:
+      #
+      # slack_configs:
+      #     - api_url: <webhook>
+      #       channel: "#alerts"
+      #
+      # or webhook_configs / email_configs. Left empty deliberately rather than
+      # pointed at a placeholder URL that would fail on every single alert.

@@ -8,15 +8,21 @@ POSTGRES_DB="${POSTGRES_DB:-markets}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://localhost:8082}"
 AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT="${AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT:-aggregated-order-book-event}"
+MERGED_ORDER_BOOK_SCHEMA_SUBJECT="${MERGED_ORDER_BOOK_SCHEMA_SUBJECT:-merged-order-book-event}"
 RAW_ORDER_BOOK_SCHEMA_SUBJECT="${RAW_ORDER_BOOK_SCHEMA_SUBJECT:-raw-order-book-event}"
 ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT="${ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT:-order-book-snapshot}"
 REJECTED_ORDER_BOOK_SCHEMA_SUBJECT="${REJECTED_ORDER_BOOK_SCHEMA_SUBJECT:-rejected-order-book-event}"
+CONTROL_COMMAND_SCHEMA_SUBJECT="${CONTROL_COMMAND_SCHEMA_SUBJECT:-control-command}"
+ADJUSTED_ORDER_BOOK_SCHEMA_SUBJECT="${ADJUSTED_ORDER_BOOK_SCHEMA_SUBJECT:-adjusted-order-book-event}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AGGREGATED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/aggregated_order_book_event.avsc"
+MERGED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/merged_order_book_event.avsc"
 RAW_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/raw_order_book_event.avsc"
 ORDER_BOOK_SNAPSHOT_SCHEMA_FILE="$SCRIPT_DIR/../schemas/order_book_snapshot.avsc"
 REJECTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/rejected_order_book_event.avsc"
+CONTROL_COMMAND_SCHEMA_FILE="$SCRIPT_DIR/../schemas/control_command.avsc"
+ADJUSTED_ORDER_BOOK_SCHEMA_FILE="$SCRIPT_DIR/../schemas/adjusted_order_book_event.avsc"
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required but not installed."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required but not installed."; exit 1; }
@@ -51,9 +57,15 @@ register_schema() {
 # --- Schema Registry ---
 
 register_schema "$AGGREGATED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$AGGREGATED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$MERGED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$MERGED_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$RAW_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$RAW_ORDER_BOOK_SCHEMA_FILE"
 register_schema "$ORDER_BOOK_SNAPSHOT_SCHEMA_SUBJECT" "AVRO" "$ORDER_BOOK_SNAPSHOT_SCHEMA_FILE"
 register_schema "$REJECTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$REJECTED_ORDER_BOOK_SCHEMA_FILE"
+register_schema "$CONTROL_COMMAND_SCHEMA_SUBJECT" "AVRO" "$CONTROL_COMMAND_SCHEMA_FILE"
+# flink/adjustment's output. The e2e harness registers every schemas/*.avsc on its own, so a
+# missing line HERE is invisible to a green e2e run and only shows up as the adjustment job dying
+# at its first emit — exactly how control-command was broken for two days.
+register_schema "$ADJUSTED_ORDER_BOOK_SCHEMA_SUBJECT" "AVRO" "$ADJUSTED_ORDER_BOOK_SCHEMA_FILE"
 
 # --- Kafka Topics ---
 
@@ -75,10 +87,11 @@ fi
 
 echo "Creating Kafka topics..."
 
-RAW_RETENTION_MS=604800000    # 7 days
+RAW_RETENTION_MS=172800000    # 2 days
 INPUT_RETENTION_MS=3600000    # 1 hour
 OUTPUT_RETENTION_MS=21600000  # 6 hours
-REJECTED_RETENTION_MS=604800000  # 7 days — dead-letter is an audit point, read by hand long after the fact
+REJECTED_RETENTION_MS=172800000  # 2 days — dead-letter is an audit point, read by hand long after the fact
+CONTROL_RETENTION_MS=3600000  # 1 hour — a stale command has no value once the gap it addressed is resolved
 
 create_topic() {
     local topic="$1"
@@ -93,6 +106,11 @@ create_topic() {
         --replication-factor 1 \
         --config "retention.ms=$retention_ms"
 }
+
+# Control plane — one shared topic, independent of which pairs are subscribed.
+# Created unconditionally (not from the `pairs` query) since NiFi needs it regardless of
+# how many markets are currently active.
+create_topic "control-plane" "$CONTROL_RETENTION_MS"
 
 # Normalizer topics — the raw pipeline's intermediate stages, one family per job output.
 # Created FIRST because every normalizer source reads from `latest`: a topic that does not exist
@@ -119,11 +137,19 @@ while IFS='|' read -r exchange_id; do
     create_topic "ex${exchange_id}-raw" "$RAW_RETENTION_MS"
 done <<< "$distinct_exchanges"
 
-# Output topics — one per pair+side (Flink aggregation writes the aggregated book here).
+# Output topics — one per pair+side. Two parallel views of the same cross-exchange book:
+#   p{id}-{side}          normalizer job 6 — levels UNIONED, each keeping its own exchange_id
+#   p{id}-{side}-merged   flink/merger     — levels SUMMED, one per price, exchange_ids as a list
+#   p{id}-{side}-adjusted flink/adjustment — job 6's record, adjusted (step 1: passed through)
+# The -merged and -adjusted families are created here (not in their own projects) for the same
+# reason as every other topic: their sources read from `latest`, so the topic must exist before the
+# job starts. Auto-creation would also give them the broker default retention, not this one.
 distinct_pairs=$(echo "$pairs" | cut -d'|' -f1 | sort -u)
 while IFS='|' read -r pair_id; do
     for side in asks bids; do
         create_topic "p${pair_id}-${side}" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}-merged" "$OUTPUT_RETENTION_MS"
+        create_topic "p${pair_id}-${side}-adjusted" "$OUTPUT_RETENTION_MS"
     done
 done <<< "$distinct_pairs"
 

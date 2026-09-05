@@ -64,6 +64,32 @@ class SnapshotSplitterTest {
     }
 
     @Test
+    @DisplayName("the snapshot's simulation flag is stamped onto every level of both sides")
+    void stampsSimulationOnEveryLevel() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
+                8, 1, 1_700_000_000_000L, 42L,
+                levels("100", "1", "101", "2"), levels("99", "3"));
+        snapshot.setSimulation(1);
+
+        List<ExchangeBook> out = split(snapshot);
+
+        assertThat(out).flatExtracting(ExchangeBook::getLevels)
+                .extracting(AggregatedLevel::getSimulation)
+                .containsOnly(1);
+    }
+
+    @Test
+    @DisplayName("an unflagged snapshot leaves every level at 0 (live data)")
+    void defaultsSimulationToZero() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
+                3, 1, 1_700_000_000_000L, null, levels("100", "1"), levels("99", "1"));
+
+        assertThat(split(snapshot)).flatExtracting(ExchangeBook::getLevels)
+                .extracting(AggregatedLevel::getSimulation)
+                .containsOnly(0);
+    }
+
+    @Test
     @DisplayName("an empty book (reset) yields two empty ExchangeBooks so the exchange drops out")
     void emptyBookYieldsEmptySides() {
         OrderBookSnapshot reset = new OrderBookSnapshot(
@@ -85,6 +111,26 @@ class SnapshotSplitterTest {
 
         assertThat(out.get(0).getLevels()).hasSize(1);
         assertThat(out.get(1).getLevels()).isEmpty();
+    }
+
+    /**
+     * The splitter is where a level's parent is decided: every level of both sides is stamped with
+     * the snapshot's id, so the aggregator downstream can stay a pure union and never has to
+     * work out where a level came from.
+     */
+    @Test
+    @DisplayName("stamps the snapshot's id onto every level of both sides")
+    void stampsSnapshotIdOnEveryLevel() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(
+                6, 1, 1_700_000_000_000L, 5L, levels("101", "1", "102", "2"), levels("100", "3"));
+        snapshot.setId("66666666-6666-4666-8666-666666666666");
+
+        List<ExchangeBook> out = split(snapshot);
+
+        assertThat(out.get(0).getLevels()).extracting(AggregatedLevel::getSourceId)
+                .containsOnly("66666666-6666-4666-8666-666666666666");
+        assertThat(out.get(1).getLevels()).extracting(AggregatedLevel::getSourceId)
+                .containsOnly("66666666-6666-4666-8666-666666666666");
     }
 
     /** Minimal Collector that appends to a list — the splitter uses only collect(). */

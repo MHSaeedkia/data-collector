@@ -1,0 +1,59 @@
+kafka:
+  bootstrap_servers: "kafka:29092"
+
+# Also the resolution of the staleness-episode metrics: a topic going stale and
+# recovering inside one interval is never observed, and every episode timestamp and
+# duration is accurate only to within this many seconds.
+poll_interval_seconds: 20
+
+# Where the watch list comes from:
+#   both   — postgres-derived topics merged with the `topics:` block below; a manual
+#            entry wins on a name collision (default)
+#   db     — postgres only. The `topics:` block is ignored ENTIRELY, so the ex{id}-raw
+#            topics listed there stop being monitored
+#   config — the `topics:` block only; postgres is never queried
+# An unrecognised value logs an error and falls back to `both`.
+topic_source: config
+
+# How often to re-read the active topic list from postgres (seconds).
+# Not used when topic_source is `config`.
+db_refresh_interval_seconds: 60
+
+# Used for DB-sourced stage topics whose exchange_markets.staleness_threshold_seconds
+# is NULL.
+default_threshold_seconds: 60
+
+# Threshold for the DB-derived aggregated output topics p{pair_id}-{asks,bids}.
+# One value for the whole family: that book is per-pair and is written whenever any
+# exchange on the pair emits, so it has no single subscription row to inherit from.
+output_threshold_seconds: 10
+
+postgres:
+  host: postgres
+  port: 5432
+  db: markets
+  user: postgres
+  password: postgres
+
+# Manually listed topics — for anything NOT derivable from a subscription row.
+# Names must exactly match the topic names on Kafka (see scripts/warmup.sh).
+# These always override a same-named DB entry.
+#
+# Everything per-exchange+pair is derived from postgres instead of being listed here:
+#   ex{exchange_id}-p{pair_id}-{stage}  for the five normalizer stages
+#   p{pair_id}-{asks,bids}              for the aggregated output
+# The dead-letter ex{id}-p{id}-rejected-flink is intentionally not monitored — a silent
+# dead-letter means the pipeline is healthy, so staleness there is the normal state.
+#
+# ex{exchange_id}-raw is one topic per exchange (NiFi publishes verbatim exchange
+# payloads here), not one per subscription, so it stays listed by hand.
+topics:
+  ex1-raw: 30
+  ex2-raw: 30
+  ex3-raw: 30
+  ex4-raw: 30
+  ex5-raw: 30
+  ex6-raw: 30
+  ex7-raw: 30
+  ex8-raw: 30
+  ex9-raw: 30

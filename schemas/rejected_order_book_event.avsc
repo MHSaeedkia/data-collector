@@ -26,6 +26,24 @@
 						}
 					},
 					{
+						"name": "simulation",
+						"type": "int",
+						"default": 0,
+						"doc": "Carried from the raw event that was rejected. 0 = live, 1 = simulation."
+					},
+					{
+						"name": "id",
+						"type": "string",
+						"default": "",
+						"doc": "The rejected event's own id — the one job 1 minted when it wrote the event to the raw topic. NOT the dead-letter record's id; that is the envelope's id below."
+					},
+					{
+						"name": "source_ids",
+						"type": { "type": "array", "items": "string" },
+						"default": [],
+						"doc": "The rejected event's own source_ids, verbatim."
+					},
+					{
 						"name": "sequence_id",
 						"type": ["null", "long"],
 						"default": null
@@ -33,6 +51,12 @@
 					{
 						"name": "sequence_jump",
 						"type": "long"
+					},
+					{
+						"name": "sequence_jump_tolerance",
+						"type": "long",
+						"default": 0,
+						"doc": "The rejected event's own sequence_jump_tolerance, verbatim."
 					},
 					{
 						"name": "event_time",
@@ -86,6 +110,18 @@
 					}
 				]
 			}
+		},
+		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "UUID minted by job 2 for this dead-letter record. The dead-letter topic is a topic, so writing to it mints an id like any other emit."
+		},
+		{
+			"name": "source_ids",
+			"type": { "type": "array", "items": "string" },
+			"default": [],
+			"doc": "Always exactly the rejected event's id — this record has one parent, the event being dead-lettered."
 		},
 		{
 			"name": "reject_reason",

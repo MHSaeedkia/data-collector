@@ -153,6 +153,7 @@
 		<header>
 			<h1>Live Order Book</h1>
 			<select id="pair"></select>
+			<select id="exchange"></select>
 			<span class="status"
 				><span class="dot" id="dot"></span
 				><span id="conn">connecting…</span></span
@@ -166,50 +167,101 @@
 		</main>
 
 		<script>
-			const books = {}; // `${base}_{quote}__${side}` -> book object
-			let selectedPair = null;
+			// The server pushes only the pair+exchange this client selected,
+			// so we hold exactly one book per side and the dropdown contents
+			// come from the catalog message rather than from the data.
+			let catalog = { markets: [], exchanges: [] };
+			// The exchange_id vocabulary, kept in step with the constants of
+			// the same name in internal/domain: an exchange_id is either a
+			// real exchange (postgres ids, from 1 up) or one of the two
+			// cross-exchange views below. Never write the bare numbers.
+			const AGGREGATED = 0; // job 6's union: levels side by side
+			const MERGED = -1; // the merger's sum: one level per price
+			let selectedPair = null; // market id
+			let selectedExchange = AGGREGATED;
+			let books = { asks: null, bids: null };
+			let ws = null;
 
 			const $pair = document.getElementById("pair");
+			const $exchange = document.getElementById("exchange");
 			const $book = document.getElementById("book");
 			const $meta = document.getElementById("meta");
 			const $dot = document.getElementById("dot");
 			const $conn = document.getElementById("conn");
 
+			// The mirror of domain.Book.ExchangeID(). Merged is checked first
+			// because `exchange` is absent on both cross-exchange views.
+			function bookExchangeID(book) {
+				if (book.merged) return MERGED;
+				return book.exchange ? book.exchange.id : AGGREGATED;
+			}
+
 			function store(book) {
-				if (!book || !book.base || !book.quote || !book.side) return;
-				books[`${book.base}/${book.quote}__${book.side}`] = book;
-				if (!selectedPair) selectedPair = `${book.base}_${book.quote}`;
-			}
-
-			function pairs() {
-				console.table(books);
-				return [
-					...new Set(
-						Object.values(books).map((b) => {
-							return `${b.base}/${b.quote}`;
-						}),
-					),
-				].sort();
-			}
-
-			function refreshDropdown() {
-				const list = pairs();
+				// A book for the previous selection can still be in flight
+				// when the dropdown changes; drop it rather than render it.
+				if (!book || !book.side) return;
 				if (
-					list.length === $pair.options.length &&
-					list.every(
-						(p, i) =>
-							$pair.options[i] && $pair.options[i].value === p,
-					)
+					book.pair_id !== selectedPair ||
+					bookExchangeID(book) !== selectedExchange
 				)
 					return;
-				$pair.innerHTML = "";
-				for (const p of list) {
+				books[book.side] = book;
+			}
+
+			function fillSelect($el, options, value) {
+				$el.innerHTML = "";
+				for (const o of options) {
 					const opt = document.createElement("option");
-					opt.value = p;
-					opt.textContent = p;
-					$pair.appendChild(opt);
+					opt.value = o.value;
+					opt.textContent = o.text;
+					$el.appendChild(opt);
 				}
-				if (selectedPair) $pair.value = selectedPair;
+				$el.value = String(value);
+			}
+
+			function refreshDropdowns() {
+				const markets = catalog.markets || [];
+				// Fall back to the first market when nothing is selected yet,
+				// or when the selected one disappeared from the catalog.
+				if (!markets.some((m) => m.id === selectedPair)) {
+					selectedPair = markets.length ? markets[0].id : null;
+				}
+				fillSelect(
+					$pair,
+					markets.map((m) => ({
+						value: m.id,
+						text: `${m.base}/${m.quote}`,
+					})),
+					selectedPair,
+				);
+				fillSelect(
+					$exchange,
+					[
+						{ value: AGGREGATED, text: "All exchanges (aggregated)" },
+						{ value: MERGED, text: "All exchanges (merged)" },
+						...(catalog.exchanges || []).map((e) => ({
+							value: e.id,
+							text: e.name,
+						})),
+					],
+					selectedExchange,
+				);
+			}
+
+			// Tell the server what to send us, and clear what we hold: the
+			// books on screen belong to the old selection.
+			function sendSelect() {
+				books = { asks: null, bids: null };
+				render();
+				if (selectedPair === null) return;
+				if (!ws || ws.readyState !== WebSocket.OPEN) return;
+				ws.send(
+					JSON.stringify({
+						type: "select",
+						pair_id: selectedPair,
+						exchange_id: selectedExchange,
+					}),
+				);
 			}
 
 			function decimalPlaces(str) {
@@ -227,24 +279,44 @@
 				return str + "0".repeat(places - current);
 			}
 
-			function rows(levels, priceDecimals, qtyDecimals) {
+			// A merged level was summed across exchanges, so it names them
+			// all — that list is the answer to "who is behind this quantity?",
+			// which is the first thing a reader of a merged level asks.
+			function exchangeNames(l) {
+				if (l.exchanges) return l.exchanges.map((e) => e.name).join(", ");
+				return l.exchange.name;
+			}
+
+			function rows(levels, priceDecimals, qtyDecimals, showExchange) {
 				return levels
 					.map(
 						(l) =>
-							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td><td class="exch">${l.exchange.name}</td></tr>`,
+							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td>${showExchange ? `<td class="exch">${exchangeNames(l)}</td>` : ""}</tr>`,
 					)
 					.join("");
 			}
 
 			function render() {
-				if (!selectedPair) return;
-				const asks = books[`${selectedPair}__asks`];
-				const bids = books[`${selectedPair}__bids`];
-				if (!asks && !bids) {
+				if (selectedPair === null) {
 					$book.innerHTML =
-						'<div class="empty">No data for this pair yet…</div>';
+						'<div class="empty">Waiting for data…</div>';
+					$meta.textContent = "";
 					return;
 				}
+				const asks = books.asks;
+				const bids = books.bids;
+				if (!asks && !bids) {
+					$book.innerHTML =
+						'<div class="empty">No data for this selection yet…</div>';
+					$meta.textContent = "";
+					return;
+				}
+				// The exchange column is only worth its width when the book
+				// mixes exchanges — the two cross-exchange views, not a
+				// single exchange's own book (where it is one constant value).
+				const showExchange =
+					selectedExchange === AGGREGATED ||
+					selectedExchange === MERGED;
 
 				// asks come ascending (lowest first); show highest at top so best ask sits by the spread.
 				const askLevels = asks ? [...asks.levels].reverse() : [];
@@ -273,15 +345,14 @@
 					...allLevels.map((l) => decimalPlaces(l.quantity)),
 				);
 
-				const head =
-					'<tr><th>Price</th><th>Qty</th><th class="exch">Exchange</th></tr>';
+				const head = `<tr><th>Price</th><th>Qty</th>${showExchange ? `<th class="exch">${selectedExchange === MERGED ? "Exchanges" : "Exchange"}</th>` : ""}</tr>`;
 				$book.innerHTML = `
-        <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels, priceDecimals, qtyDecimals)}</tbody></table>
+        <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels, priceDecimals, qtyDecimals, showExchange)}</tbody></table>
         <div class="spread">
           <span>spread</span>
           <span>${spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 8 }) : "—"}</span>
         </div>
-        <table class="bids"><tbody>${rows(bidLevels, priceDecimals, qtyDecimals)}</tbody></table>
+        <table class="bids"><tbody>${rows(bidLevels, priceDecimals, qtyDecimals, showExchange)}</tbody></table>
       `;
 
 				const t = Math.max(
@@ -292,15 +363,21 @@
 			}
 
 			$pair.addEventListener("change", () => {
-				selectedPair = $pair.value;
-				render();
+				selectedPair = Number($pair.value);
+				sendSelect();
+			});
+
+			$exchange.addEventListener("change", () => {
+				selectedExchange = Number($exchange.value);
+				sendSelect();
 			});
 
 			function connect() {
-				const ws = new WebSocket(`ws://${location.host}/ws`);
+				ws = new WebSocket(`ws://${location.host}/ws`);
 				ws.onopen = () => {
 					$dot.classList.add("on");
 					$conn.textContent = "live";
+					sendSelect(); // re-subscribe after a reconnect
 				};
 				ws.onclose = () => {
 					$dot.classList.remove("on");
@@ -309,12 +386,27 @@
 				};
 				ws.onmessage = (ev) => {
 					const msg = JSON.parse(ev.data);
-					if (msg.type === "snapshot") msg.books.forEach(store);
-					else if (msg.type === "update") store(msg.book);
-					refreshDropdown();
+					if (msg.type === "catalog") {
+						catalog = msg;
+						const was = selectedPair;
+						refreshDropdowns();
+						// Only re-subscribe if the catalog moved us off the
+						// pair we were on (first load, or it disappeared).
+						if (selectedPair !== was) {
+							sendSelect();
+							return;
+						}
+					} else if (msg.type === "snapshot") {
+						books = { asks: null, bids: null };
+						msg.books.forEach(store);
+					} else if (msg.type === "update") {
+						store(msg.book);
+					}
 					render();
 				};
 			}
+			refreshDropdowns();
+			render();
 			connect();
 		</script>
 	</body>

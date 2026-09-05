@@ -1,0 +1,89 @@
+{
+	"type": "record",
+	"name": "AdjustedOrderBookEvent",
+	"namespace": "io.tibobit.orderbook",
+	"doc": "flink/adjustment's output on p{pair_id}-{side}-adjusted: job 6's aggregated book with every level's price moved by the commission, profit and slippage stages, and the rates that were applied carried alongside so a consumer can see what was done to the price. All three rates are PER-LEVEL (2026-08-25) — looked up per (exchange_id, pair_id), because one book unions levels from multiple exchanges and a record-wide rate can't represent a rate that varies by exchange.",
+	"fields": [
+		{
+			"name": "pair_id",
+			"type": "int"
+		},
+		{
+			"name": "side",
+			"type": {
+				"type": "enum",
+				"name": "Side",
+				"symbols": ["asks", "bids"]
+			}
+		},
+		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "Carried through from the aggregated record this was adjusted from — the adjustment job does not currently mint an id of its own. See the open lineage question in memory/project_adjustment.md."
+		},
+		{
+			"name": "event_time",
+			"type": {
+				"type": "long",
+				"logicalType": "timestamp-millis"
+			}
+		},
+		{
+			"name": "levels",
+			"type": {
+				"type": "array",
+				"items": {
+					"type": "record",
+					"name": "AdjustedLevel",
+					"fields": [
+						{
+							"name": "exchange_id",
+							"type": "int"
+						},
+						{
+							"name": "simulation",
+							"type": "int",
+							"default": 0,
+							"doc": "The contributing exchange's simulation flag, carried through from the aggregated level. 0 = live, 1 = simulation."
+						},
+						{
+							"name": "source_id",
+							"type": "string",
+							"default": "",
+							"doc": "id of the job-5 snapshot this level came from, carried through unchanged from the aggregated level."
+						},
+						{
+							"name": "our_profit_percent",
+							"type": "string",
+							"default": "0",
+							"doc": "Our own margin applied to THIS level, as a PERCENT. Looked up per (exchange_id, pair_id) from exchange_markets — not a record-level rate, because one book unions levels from multiple exchanges and the margin can differ per exchange for the same market. A string for exact BigDecimal arithmetic, like price and quantity."
+						},
+						{
+							"name": "slippage_percent",
+							"type": "string",
+							"default": "0",
+							"doc": "The slippage allowance applied to THIS level, as a PERCENT. Same per-(exchange_id, pair_id) lookup as our_profit_percent, for the same reason: it can vary by exchange even for the same market."
+						},
+						{
+							"name": "buy_sell_commission_percent",
+							"type": "string",
+							"default": "0",
+							"doc": "The buy/sell commission applied to THIS level, as a PERCENT (e.g. \"0.35\" means 0.35%, a multiplier of 1.0035 on asks and 0.9965 on bids). Moved here from the record level (2026-08-25) for the same reason our_profit_percent/slippage_percent are per-level: one book unions levels from multiple exchanges, and the commission can differ per exchange for the same market."
+						},
+						{
+							"name": "price",
+							"type": "string",
+							"doc": "The ADJUSTED price: the aggregated price with all three rates applied. The original is not carried — see memory/project_adjustment.md if that is ever wanted."
+						},
+						{
+							"name": "quantity",
+							"type": "string",
+							"doc": "Carried through unchanged — the adjustment stages move price only."
+						}
+					]
+				}
+			}
+		}
+	]
+}

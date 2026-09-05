@@ -51,11 +51,12 @@ The Maven multi-module home of the 6 raw-pipeline jobs ([[raw-pipeline-decision]
 
 ## Deploy tooling
 
-- `flink/normalizer/run-job.sh <module>`: parameterized — builds with
-  `-pl <module> -am`, uploads to `FLINK_API` (default `http://localhost:7070`), submits via
-  manifest Main-Class, waits for RUNNING, dumps root cause + taskmanager logs on failure.
-  No-arg run prints available modules from the parent pom.
-- `Makefile`: `make run-local MODULE=job-x` / `run-remote` (192.168.150.104) / `test`.
+- **`flink/run-job.sh <job>`** — moved up out of `normalizer/` on 2026-08-11 and now serves every
+  project under `flink/`; see [[flink-deploy-tooling]] for how it discovers jobs. Uploads to
+  `FLINK_API` (default `http://localhost:7070`), submits via manifest Main-Class, waits for
+  RUNNING, dumps root cause + taskmanager logs on failure.
+- `flink/Makefile`: `make run-local JOB=job-x` / `run-remote` (192.168.150.104) / `test`.
+  The per-project Makefiles are gone — the arg is `JOB=`, not `MODULE=`.
 - `Dockerfile` + `confluent-deps-pom.xml`: build the one cluster image that hosts the 6
   normalizer jobs (Flink libs + confluent registry deps baked into `/opt/flink/lib/`).
 - `docker-compose.yml` (repo root): **the full stack** (user decision 2026-07-15) — jobmanager/

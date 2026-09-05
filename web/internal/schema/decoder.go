@@ -18,11 +18,23 @@ import (
 
 const magicByte = 0x0
 
+// The record types this app consumes, by Avro full name. Dispatching on
+// the writer schema's name rather than on the topic keeps topic strings
+// opaque past the consumer — and the name is the thing that actually
+// determines the payload shape.
+const (
+	aggregatedSchemaName = "io.tibobit.orderbook.AggregatedOrderBookEvent"
+	snapshotSchemaName   = "io.tibobit.orderbook.OrderBookSnapshot"
+	mergedSchemaName     = "io.tibobit.orderbook.MergedOrderBookEvent"
+)
+
 // wireLevel/wireEvent mirror aggregated_order_book_event.avsc for
 // decoding. EventTime is time.Time because hamba/avro maps the
 // timestamp-millis logical type to time.Time, not int64.
 type wireLevel struct {
 	ExchangeID int    `avro:"exchange_id"`
+	Simulation int    `avro:"simulation"`
+	SourceID   string `avro:"source_id"`
 	Price      string `avro:"price"`
 	Quantity   string `avro:"quantity"`
 }
@@ -30,8 +42,51 @@ type wireLevel struct {
 type wireEvent struct {
 	PairID    int         `avro:"pair_id"`
 	Side      string      `avro:"side"`
+	ID        string      `avro:"id"`
 	EventTime time.Time   `avro:"event_time"`
 	Levels    []wireLevel `avro:"levels"`
+}
+
+// wireMergedLevel/wireMerged mirror merged_order_book_event.avsc (the
+// merger). Same record shape as the aggregated event apart from the
+// level: quantities at one price are summed, so exchange_id/source_id
+// become the aligned lists of everything that went into the sum. The
+// record-level source_id is dropped like the aggregated one is — the UI
+// renders lineage per level, not per record.
+type wireMergedLevel struct {
+	Simulation  int      `avro:"simulation"`
+	ExchangeIDs []int    `avro:"exchange_ids"`
+	SourceIDs   []string `avro:"source_ids"`
+	Price       string   `avro:"price"`
+	Quantity    string   `avro:"quantity"`
+}
+
+type wireMerged struct {
+	PairID    int               `avro:"pair_id"`
+	Side      string            `avro:"side"`
+	ID        string            `avro:"id"`
+	EventTime time.Time         `avro:"event_time"`
+	Levels    []wireMergedLevel `avro:"levels"`
+}
+
+// wireSnapLevel/wireSnapshot mirror order_book_snapshot.avsc (job 5).
+// Fields the UI has no use for (trigger_id, last_sequence_id,
+// pipeline_timings) are simply absent — hamba skips schema fields with no
+// struct counterpart.
+type wireSnapLevel struct {
+	Price    string `avro:"price"`
+	Quantity string `avro:"quantity"`
+	SourceID string `avro:"source_id"`
+}
+
+type wireSnapshot struct {
+	ExchangeID int             `avro:"exchange_id"`
+	PairID     int             `avro:"pair_id"`
+	Simulation int             `avro:"simulation"`
+	ID         string          `avro:"id"`
+	EventTime  time.Time       `avro:"event_time"`
+	Asks       []wireSnapLevel `avro:"asks"`
+	Bids       []wireSnapLevel `avro:"bids"`
 }
 
 // Decoder decodes Confluent-wire-format Avro records, caching each
@@ -54,33 +109,128 @@ func NewDecoder(registryURL string) *Decoder {
 }
 
 // Decode parses the Confluent wire header, resolves the writer schema by
-// id, and decodes the Avro payload into a domain.RawBook.
-func (d *Decoder) Decode(value []byte) (domain.RawBook, error) {
+// id, and decodes the Avro payload into books. An aggregated record
+// yields one book; a job-5 snapshot holds both sides in one record and
+// yields two.
+func (d *Decoder) Decode(value []byte) ([]domain.RawBook, error) {
 	if len(value) < 5 || value[0] != magicByte {
-		return domain.RawBook{}, fmt.Errorf("not Confluent wire-format Avro: missing magic byte")
+		return nil, fmt.Errorf("not Confluent wire-format Avro: missing magic byte")
 	}
 	id := binary.BigEndian.Uint32(value[1:5])
 
 	sch, err := d.schemaByID(id)
 	if err != nil {
-		return domain.RawBook{}, fmt.Errorf("resolve schema %d: %w", id, err)
+		return nil, fmt.Errorf("resolve schema %d: %w", id, err)
 	}
 
+	named, ok := sch.(avro.NamedSchema)
+	if !ok {
+		return nil, fmt.Errorf("schema %d is not a named record", id)
+	}
+
+	switch named.FullName() {
+	case snapshotSchemaName:
+		return decodeSnapshot(sch, value[5:])
+	case aggregatedSchemaName:
+		return decodeAggregated(sch, value[5:])
+	case mergedSchemaName:
+		return decodeMerged(sch, value[5:])
+	default:
+		return nil, fmt.Errorf("unexpected schema %q", named.FullName())
+	}
+}
+
+func decodeAggregated(sch avro.Schema, payload []byte) ([]domain.RawBook, error) {
 	var we wireEvent
-	if err := avro.Unmarshal(sch, value[5:], &we); err != nil {
-		return domain.RawBook{}, fmt.Errorf("decode avro payload: %w", err)
+	if err := avro.Unmarshal(sch, payload, &we); err != nil {
+		return nil, fmt.Errorf("decode avro payload: %w", err)
 	}
 
 	levels := make([]domain.RawLevel, len(we.Levels))
 	for i, l := range we.Levels {
-		levels[i] = domain.RawLevel{ExchangeID: l.ExchangeID, Price: l.Price, Quantity: l.Quantity}
+		levels[i] = domain.RawLevel{
+			ExchangeID: l.ExchangeID,
+			Simulation: l.Simulation,
+			SourceID:   l.SourceID,
+			Price:      l.Price,
+			Quantity:   l.Quantity,
+		}
 	}
-	return domain.RawBook{
+	return []domain.RawBook{{
 		PairID:    we.PairID,
 		Side:      we.Side,
+		ID:        we.ID,
 		Levels:    levels,
 		EventTime: we.EventTime.UnixMilli(),
-	}, nil
+	}}, nil
+}
+
+// decodeMerged maps a merged record onto the same RawBook the other two
+// producers land in, keeping the lists intact rather than flattening them
+// to a first exchange — losing "who is behind this quantity" would defeat
+// the point of showing the merged view at all. Merged is set on the book
+// because it is what the browser routes on: a merged book has no
+// exchange_id of its own (see domain's exchange_id vocabulary).
+func decodeMerged(sch avro.Schema, payload []byte) ([]domain.RawBook, error) {
+	var wm wireMerged
+	if err := avro.Unmarshal(sch, payload, &wm); err != nil {
+		return nil, fmt.Errorf("decode avro payload: %w", err)
+	}
+
+	levels := make([]domain.RawLevel, len(wm.Levels))
+	for i, l := range wm.Levels {
+		levels[i] = domain.RawLevel{
+			Simulation:  l.Simulation,
+			ExchangeIDs: l.ExchangeIDs,
+			SourceIDs:   l.SourceIDs,
+			Price:       l.Price,
+			Quantity:    l.Quantity,
+		}
+	}
+	return []domain.RawBook{{
+		PairID:    wm.PairID,
+		Merged:    true,
+		Side:      wm.Side,
+		ID:        wm.ID,
+		Levels:    levels,
+		EventTime: wm.EventTime.UnixMilli(),
+	}}, nil
+}
+
+// decodeSnapshot splits job 5's two-sided record into one book per side
+// and pushes its record-level exchange_id/simulation down onto every
+// level, so the rest of the app sees the same shape the aggregator
+// produces. Both sides are always emitted, including empty ones: an empty
+// side is a real report of "no liquidity here" (a reset empties both),
+// and dropping it would leave the previous book on screen.
+func decodeSnapshot(sch avro.Schema, payload []byte) ([]domain.RawBook, error) {
+	var ws wireSnapshot
+	if err := avro.Unmarshal(sch, payload, &ws); err != nil {
+		return nil, fmt.Errorf("decode avro payload: %w", err)
+	}
+
+	book := func(side string, wls []wireSnapLevel) domain.RawBook {
+		levels := make([]domain.RawLevel, len(wls))
+		for i, l := range wls {
+			levels[i] = domain.RawLevel{
+				ExchangeID: ws.ExchangeID,
+				Simulation: ws.Simulation,
+				SourceID:   l.SourceID,
+				Price:      l.Price,
+				Quantity:   l.Quantity,
+			}
+		}
+		return domain.RawBook{
+			PairID:     ws.PairID,
+			ExchangeID: ws.ExchangeID,
+			Side:       side,
+			ID:         ws.ID,
+			Levels:     levels,
+			EventTime:  ws.EventTime.UnixMilli(),
+		}
+	}
+
+	return []domain.RawBook{book("asks", ws.Asks), book("bids", ws.Bids)}, nil
 }
 
 func (d *Decoder) schemaByID(id uint32) (avro.Schema, error) {

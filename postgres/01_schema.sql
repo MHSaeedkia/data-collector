@@ -56,7 +56,13 @@ CREATE TABLE IF NOT EXISTS exchange_markets (
     volume_amount_rebase INT NOT NULL DEFAULT 0,
     depth_aggregation_key INT NULL,
     staleness_threshold_seconds INT NOT NULL DEFAULT 60,
-    CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market)
+    our_profit_percent NUMERIC(6,3) NOT NULL DEFAULT 0.1,
+    slippage_percent NUMERIC(6,3) NOT NULL DEFAULT 1,
+    buy_sell_commission_percent NUMERIC(6,3) NOT NULL DEFAULT 0.35,
+    CONSTRAINT unique_exchange_market UNIQUE (exchange_id, market),
+    CONSTRAINT chk_our_profit_percent_nonneg CHECK (our_profit_percent >= 0),
+    CONSTRAINT chk_slippage_percent_nonneg CHECK (slippage_percent >= 0),
+    CONSTRAINT chk_buy_sell_commission_percent_nonneg CHECK (buy_sell_commission_percent >= 0)
 );
 
 -- indexes on foreign keys (Postgres does not create these automatically)

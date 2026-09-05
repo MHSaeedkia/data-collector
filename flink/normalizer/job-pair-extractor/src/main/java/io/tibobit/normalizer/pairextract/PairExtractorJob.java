@@ -1,5 +1,6 @@
 package io.tibobit.normalizer.pairextract;
 
+import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.pairextract.parser.Parsers;
@@ -13,7 +14,7 @@ import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import java.util.regex.Pattern;
 
 /**
@@ -28,8 +29,10 @@ import java.util.regex.Pattern;
  */
 public class PairExtractorJob {
 
-    // Also matches the postponed ex7-raw on purpose: scope lives in Parsers.byExchangeId(),
-    // and PairExtractFunction drops unparsered exchanges with a counter.
+    // Deliberately matches every ex{n}-raw topic, including exchanges with no parser yet:
+    // scope lives in Parsers.byExchangeId(), and PairExtractFunction drops unparsered exchanges
+    // with a counter. Landing ex7 (2026-08-24) and ex9 (2026-08-25) both needed no change here,
+    // and with ex9 the map now covers every seeded exchange.
     private static final Pattern RAW_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-raw");
 
     public static void main(String[] args) throws Exception {
@@ -42,7 +45,7 @@ public class PairExtractorJob {
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
+        CheckpointingConfigurer.configure(env); 
         KafkaSource<RawExchangeMessage> source = KafkaSource.<RawExchangeMessage>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(RAW_TOPIC_PATTERN)
@@ -63,11 +66,25 @@ public class PairExtractorJob {
 
         events.sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)
+                        // EXACTLY_ONCE below commits transactionally on checkpoint completion
+                        // (CheckpointingConfigurer). acks=all + idempotence are required for
+                        // transactional Kafka writes; unlimited retries absorb transient
+                        // broker hiccups without failing the transaction.
+                        .setProperty("acks", "all")
+                        .setProperty("enable.idempotence", "true")
+                        // KafkaSink defaults transaction.timeout.ms to 1h, which exceeds
+                        // the broker's transaction.max.timeout.ms (15m default) and fails
+                        // InitProducerId. Keep this comfortably under that ceiling.
+                        .setProperty("transaction.timeout.ms", "600000")
+                        .setProperty("retries", "2147483647")
+                        .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
                                 .setTopicSelector((TopicSelector<RawOrderBookEvent>) event ->
                                         "ex" + event.getExchangeId() + "-p" + event.getPairId() + "-raw-flink")
                                 .setValueSerializationSchema(new RawOrderBookEventSerializer(schemaRegistryUrl))
                                 .build())
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE) 
+                        .setTransactionalIdPrefix("job1-raw-flink")
                         .build())
                 .name("raw-flink-sink");
 

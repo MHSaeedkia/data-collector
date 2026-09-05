@@ -11,9 +11,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests {@link WallexParser} (ex3) against the captured wire samples (sample-raw-data.md § ex3):
- * per-SIDE snapshots in a ["{market}@{side}", [levels]] array envelope with JSON-NUMBER
- * price/quantity — the BigDecimal-from-literal exchange, and the only one with no ordering
- * field (sequence_id stays null, event time is processing time).
+ * per-SIDE snapshots in a ["{market}@{side}", [levels], {"simulation": N}] array envelope with
+ * JSON-NUMBER price/quantity — the BigDecimal-from-literal exchange, and the only one with no
+ * ordering field (sequence_id stays null, event time is processing time). The flag in that third
+ * element is covered by {@link SimulationFlagTest}.
  */
 class WallexParserTest {
 

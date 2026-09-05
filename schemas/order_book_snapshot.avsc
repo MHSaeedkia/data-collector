@@ -12,6 +12,24 @@
 			"type": "int"
 		},
 		{
+			"name": "simulation",
+			"type": "int",
+			"default": 0,
+			"doc": "Carried from the raw event that produced this book (last accepted event wins). 0 = live, 1 = simulation."
+		},
+		{
+			"name": "id",
+			"type": "string",
+			"default": "",
+			"doc": "UUID minted by job 5 for this emitted book — unique per record."
+		},
+		{
+			"name": "trigger_id",
+			"type": "string",
+			"default": "",
+			"doc": "id of the job-4 event that caused this emit. This is the record's only record-level parent; the rest of the fan-in lives on the levels, each naming the event that set it (see source_id on PriceLevel). Replaced an array of every contributing event on 2026-08-08: that array was the union of the level ids plus this one, so all it added was the trigger — and only positionally, as its first element. Note this is NOT necessarily among the level ids: an event that only deletes levels, and a reset that empties the book, leave nothing resting."
+		},
+		{
 			"name": "event_time",
 			"type": {
 				"type": "long",
@@ -32,7 +50,13 @@
 					"name": "PriceLevel",
 					"fields": [
 						{ "name": "price", "type": "string" },
-						{ "name": "quantity", "type": "string" }
+						{ "name": "quantity", "type": "string" },
+						{
+							"name": "source_id",
+							"type": "string",
+							"default": "",
+							"doc": "id of the job-4 event that last SET this level — the per-level half of this record's lineage. The record-level source_ids says which events the book is made of; this says which one made THIS price, which is what makes a single level traceable back to its raw event. A level untouched by the triggering event keeps the id of whatever event did set it, however long ago. Only present on this schema: on a raw or rejected event every level trivially belongs to the event carrying it."
+						}
 					]
 				}
 			}

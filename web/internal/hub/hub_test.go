@@ -33,62 +33,176 @@ func (f *fakeConn) Close() error {
 	return nil
 }
 
-func TestAdd_SendsSnapshotOfExistingBooks(t *testing.T) {
+func aggregatedBook(pairID int, side string) domain.Book {
+	return domain.Book{PairID: pairID, Side: side}
+}
+
+func exchangeBook(pairID, exchangeID int, side string) domain.Book {
+	return domain.Book{
+		PairID:   pairID,
+		Side:     side,
+		Exchange: &domain.Exchange{ID: exchangeID, Name: "okx"},
+	}
+}
+
+func mergedBook(pairID int, side string) domain.Book {
+	return domain.Book{PairID: pairID, Side: side, Merged: true}
+}
+
+func TestAdd_SendsCatalog(t *testing.T) {
 	h := New()
-	h.latest["p1-asks"] = domain.Book{PairID: 1, Side: "asks"}
+	h.SetCatalog(domain.Catalog{Markets: []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}}})
 	c := &fakeConn{}
 
 	h.add(c)
 
 	require.Len(t, c.writes, 1)
-	snap, ok := c.writes[0].(domain.WSSnapshot)
-	require.True(t, ok)
-	assert.Equal(t, "snapshot", snap.Type)
-	require.Len(t, snap.Books, 1)
-	assert.Equal(t, 1, snap.Books[0].PairID)
+	cat, ok := c.writes[0].(domain.WSCatalog)
+	require.True(t, ok, "a client's first message is the catalog, not book data")
+	assert.Equal(t, "catalog", cat.Type)
+	require.Len(t, cat.Markets, 1)
+	assert.Equal(t, "BTC", cat.Markets[0].Base)
 }
 
-func TestPublish_BroadcastsToAllClients(t *testing.T) {
+func TestSelect_AnswersWithHeldBooksForThatSelectionOnly(t *testing.T) {
 	h := New()
-	c1, c2 := &fakeConn{}, &fakeConn{}
-	h.add(c1)
-	h.add(c2)
-
-	h.Publish("p1-asks", domain.Book{PairID: 1, Side: "asks"})
-
-	for _, c := range []*fakeConn{c1, c2} {
-		require.Len(t, c.writes, 2) // snapshot on add + the update
-		upd, ok := c.writes[1].(domain.WSUpdate)
-		require.True(t, ok)
-		assert.Equal(t, "update", upd.Type)
-		assert.Equal(t, 1, upd.Book.PairID)
+	for _, b := range []domain.Book{
+		aggregatedBook(1, "asks"),
+		aggregatedBook(1, "bids"),
+		aggregatedBook(2, "asks"),
+		exchangeBook(1, 8, "asks"),
+	} {
+		h.latest[b.Key()] = b
 	}
-	assert.Equal(t, domain.Book{PairID: 1, Side: "asks"}, h.latest["p1-asks"])
+	c := &fakeConn{}
+	cl := h.add(c)
+
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
+
+	snap, ok := c.writes[1].(domain.WSSnapshot)
+	require.True(t, ok)
+	assert.Equal(t, "snapshot", snap.Type)
+	assert.Len(t, snap.Books, 2, "only the aggregated books of pair 1")
+	for _, b := range snap.Books {
+		assert.Equal(t, 1, b.PairID)
+		assert.Nil(t, b.Exchange)
+	}
+}
+
+func TestSelect_ExchangeSelectionExcludesTheAggregatedBook(t *testing.T) {
+	h := New()
+	for _, b := range []domain.Book{
+		aggregatedBook(1, "asks"),
+		exchangeBook(1, 8, "asks"),
+		exchangeBook(1, 6, "asks"),
+	} {
+		h.latest[b.Key()] = b
+	}
+	c := &fakeConn{}
+	cl := h.add(c)
+
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: 8})
+
+	snap := c.writes[1].(domain.WSSnapshot)
+	require.Len(t, snap.Books, 1)
+	assert.Equal(t, 8, snap.Books[0].ExchangeID())
+}
+
+func TestPublish_ReachesOnlyClientsWatchingThatBook(t *testing.T) {
+	h := New()
+	watching, other, unselected := &fakeConn{}, &fakeConn{}, &fakeConn{}
+	h.selectBooks(h.add(watching), domain.Selection{PairID: 1, ExchangeID: 8})
+	h.selectBooks(h.add(other), domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
+	h.add(unselected) // connected but has not chosen yet
+
+	b := exchangeBook(1, 8, "asks")
+	h.Publish(b)
+
+	require.Len(t, watching.writes, 3) // catalog + snapshot + the update
+	upd, ok := watching.writes[2].(domain.WSUpdate)
+	require.True(t, ok)
+	assert.Equal(t, "update", upd.Type)
+	assert.Equal(t, 8, upd.Book.ExchangeID())
+	assert.Len(t, other.writes, 2, "the aggregated view must not receive a per-exchange book")
+	assert.Len(t, unselected.writes, 1, "a client with no selection receives only the catalog")
+	assert.Equal(t, b, h.latest[b.Key()])
+}
+
+// The aggregated book and a per-exchange book of the same pair and side
+// are different books, not the same one overwritten.
+func TestPublish_KeysAggregatedAndPerExchangeSeparately(t *testing.T) {
+	h := New()
+	h.Publish(aggregatedBook(1, "asks"))
+	h.Publish(exchangeBook(1, 8, "asks"))
+
+	assert.Len(t, h.latest, 2)
+}
+
+// Merged and aggregated arrive for the same pair+side with no exchange on
+// either, so only the merged flag keeps them apart — the one thing the
+// MergedExchangeID sentinel has to get right.
+func TestPublish_KeysMergedSeparatelyFromAggregated(t *testing.T) {
+	h := New()
+	h.Publish(aggregatedBook(1, "asks"))
+	h.Publish(mergedBook(1, "asks"))
+
+	assert.Len(t, h.latest, 2)
+}
+
+func TestSelect_MergedSelectionExcludesTheAggregatedBook(t *testing.T) {
+	h := New()
+	for _, b := range []domain.Book{
+		aggregatedBook(1, "asks"),
+		mergedBook(1, "asks"),
+		exchangeBook(1, 8, "asks"),
+	} {
+		h.latest[b.Key()] = b
+	}
+	c := &fakeConn{}
+	cl := h.add(c)
+
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.MergedExchangeID})
+
+	snap := c.writes[1].(domain.WSSnapshot)
+	require.Len(t, snap.Books, 1)
+	assert.True(t, snap.Books[0].Merged)
 }
 
 func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
 	h := New()
 	bad := &fakeConn{failErr: errors.New("broken pipe")}
 	good := &fakeConn{}
-	h.add(bad)
-	h.add(good)
+	sel := domain.Selection{PairID: 1}
+	h.selectBooks(h.add(bad), sel)
+	h.selectBooks(h.add(good), sel)
 
-	h.Publish("p1-asks", domain.Book{PairID: 1})
+	h.Publish(aggregatedBook(1, "asks"))
 
 	assert.True(t, bad.closed, "failing client should be closed")
-	_, stillRegistered := h.clients[bad]
-	assert.False(t, stillRegistered, "failing client should be removed from the client set")
-	assert.True(t, good.closed == false)
+	assert.Len(t, h.clients, 1, "failing client should be removed from the client set")
+	assert.False(t, good.closed)
+}
+
+func TestSetCatalog_BroadcastsOnlyWhenItChanged(t *testing.T) {
+	h := New()
+	c := &fakeConn{}
+	h.add(c)
+	require.Len(t, c.writes, 1) // the catalog sent on add
+
+	h.SetCatalog(domain.Catalog{Exchanges: []domain.Exchange{{ID: 1, Name: "nobitex"}}})
+	require.Len(t, c.writes, 2)
+
+	h.SetCatalog(domain.Catalog{Exchanges: []domain.Exchange{{ID: 1, Name: "nobitex"}}})
+	assert.Len(t, c.writes, 2, "an unchanged catalog must not be re-broadcast on every refresh tick")
 }
 
 func TestRemove_ClosesAndUnregistersConn(t *testing.T) {
 	h := New()
 	c := &fakeConn{}
-	h.add(c)
+	cl := h.add(c)
 
-	h.remove(c)
+	h.remove(cl)
 
 	assert.True(t, c.closed)
-	_, stillRegistered := h.clients[c]
-	assert.False(t, stillRegistered)
+	assert.Empty(t, h.clients)
 }
