@@ -1133,7 +1133,7 @@ var Ex2PrecisionDust = Scenario{
 			},
 		},
 		{ // after 02 ws snapshot — REPLACES wholesale: the dust delete at 62700.11 is a no-op on
-		  // the freshly-cleared side, and 62699.99 (not resent) is simply gone
+			// the freshly-cleared side, and 62699.99 (not resent) is simply gone
 			ExchangeID: 2,
 			PairID:     1,
 			Simulation: 1,

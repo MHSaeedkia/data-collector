@@ -26,6 +26,14 @@ that exercised this on ex1) were DELETED, not updated — their premise is now p
 unreachable. ex6 bybit is the current live example of the null-seq-REST-resync shape (its REST
 snapshot is also null-seq — see [[project_pair_extractor]]'s 2026-08-24 ex6 section).
 
+**UPDATE 2026-09-05 (PR #14 review)** — `ControlEx1LaggingRestResync` now HAS a replacement:
+`ControlEx6LaggingRestResync`, scenario **60**, ported to ex6. It was worth recreating because 46
+and 47 covered DIFFERENT branches — 46 the sequenced guard (`seq <= lastSeq`), 47 the event-time
+guard (`event_time < lastEventTime` on a null-seq snapshot) — and only 46 survived the deletion.
+Checked before writing it: 46's event times march strictly forward, so with 47 gone nothing in the
+suite emitted a book whose event time REGRESSES, which is the property that branch exists to allow.
+⚠ Its expected books are hand-computed, not observed live (same caveat as 48).
+
 ## Decisions
 
 **Avro on the Schema Registry, subject `control-command`** (schema `schemas/control_command.avsc`,

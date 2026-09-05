@@ -352,7 +352,9 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   that memory once called "44/45", then "45/46", then "46/47", was `ControlEx6StaleResyncAccepted`
   / `ControlEx1LaggingRestResync` at 46/47 — **`ControlEx1LaggingRestResync` (47) and
   `ControlEx1NoBaselineThenGap` (45) were REMOVED 2026-09-02**, see the dated section near the end
-  of this file; 45 and 47 are retired numbers, not reused). The ex5 seven are
+  of this file; 45 and 47 are retired numbers, not reused; **47's event-time coverage came back
+  2026-09-05 as `ControlEx6LaggingRestResync` at 60, appended to the tail — see the dated section
+  at the end of this file**). The ex5 seven are
   `25-snapshot-then-updates`, `26-update-before-snapshot`, `27-jump-tolerance`,
   `28-multi-book-frame`, `29-noise-frames`, `30-precision-dust`, `31-rest-snapshot-resync`. Two
   were new capabilities ex5 could not have as a snapshot-only feed: it has a cold start
@@ -792,3 +794,36 @@ Effects on this harness:
   docker stack available this session, so (as with several blocks above) the exact recomputed
   book states are reasoned from `BookBuildFunction`'s documented clear-then-apply semantics and
   spot-checked against `job-book-builder`'s own 28 green unit tests, not observed end to end.
+
+
+## 2026-09-05 — scenario 60, `60-control-ex6-lagging-rest-resync` (PR #14 review)
+
+Restores the coverage the ex1/ex2 snapshot reclassification deleted with `ControlEx1LaggingRestResync`
+(47). **Appended as 60, not slotted into the control-plane block and not reusing 47** — the same rule
+48, 49 and 55 followed: renumbering silently invalidates every reference in memory/, todo.md and past
+run logs. Grep the Go identifiers, not the numbers.
+
+**Why it was worth recreating rather than leaning on the unit test.** 46 and 47 were never redundant:
+they cover DIFFERENT branches of job 2. 46 is the sequenced guard (`seq <= lastSeq`), 47 was the
+event-time guard (`event_time < lastEventTime` on a null-seq snapshot). Both yield to an outstanding
+request via `resyncPending()`, and deleting 47 left only the sequenced half proven end to end. The
+check that settled it: **46's expected event times march strictly forward** (08:00:00 → :01 → :02 →
+:04 → :05 → :06 → :07), so once 47 was gone NOTHING in the suite emitted a book whose event time
+REGRESSES — which is precisely the behaviour the event-time branch exists to permit. The unit test
+`resyncSnapshotWithLaggingClockIsAccepted` covers job 2 alone; it cannot show job 5 emitting a
+backwards-stamped book or job 6 aggregating it.
+
+**Ported to ex6** because bybit's REST snapshot is now the platform's ONLY live null-seq resync that
+feeds a real delta stream — ex1/ex2 no longer send `update` at all, and ex3/ex9 never did, so no other
+exchange can reach the branch. Shape mirrors the deleted scenario: 01 REST snapshot (null-seq, event
+time `result.cts` = 08:00:00) → 02/03 deltas carrying `lastEventTime` out to 08:00:02 → 04 gap
+(reset + command #1) → 05 held `awaiting_snapshot`, no second command → **06 the case: the REST
+resync stamped 08:00:00, BEHIND the last accepted delta, accepted anyway** → 07 adopts a fresh
+baseline → 08 gap #2 (command #2, the proof episode one really closed) → 09 a clean forward resync.
+
+**Verified offline, NOT live.** The job-2 half was replayed through the real function and matches
+exactly: 8 main-stream records (6 books + 2 resets), rejects `sequence_gap`/`awaiting_snapshot`/
+`sequence_gap`, exactly 2 commands. **⚠ The eight `WantSnapshots` books are HAND-COMPUTED from the
+snapshot-replaces / delta-merges rules and were never observed** — jobs 1/3/4/5/6 are unproven here.
+Same standing caveat as 48. A hand-computed scenario's failure mode is passing for the wrong reason,
+so run it before trusting it.

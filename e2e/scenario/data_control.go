@@ -536,3 +536,330 @@ var ControlEx6StaleResyncAccepted = Scenario{
 		Bids: []events.AggregatedLevel{{ExchangeID: 6, Simulation: 1, Price: "62890", Quantity: "1"}},
 	},
 }
+
+// ControlEx6LaggingRestResync — the resync snapshot's CLOCK trails the deltas it is
+// replacing, and it is accepted anyway.
+//
+// The event-time twin of ControlEx6StaleResyncAccepted above. That one proves the
+// SEQUENCED guard (`seq <= lastSeq`) yields to an outstanding request; this one proves
+// the EVENT-TIME guard (`event_time < lastEventTime` on a null-seq snapshot) does too.
+// They are separate branches in job 2 and only one of them was ever covered end to end.
+//
+// Ported from ControlEx1LaggingRestResync, which was deleted 2026-09-02 along with the
+// ex1-as-delta-feed premise it rested on. ex6 is the natural home for it now: bybit's
+// REST snapshot is the platform's live null-seq resync (`result.u` is on a different
+// counter, so the parser drops it), and bybit still sends real WS deltas, so it is the
+// one exchange that can still reach this branch at all.
+//
+// The shape: `result.cts` on the resync at 06 is stamped 08:00:00, BEHIND the 08:00:02
+// of the last accepted delta. Because `lastEventTime` only advances on an ACCEPTED
+// event, pre-fix this rejected `out_of_order` and every later REST snapshot failed the
+// identical comparison — the guard that rejected the resync was the guard that could
+// never afterwards be satisfied.
+//
+// 06 replays 01's body verbatim on purpose: a REST endpoint returning the same book
+// with a stamp older than the live deltas is exactly what the skew looks like.
+//
+// The load-bearing assertions are that the book after 06 APPEARS AT ALL (its absence is
+// the bug) and that its event time steps BACKWARDS relative to the reset before it —
+// the only scenario in the suite where an emitted book's event time regresses. The two
+// commands prove the lagging resync really closed the first episode.
+var ControlEx6LaggingRestResync = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 REST snapshot — null-seq (result.u is on a foreign counter), so it only
+		// flags a resync. Event time = result.cts = 08:00:00.
+		`{
+	"id": "c1f4a2d7-3b58-4e19-9a06-8d27e5b3f014",
+	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["62900", "1"], ["62901", "0.5"], ["62910", "0.25"]],
+		"b": [["62899", "2"], ["62898", "1.5"], ["62890", "1"]],
+		"ts": 1800000000012,
+		"u": 38992362,
+		"seq": 113017010359,
+		"cts": 1800000000000
+	},
+	"retExtInfo": {},
+	"time": 1800000000100,
+	"action": "snapshot",
+	"pair": "BTCUSDT"
+}`,
+		// 02 WS delta — baselinePending adopts u = 1000 unconditionally
+		`{
+	"id": "2a7e9c31-6d04-4f82-b153-90ae7c4d2b68",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62899", "2.5"]],
+		"a": [["62901", "0.75"]],
+		"u": 1000,
+		"seq": 113017010370
+	},
+	"cts": 1800000001000
+}`,
+		// 03 WS delta, contiguous — pushes lastEventTime out to 08:00:02, the stamp
+		// the resync at 06 has to beat and does not
+		`{
+	"id": "3b8f0d42-7e15-4a93-c264-01bf8d5e3c79",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62880", "1.1"]],
+		"a": [["62920", "0.4"]],
+		"u": 1001,
+		"seq": 113017010381
+	},
+	"cts": 1800000002000
+}`,
+		// 04 WS delta, u jumps 1001 -> 1005 — gap, asks for a snapshot, empties the book
+		`{
+	"id": "4c90e153-8f26-4ba4-d375-12c09e6f4d8a",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62870", "0.2"]],
+		"a": [["62930", "0.1"]],
+		"u": 1005,
+		"seq": 113017010392
+	},
+	"cts": 1800000003000
+}`,
+		// 05 WS delta while waiting — rejected awaiting_snapshot, and must NOT ask again
+		`{
+	"id": "5da1f264-9037-4cb5-e486-23d1af705e9b",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000004006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62869", "0.2"]],
+		"a": [["62931", "0.1"]],
+		"u": 1006,
+		"seq": 113017010403
+	},
+	"cts": 1800000004000
+}`,
+		// 06 THE CASE: the REST snapshot answering the request is stamped 08:00:00,
+		// BEHIND the 08:00:02 of the last accepted delta. Pre-fix this was rejected
+		// out_of_order and the market never recovered.
+		`{
+	"id": "6eb20375-a148-4dc6-f597-34e2b0816fac",
+	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["62900", "1"], ["62901", "0.5"], ["62910", "0.25"]],
+		"b": [["62899", "2"], ["62898", "1.5"], ["62890", "1"]],
+		"ts": 1800000000012,
+		"u": 38992362,
+		"seq": 113017010359,
+		"cts": 1800000000000
+	},
+	"retExtInfo": {},
+	"time": 1800000000100,
+	"action": "snapshot",
+	"pair": "BTCUSDT"
+}`,
+		// 07 WS delta — adopts u = 2000 as the fresh baseline, healthy again
+		`{
+	"id": "7fc31486-b259-4ed7-06a8-45f3c1927bbd",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000005006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62899", "0.6"]],
+		"a": [["62901", "0.1"]],
+		"u": 2000,
+		"seq": 113017010414
+	},
+	"cts": 1800000005000
+}`,
+		// 08 WS delta, u jumps 2000 -> 2005 — gap #2. Its command is the proof the
+		// lagging resync at 06 really closed the first episode.
+		`{
+	"id": "80d42597-c360-4fe8-17b9-5604d2a38cce",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000006006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62860", "0.2"]],
+		"a": [["62940", "0.1"]],
+		"u": 2005,
+		"seq": 113017010425
+	},
+	"cts": 1800000006000
+}`,
+		// 09 REST snapshot — second re-sync, this one ahead. Leaves a clean book.
+		`{
+	"id": "91e536a8-d471-40f9-28ca-6715e3b49ddf",
+	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["62710", "1.5"], ["62720", "0.25"]],
+		"b": [["62700", "1"], ["62690", "2"]],
+		"ts": 1800000007012,
+		"u": 38992400,
+		"seq": 113017010436,
+		"cts": 1800000007000
+	},
+	"retExtInfo": {},
+	"time": 1800000007100,
+	"action": "snapshot",
+	"pair": "BTCUSDT"
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.5"},
+				{Price: "62910", Quantity: "0.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62899", Quantity: "2"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
+			},
+		},
+		{ // after 02 — a delta, so it MERGES into the book above
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.75"},
+				{Price: "62910", Quantity: "0.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62899", Quantity: "2.5"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
+			},
+		},
+		{ // after 03
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.75"},
+				{Price: "62910", Quantity: "0.25"},
+				{Price: "62920", Quantity: "0.4"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62899", Quantity: "2.5"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
+				{Price: "62880", Quantity: "1.1"},
+			},
+		},
+		{ // the reset for the gap — 04's own levels never reached the book
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:03Z",
+			Asks:       []events.PriceLevel{},
+			Bids:       []events.PriceLevel{},
+		},
+		{ // after 06 — the lagging resync IS the book, and its event time goes
+			// BACKWARDS relative to the reset above. Its absence here is the bug.
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.5"},
+				{Price: "62910", Quantity: "0.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62899", Quantity: "2"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
+			},
+		},
+		{ // after 07
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:05Z",
+			Asks: []events.PriceLevel{
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.1"},
+				{Price: "62910", Quantity: "0.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62899", Quantity: "0.6"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
+			},
+		},
+		{ // the reset for gap #2
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:06Z",
+			Asks:       []events.PriceLevel{},
+			Bids:       []events.PriceLevel{},
+		},
+		{ // after 09
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:07Z",
+			Asks: []events.PriceLevel{
+				{Price: "62710", Quantity: "1.5"},
+				{Price: "62720", Quantity: "0.25"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62700", Quantity: "1"},
+				{Price: "62690", Quantity: "2"},
+			},
+		},
+	},
+	WantRejects: []string{"sequence_gap", "awaiting_snapshot", "sequence_gap"},
+	// Two episodes, two commands. The second one only exists if the lagging REST
+	// snapshot at 06 was accepted AND cleared the flag.
+	WantControlCommands: []events.ControlCommand{
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "62710", Quantity: "1.5"},
+			{ExchangeID: 6, Simulation: 1, Price: "62720", Quantity: "0.25"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "62700", Quantity: "1"},
+			{ExchangeID: 6, Simulation: 1, Price: "62690", Quantity: "2"},
+		},
+	},
+}

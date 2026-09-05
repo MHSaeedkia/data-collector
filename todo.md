@@ -642,3 +642,33 @@ User's call: put production in its own file and give the developers theirs back.
       it now; recreating it needs ex6's real REST wire shape built out as a new scenario. See
       [[project_pair_extractor]], [[project_type_validator]], [[project_e2e_harness]],
       [[project_control_plane]]
+- [x] **Review pass on PR #14 (`fix/nobitex-and-bitpin`), 2026-09-05** — reviewed the ex1/ex2
+      snapshot reclassification above and closed the three findings it left. **Finding 1 (raised,
+      then CLOSED BY THE USER, no code change)**: because the WS branch no longer consults
+      `baselinePending`, a Centrifugo offset RESET leaves `lastSeq` permanently ahead of every
+      incoming offset — each push is dropped `stale_or_duplicate` forever, and no
+      `snapshot_request` is emitted, since that machinery lives only in the `update` branch.
+      Confirmed empirically against the real function (old shape recovers via `baselinePending`,
+      new shape does not; 0 commands). Checkpointing being enabled now also removes the
+      restart-clears-state escape hatch. **The user's decision: keep `seq <= last` → drop as is.**
+      `event_time` cannot serve as a tiebreaker because it is COLLECTOR-stamped on several feeds
+      (ex3/ex4 `System.currentTimeMillis()`, ex7 WS processing time), and a second cross-clock
+      comparison risks re-creating the 2026-08-19 deadlock that `resyncPending()` exists to fix.
+      Recorded as accepted risk, not a defect. **Finding 2 (FIXED)**: the e2e gap the entry above
+      disclosed — verified real first (scenario 46's event times march strictly forward, so nothing
+      left in the suite emitted a book whose event time REGRESSES). Added
+      `ControlEx6LaggingRestResync` as **60**, appended not renumbered, 47 stays retired. Ported to
+      ex6 because bybit's REST snapshot is now the only live null-seq resync feeding a real delta
+      stream. Job-2 half verified offline by replaying the exact sequence through the function: 8
+      main-stream records (6 books + 2 resets), rejects `sequence_gap`/`awaiting_snapshot`/
+      `sequence_gap`, exactly 2 commands. **⚠ Its eight `WantSnapshots` books are HAND-COMPUTED
+      from the replace/merge rules and NOT observed live** — same caveat as 48; jobs 1/3/4/5/6 are
+      unverified for this scenario. **Finding 3 (FIXED)**: `e2e/docs/` was never regenerated after
+      the `server.go` annotation changed, so the committed spec still said "WS delta". Ran
+      `swag init -g main.go -o docs`; verified surgical — exactly one word per file
+      (`delta`→`snapshot`), JSON still valid, 1 path / 7 definitions intact, no version drift.
+      **Finding 4 (NEW, FIXED)**: the PR introduced gofmt violations (`main` clean, branch not) —
+      3 continuation comments in `data_ex1.go`/`data_ex2.go` indented with spaces not tabs, despite
+      the entry above claiming gofmt clean. `gofmt -w`. Verified: `go build`/`go vet`/`gofmt -l`
+      clean on `e2e/`, 189 Java tests still green. See [[project_control_plane]],
+      [[project_e2e_harness]]

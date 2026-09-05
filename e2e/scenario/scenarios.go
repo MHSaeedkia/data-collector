@@ -107,4 +107,12 @@ var Scenarios = []struct {
 	{"57-ex9-duplicate-timestamp", Ex9DuplicateTimestamp},
 	{"58-ex9-noise-frames", Ex9NoiseFrames},
 	{"59-ex9-precision-dust", Ex9PrecisionDust},
+
+	// Control plane — the EVENT-TIME half of the deadlock (added 2026-09-05). 46 covers
+	// the sequenced ordering guard yielding to an outstanding request; this covers the
+	// null-seq/event-time guard doing the same. It replaces the retired 47
+	// (control-ex1-lagging-rest-resync), ported to ex6 because bybit's REST snapshot is
+	// now the platform's only live null-seq resync feeding a real delta stream. Appended
+	// as 60 rather than reusing 47, per the convention above. See data_control.go.
+	{"60-control-ex6-lagging-rest-resync", ControlEx6LaggingRestResync},
 }

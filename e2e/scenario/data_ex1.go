@@ -1120,7 +1120,7 @@ var Ex1PrecisionDust = Scenario{
 			},
 		},
 		{ // after 02 ws snapshot — REPLACES the side wholesale: the dust delete at 62651 is a
-		  // no-op on the freshly-cleared side, and 62649.5 (not resent) is simply gone
+			// no-op on the freshly-cleared side, and 62649.5 (not resent) is simply gone
 			ExchangeID: 1,
 			PairID:     1,
 			Simulation: 1,
@@ -1211,7 +1211,7 @@ var Ex1RebaseToman = Scenario{
 			},
 		},
 		{ // after 02 ws snapshot — REPLACES wholesale; the delete (matched on the rebased price)
-		  // is a no-op on the freshly-cleared side, and levels not resent are simply gone
+			// is a no-op on the freshly-cleared side, and levels not resent are simply gone
 			ExchangeID: 1,
 			PairID:     52,
 			Simulation: 1,
