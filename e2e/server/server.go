@@ -134,7 +134,7 @@ func specJSON() string {
 //	@Description
 //	@Description	Runs are serialized — each one cancels the Flink jobs and recreates the exchange's topics, so a request arriving while another is in flight gets 409 instead of being queued. Expect a successful call to take minutes.
 //	@Description
-//	@Description	"Try it out" is prefilled with the real `ex1-precision-dust` case — a nobitex REST snapshot plus a WS delta on ex1/pair 1, where two bid prices merge once truncated to the market's 2 places and a dust quantity truncates to zero and deletes its level. Send it as-is and it should come back `"status":"ok"`.
+//	@Description	"Try it out" is prefilled with the real `ex1-precision-dust` case — a nobitex REST snapshot plus a WS snapshot on ex1/pair 1, where two bid prices merge once truncated to the market's 2 places and a dust quantity truncates to zero and deletes its level. Send it as-is and it should come back `"status":"ok"`.
 //	@Tags			scenarios
 //	@Accept			json
 //	@Produce		json

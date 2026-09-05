@@ -14,12 +14,12 @@ import "orderbook-e2e/events"
 // show: that a command is sent once per EPISODE and that a resync re-arms the
 // next one. Both run the loop the feature exists for, end to end — break the
 // book, watch the request go out, feed the snapshot NiFi would have sent back,
-// and confirm the pipeline both recovers and is willing to ask again.
-//
-// The two differ in how the book is re-synced, which is the branch that clears
-// the "already asked" flag: ex6 resyncs with a sequenced snapshot, ex1 with a
-// null-sequence REST snapshot whose offset is adopted by the next delta. They
-// are separate code paths in job 2 and each has to clear the flag on its own.
+// and confirm the pipeline both recovers and is willing to ask again. Both are
+// on ex6/bybit — the ex1-flavored pair that used to sit alongside them (a
+// null-sequence REST snapshot whose offset is adopted by the next WS delta) was
+// removed 2026-09-02, since nobitex's WS pushes are snapshots now, not deltas
+// (see NobitexParser's javadoc), and that code path can no longer be reached
+// through this exchange.
 
 // ControlEx6GapResyncGap — two full gap episodes on one bybit stream, with a
 // re-sync between them.
@@ -290,315 +290,26 @@ var ControlEx6GapResyncGap = Scenario{
 	},
 }
 
-// ControlEx1NoBaselineThenGap — the same episode rule on nobitex, where the
-// re-sync arrives as a REST snapshot with no offset at all.
-//
-// Two episodes again, but reached by the two different triggers: the first is
-// `no_baseline` (a WS delta before any snapshot has ever landed — the cold-start
-// case, and the one a job restart produces), the second a `sequence_gap`. What
-// clears the flag between them is the ex1-specific path: the REST snapshot
-// carries no offset, so it only FLAGS a resync, and the baseline is not actually
-// established until the next delta adopts that delta's own offset. Both of those
-// steps clear the flag in job 2, and a scenario that only ever re-synced with a
-// sequenced snapshot would not touch either.
-var ControlEx1NoBaselineThenGap = Scenario{
-	ExchangeID: 1,
-	PairID:     1,
-	Sources: []string{
-		// 01 ws delta, cold — no baseline, asks NiFi for a snapshot
-		`{
-	"id": "fa4e41a8-7fd5-4d3d-9166-532500f34981",
-	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62651", "0.29045069"]
-				],
-				"bids": [
-					["62649", "0.55175335"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000000000
-			},
-			"offset": 1000
-		}
-	}
-}`,
-		// 02 rest snapshot — the snapshot the request asked for. No offset of its
-		// own, so it flags a resync rather than setting a baseline outright.
-		`{
-	"id": "1352ce88-db2a-4c08-9714-bf010a377a22",
-	"simulation": 1,
-	"action": "snapshot",
-	"pair": "BTCUSDT",
-	"status": "ok",
-	"lastUpdate": 1800000001000,
-	"lastTradePrice": "62650",
-	"bids": [
-		["62649", "0.50000000"],
-		["62648", "0.02744953"],
-		["62647", "0.20630833"],
-		["62645", "0.90000000"],
-		["62640", "1.31062803"]
-	],
-	"asks": [
-		["62650", "2.21924167"],
-		["62651", "0.17447383"],
-		["62652", "0.19067482"],
-		["62655", "1.05000000"],
-		["62660", "0.33476925"]
-	]
-}`,
-		// 03 ws delta — adopts its own offset as the baseline
-		`{
-	"id": "38bedc13-5ab5-4646-8bd8-50de65a192d9",
-	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62651", "0.29045069"],
-					["62652", "0"],
-					["62670", "0.40000000"]
-				],
-				"bids": [
-					["62649", "0.55175335"],
-					["62638", "1.10000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000002000
-			},
-			"offset": 2000
-		}
-	}
-}`,
-		// 04 ws delta, offset jumps 2000 -> 2005 — gap, a new episode, asks again
-		`{
-	"id": "7a9e2ef2-6c19-45dd-b222-defaf4685c54",
-	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62680", "0.10000000"]
-				],
-				"bids": [
-					["62630", "0.20000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000003000
-			},
-			"offset": 2005
-		}
-	}
-}`,
-		// 05 ws delta while still waiting — rejected, and must NOT ask again
-		`{
-	"id": "fd752631-1907-42bd-80ae-2a05bb13d208",
-	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62681", "0.10000000"]
-				],
-				"bids": [
-					["62629", "0.20000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000004000
-			},
-			"offset": 2006
-		}
-	}
-}`,
-		// 06 rest snapshot — newer than the last accepted event, so it re-arms
-		`{
-	"id": "a8274b8c-6ba1-4b7d-a767-7cf1088db8e9",
-	"simulation": 1,
-	"action": "snapshot",
-	"pair": "BTCUSDT",
-	"status": "ok",
-	"lastUpdate": 1800000005000,
-	"lastTradePrice": "62650",
-	"bids": [
-		["62649", "0.50000000"],
-		["62648", "0.02744953"],
-		["62647", "0.20630833"],
-		["62645", "0.90000000"],
-		["62640", "1.31062803"]
-	],
-	"asks": [
-		["62650", "2.21924167"],
-		["62651", "0.17447383"],
-		["62652", "0.19067482"],
-		["62655", "1.05000000"],
-		["62660", "0.33476925"]
-	]
-}`,
-		// 07 ws delta — adopts 3000 unconditionally, the stream is healthy again
-		`{
-	"id": "3311c396-af2c-4272-b191-13d61b7e8414",
-	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62651", "0.29045069"]
-				],
-				"bids": [
-					["62649", "0.55175335"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000006000
-			},
-			"offset": 3000
-		}
-	}
-}`,
-	},
-	WantSnapshots: []events.OrderbookSnapshot{
-		{ // after 02 — 01 never reached the book builder
-			ExchangeID: 1,
-			PairID:     1,
-			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:01Z",
-			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.17447383"},
-				{Price: "62652", Quantity: "0.19067482"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-			},
-			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.5"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
-			},
-		},
-		{ // after 03 — 62652 deleted by its "0", 62670 and 62638 added
-			ExchangeID: 1,
-			PairID:     1,
-			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:02Z",
-			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-				{Price: "62670", Quantity: "0.4"},
-			},
-			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
-				{Price: "62638", Quantity: "1.1"},
-			},
-		},
-		{ // the reset for the gap — 04's own levels never reached the book
-			ExchangeID: 1,
-			PairID:     1,
-			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:03Z",
-			Asks:       []events.PriceLevel{},
-			Bids:       []events.PriceLevel{},
-		},
-		{ // after 06 — 05 was rejected, so the book is exactly the REST snapshot
-			ExchangeID: 1,
-			PairID:     1,
-			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:05Z",
-			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.17447383"},
-				{Price: "62652", Quantity: "0.19067482"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-			},
-			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.5"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
-			},
-		},
-		{ // after 07 — two levels re-quoted on top of the re-synced book. 62670
-			// and 62638 are gone: the snapshot cleared both sides first.
-			ExchangeID: 1,
-			PairID:     1,
-			Simulation: 1,
-			EventTime:  "2027-01-15T08:00:06Z",
-			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62652", Quantity: "0.19067482"},
-				{Price: "62655", Quantity: "1.05"},
-				{Price: "62660", Quantity: "0.33476925"},
-			},
-			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62647", Quantity: "0.20630833"},
-				{Price: "62645", Quantity: "0.9"},
-				{Price: "62640", Quantity: "1.31062803"},
-			},
-		},
-	},
-	WantRejects: []string{"no_baseline", "sequence_gap", "awaiting_snapshot"},
-	// One for the cold start, one for the gap. The REST snapshot at 02 and the
-	// delta at 03 that adopted its offset are what let the second one be sent.
-	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", Reason: "no_baseline", ExchangeID: 1, PairID: 1, Simulation: 1},
-		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
-	},
-	WantAggregated: &AggregatedBook{
-		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62650", Quantity: "2.21924167"},
-			{ExchangeID: 1, Simulation: 1, Price: "62651", Quantity: "0.29045069"},
-			{ExchangeID: 1, Simulation: 1, Price: "62652", Quantity: "0.19067482"},
-			{ExchangeID: 1, Simulation: 1, Price: "62655", Quantity: "1.05"},
-			{ExchangeID: 1, Simulation: 1, Price: "62660", Quantity: "0.33476925"},
-		},
-		Bids: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62649", Quantity: "0.55175335"},
-			{ExchangeID: 1, Simulation: 1, Price: "62648", Quantity: "0.02744953"},
-			{ExchangeID: 1, Simulation: 1, Price: "62647", Quantity: "0.20630833"},
-			{ExchangeID: 1, Simulation: 1, Price: "62645", Quantity: "0.9"},
-			{ExchangeID: 1, Simulation: 1, Price: "62640", Quantity: "1.31062803"},
-		},
-	},
-}
+// ControlEx1NoBaselineThenGap and ControlEx1LaggingRestResync were removed
+// 2026-09-02: both were built on nobitex WS pushes being deltas (a WS "update"
+// with no_baseline / sequence_gap), which is no longer true — see NobitexParser's
+// javadoc. A WS snapshot with no prior baseline is simply accepted (no
+// no_baseline path exists any more), and there is no jump check to gap on. The
+// generic episode-per-request / resync-clears-the-flag machinery these exercised
+// is still covered here by the ex6 pair below, and at the unit level by
+// TypeValidateFunctionTest's ex6-labeled cases.
 
-// The two scenarios above both re-sync with a snapshot the ordering guards were
-// always happy to accept — ex6's is ahead of the pre-gap offset, ex1's is newer
-// than the last accepted delta. That is the easy half of the loop. The two below
-// re-sync with a snapshot the guards would have THROWN AWAY, which is the case
-// the deadlock fixed on 2026-08-19 lived in: the guards rejected the answer to
-// the request, nothing cleared `snapshotRequested`, so no further command was
-// ever sent and the market stayed dark until the job restarted.
+// ControlEx6StaleResyncAccepted re-syncs with a snapshot the sequenced ordering guard
+// (`seq <= lastSeq`) would have THROWN AWAY, which is the case the deadlock fixed on 2026-08-19
+// lived in: the guard rejected the answer to the request, nothing cleared `snapshotRequested`, so
+// no further command was ever sent and the market stayed dark until the job restarted.
 //
-// Both therefore assert two things a passing run must show together: the resync
-// snapshot came out as a SNAPSHOT rather than a rejection, and the episode
-// really closed — proven by a later gap opening a new one and asking again.
-// Without the fix each fails twice over: the resync appears in WantRejects
-// instead of WantSnapshots, and the second command never arrives.
-//
-// They split by which guard is being suspended, because they are separate
-// branches of job 2: ex6 is the sequenced guard (`seq <= lastSeq`), ex1 the
-// event-time one on a null-sequence snapshot. `Ex1StaleRestReplay` and
-// `Ex8StaleDuplicate` remain the negative controls — the same two guards with no
-// request outstanding, where a stale snapshot must still be rejected.
+// It asserts two things a passing run must show together: the resync snapshot came out as a
+// SNAPSHOT rather than a rejection, and the episode really closed — proven by a later gap opening a
+// new one and asking again. Without the fix it fails twice over: the resync appears in WantRejects
+// instead of WantSnapshots, and the second command never arrives. `Ex8StaleDuplicate` remains the
+// negative control — the same guard with no request outstanding, where a stale snapshot must still
+// be rejected.
 
 // ControlEx6StaleResyncAccepted — the resync snapshot's offset is BEHIND the
 // book it is replacing, and it is accepted anyway.
@@ -826,268 +537,252 @@ var ControlEx6StaleResyncAccepted = Scenario{
 	},
 }
 
-// ControlEx1LaggingRestResync — the resync snapshot's clock TRAILS the deltas it
-// is replacing, and it is accepted anyway.
+// ControlEx6LaggingRestResync — the resync snapshot's CLOCK trails the deltas it is
+// replacing, and it is accepted anyway.
 //
-// This is the ex1/ex2 shape of the same deadlock, and the commoner one in
-// production: the resync is the REST snapshot, whose `lastUpdate` comes from a
-// different clock than the Centrifugo WS deltas that set `lastEventTime`. Any
-// skew where REST trails the newest delta used to trip the `out_of_order` guard
-// — and because `lastEventTime` only advances on an ACCEPTED event, every
-// subsequent REST snapshot failed the identical comparison. The guard that
-// rejected the resync was the guard that could never afterwards be satisfied.
+// The event-time twin of ControlEx6StaleResyncAccepted above. That one proves the
+// SEQUENCED guard (`seq <= lastSeq`) yields to an outstanding request; this one proves
+// the EVENT-TIME guard (`event_time < lastEventTime` on a null-seq snapshot) does too.
+// They are separate branches in job 2 and only one of them was ever covered end to end.
 //
-// 06 replays 01's body verbatim on purpose: a REST endpoint returning the same
-// book with a stamp older than the live deltas is exactly what the skew looks
-// like, and it makes the accepted book easy to read against the rejected one in
-// Ex1StaleRestReplay, which feeds the same replay with NO request outstanding
-// and must still reject it.
-var ControlEx1LaggingRestResync = Scenario{
-	ExchangeID: 1,
+// Ported from ControlEx1LaggingRestResync, which was deleted 2026-09-02 along with the
+// ex1-as-delta-feed premise it rested on. ex6 is the natural home for it now: bybit's
+// REST snapshot is the platform's live null-seq resync (`result.u` is on a different
+// counter, so the parser drops it), and bybit still sends real WS deltas, so it is the
+// one exchange that can still reach this branch at all.
+//
+// The shape: `result.cts` on the resync at 06 is stamped 08:00:00, BEHIND the 08:00:02
+// of the last accepted delta. Because `lastEventTime` only advances on an ACCEPTED
+// event, pre-fix this rejected `out_of_order` and every later REST snapshot failed the
+// identical comparison — the guard that rejected the resync was the guard that could
+// never afterwards be satisfied.
+//
+// 06 replays 01's body verbatim on purpose: a REST endpoint returning the same book
+// with a stamp older than the live deltas is exactly what the skew looks like.
+//
+// The load-bearing assertions are that the book after 06 APPEARS AT ALL (its absence is
+// the bug) and that its event time steps BACKWARDS relative to the reset before it —
+// the only scenario in the suite where an emitted book's event time regresses. The two
+// commands prove the lagging resync really closed the first episode.
+var ControlEx6LaggingRestResync = Scenario{
+	ExchangeID: 6,
 	PairID:     1,
 	Sources: []string{
-		// 01 rest snapshot — no offset of its own, so it only flags a resync
+		// 01 REST snapshot — null-seq (result.u is on a foreign counter), so it only
+		// flags a resync. Event time = result.cts = 08:00:00.
 		`{
-	"id": "f5d23f7c-0d28-4afe-8da4-938288b1f526",
+	"id": "c1f4a2d7-3b58-4e19-9a06-8d27e5b3f014",
 	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["62900", "1"], ["62901", "0.5"], ["62910", "0.25"]],
+		"b": [["62899", "2"], ["62898", "1.5"], ["62890", "1"]],
+		"ts": 1800000000012,
+		"u": 38992362,
+		"seq": 113017010359,
+		"cts": 1800000000000
+	},
+	"retExtInfo": {},
+	"time": 1800000000100,
 	"action": "snapshot",
-	"pair": "BTCUSDT",
-	"status": "ok",
-	"lastUpdate": 1800000000000,
-	"lastTradePrice": "62650",
-	"bids": [
-		["62649", "0.50000000"],
-		["62648", "0.02744953"],
-		["62640", "1.31062803"]
-	],
-	"asks": [
-		["62650", "2.21924167"],
-		["62651", "0.17447383"],
-		["62660", "0.33476925"]
-	]
+	"pair": "BTCUSDT"
 }`,
-		// 02 ws delta — adopts offset 1000 as the baseline
+		// 02 WS delta — baselinePending adopts u = 1000 unconditionally
 		`{
-	"id": "97d837c8-b06c-4df7-a302-54157768e6da",
+	"id": "2a7e9c31-6d04-4f82-b153-90ae7c4d2b68",
 	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62651", "0.29045069"]
-				],
-				"bids": [
-					["62649", "0.55175335"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000001000
-			},
-			"offset": 1000
-		}
-	}
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62899", "2.5"]],
+		"a": [["62901", "0.75"]],
+		"u": 1000,
+		"seq": 113017010370
+	},
+	"cts": 1800000001000
 }`,
-		// 03 ws delta, contiguous — pushes lastEventTime out to 08:00:02, which is
-		// the stamp the resync at 06 has to beat and does not
+		// 03 WS delta, contiguous — pushes lastEventTime out to 08:00:02, the stamp
+		// the resync at 06 has to beat and does not
 		`{
-	"id": "5683977e-4629-4f6a-9461-b99f373acd4d",
+	"id": "3b8f0d42-7e15-4a93-c264-01bf8d5e3c79",
 	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62670", "0.40000000"]
-				],
-				"bids": [
-					["62638", "1.10000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000002000
-			},
-			"offset": 1001
-		}
-	}
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62880", "1.1"]],
+		"a": [["62920", "0.4"]],
+		"u": 1001,
+		"seq": 113017010381
+	},
+	"cts": 1800000002000
 }`,
-		// 04 ws delta, offset jumps 1001 -> 1005 — gap, asks for a snapshot
+		// 04 WS delta, u jumps 1001 -> 1005 — gap, asks for a snapshot, empties the book
 		`{
-	"id": "b8afa24c-8ee0-4820-acde-068ead9d4f8b",
+	"id": "4c90e153-8f26-4ba4-d375-12c09e6f4d8a",
 	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62680", "0.10000000"]
-				],
-				"bids": [
-					["62630", "0.20000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000003000
-			},
-			"offset": 1005
-		}
-	}
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62870", "0.2"]],
+		"a": [["62930", "0.1"]],
+		"u": 1005,
+		"seq": 113017010392
+	},
+	"cts": 1800000003000
 }`,
-		// 05 ws delta while waiting — rejected, and must NOT ask again
+		// 05 WS delta while waiting — rejected awaiting_snapshot, and must NOT ask again
 		`{
-	"id": "ca92a6e7-eeb7-405f-b7d7-d2bbaf365003",
+	"id": "5da1f264-9037-4cb5-e486-23d1af705e9b",
 	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62681", "0.10000000"]
-				],
-				"bids": [
-					["62629", "0.20000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000004000
-			},
-			"offset": 1006
-		}
-	}
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000004006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62869", "0.2"]],
+		"a": [["62931", "0.1"]],
+		"u": 1006,
+		"seq": 113017010403
+	},
+	"cts": 1800000004000
 }`,
-		// 06 THE CASE: the REST snapshot answering the request is stamped
-		// 08:00:00, BEHIND the 08:00:02 of the last accepted delta. Pre-fix this
-		// was rejected out_of_order and the market never recovered.
+		// 06 THE CASE: the REST snapshot answering the request is stamped 08:00:00,
+		// BEHIND the 08:00:02 of the last accepted delta. Pre-fix this was rejected
+		// out_of_order and the market never recovered.
 		`{
-	"id": "10bef247-cee0-4e14-ae90-7c0d281f85d3",
+	"id": "6eb20375-a148-4dc6-f597-34e2b0816fac",
 	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["62900", "1"], ["62901", "0.5"], ["62910", "0.25"]],
+		"b": [["62899", "2"], ["62898", "1.5"], ["62890", "1"]],
+		"ts": 1800000000012,
+		"u": 38992362,
+		"seq": 113017010359,
+		"cts": 1800000000000
+	},
+	"retExtInfo": {},
+	"time": 1800000000100,
 	"action": "snapshot",
-	"pair": "BTCUSDT",
-	"status": "ok",
-	"lastUpdate": 1800000000000,
-	"lastTradePrice": "62650",
-	"bids": [
-		["62649", "0.50000000"],
-		["62648", "0.02744953"],
-		["62640", "1.31062803"]
-	],
-	"asks": [
-		["62650", "2.21924167"],
-		["62651", "0.17447383"],
-		["62660", "0.33476925"]
-	]
+	"pair": "BTCUSDT"
 }`,
-		// 07 ws delta — adopts offset 2000 as the fresh baseline, healthy again
+		// 07 WS delta — adopts u = 2000 as the fresh baseline, healthy again
 		`{
-	"id": "09198528-819d-49ad-8d85-716a8f954df5",
+	"id": "7fc31486-b259-4ed7-06a8-45f3c1927bbd",
 	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62651", "0.10000000"]
-				],
-				"bids": [
-					["62649", "0.60000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000005000
-			},
-			"offset": 2000
-		}
-	}
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000005006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62899", "0.6"]],
+		"a": [["62901", "0.1"]],
+		"u": 2000,
+		"seq": 113017010414
+	},
+	"cts": 1800000005000
 }`,
-		// 08 ws delta, offset jumps 2000 -> 2005 — gap #2. Its command is the proof
-		// the lagging resync at 06 really closed the first episode.
+		// 08 WS delta, u jumps 2000 -> 2005 — gap #2. Its command is the proof the
+		// lagging resync at 06 really closed the first episode.
 		`{
-	"id": "f7f5d454-19d9-412e-84f5-100bfeef386d",
+	"id": "80d42597-c360-4fe8-17b9-5604d2a38cce",
 	"simulation": 1,
-	"push": {
-		"channel": "public:orderbook-BTCUSDT",
-		"pub": {
-			"data": {
-				"asks": [
-					["62690", "0.10000000"]
-				],
-				"bids": [
-					["62620", "0.20000000"]
-				],
-				"lastTradePrice": "62650",
-				"lastUpdate": 1800000006000
-			},
-			"offset": 2005
-		}
-	}
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000006006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["62860", "0.2"]],
+		"a": [["62940", "0.1"]],
+		"u": 2005,
+		"seq": 113017010425
+	},
+	"cts": 1800000006000
 }`,
-		// 09 rest snapshot — second re-sync, this one ahead. Leaves a clean book.
+		// 09 REST snapshot — second re-sync, this one ahead. Leaves a clean book.
 		`{
-	"id": "b16b3ab9-a6f8-492f-b229-7f6ca01cb3a9",
+	"id": "91e536a8-d471-40f9-28ca-6715e3b49ddf",
 	"simulation": 1,
+	"retCode": 0,
+	"retMsg": "OK",
+	"result": {
+		"s": "BTCUSDT",
+		"a": [["62710", "1.5"], ["62720", "0.25"]],
+		"b": [["62700", "1"], ["62690", "2"]],
+		"ts": 1800000007012,
+		"u": 38992400,
+		"seq": 113017010436,
+		"cts": 1800000007000
+	},
+	"retExtInfo": {},
+	"time": 1800000007100,
 	"action": "snapshot",
-	"pair": "BTCUSDT",
-	"status": "ok",
-	"lastUpdate": 1800000007000,
-	"lastTradePrice": "62700",
-	"bids": [
-		["62700", "1.00000000"],
-		["62690", "2.00000000"]
-	],
-	"asks": [
-		["62710", "1.50000000"],
-		["62720", "0.25000000"]
-	]
+	"pair": "BTCUSDT"
 }`,
 	},
 	WantSnapshots: []events.OrderbookSnapshot{
 		{ // after 01
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.17447383"},
-				{Price: "62660", Quantity: "0.33476925"},
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.5"},
+				{Price: "62910", Quantity: "0.25"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.5"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
+				{Price: "62899", Quantity: "2"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
 			},
 		},
-		{ // after 02
-			ExchangeID: 1,
+		{ // after 02 — a delta, so it MERGES into the book above
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:01Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62660", Quantity: "0.33476925"},
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.75"},
+				{Price: "62910", Quantity: "0.25"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
+				{Price: "62899", Quantity: "2.5"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
 			},
 		},
 		{ // after 03
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:02Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.29045069"},
-				{Price: "62660", Quantity: "0.33476925"},
-				{Price: "62670", Quantity: "0.4"},
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.75"},
+				{Price: "62910", Quantity: "0.25"},
+				{Price: "62920", Quantity: "0.4"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.55175335"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
-				{Price: "62638", Quantity: "1.1"},
+				{Price: "62899", Quantity: "2.5"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
+				{Price: "62880", Quantity: "1.1"},
 			},
 		},
 		{ // the reset for the gap — 04's own levels never reached the book
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:03Z",
@@ -1096,39 +791,39 @@ var ControlEx1LaggingRestResync = Scenario{
 		},
 		{ // after 06 — the lagging resync IS the book, and its event time goes
 			// BACKWARDS relative to the reset above. Its absence here is the bug.
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:00Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.17447383"},
-				{Price: "62660", Quantity: "0.33476925"},
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.5"},
+				{Price: "62910", Quantity: "0.25"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.5"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
+				{Price: "62899", Quantity: "2"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
 			},
 		},
 		{ // after 07
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:05Z",
 			Asks: []events.PriceLevel{
-				{Price: "62650", Quantity: "2.21924167"},
-				{Price: "62651", Quantity: "0.1"},
-				{Price: "62660", Quantity: "0.33476925"},
+				{Price: "62900", Quantity: "1"},
+				{Price: "62901", Quantity: "0.1"},
+				{Price: "62910", Quantity: "0.25"},
 			},
 			Bids: []events.PriceLevel{
-				{Price: "62649", Quantity: "0.6"},
-				{Price: "62648", Quantity: "0.02744953"},
-				{Price: "62640", Quantity: "1.31062803"},
+				{Price: "62899", Quantity: "0.6"},
+				{Price: "62898", Quantity: "1.5"},
+				{Price: "62890", Quantity: "1"},
 			},
 		},
 		{ // the reset for gap #2
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:06Z",
@@ -1136,7 +831,7 @@ var ControlEx1LaggingRestResync = Scenario{
 			Bids:       []events.PriceLevel{},
 		},
 		{ // after 09
-			ExchangeID: 1,
+			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
 			EventTime:  "2027-01-15T08:00:07Z",
@@ -1154,17 +849,17 @@ var ControlEx1LaggingRestResync = Scenario{
 	// Two episodes, two commands. The second one only exists if the lagging REST
 	// snapshot at 06 was accepted AND cleared the flag.
 	WantControlCommands: []events.ControlCommand{
-		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
-		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 1, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
 	WantAggregated: &AggregatedBook{
 		Asks: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62710", Quantity: "1.5"},
-			{ExchangeID: 1, Simulation: 1, Price: "62720", Quantity: "0.25"},
+			{ExchangeID: 6, Simulation: 1, Price: "62710", Quantity: "1.5"},
+			{ExchangeID: 6, Simulation: 1, Price: "62720", Quantity: "0.25"},
 		},
 		Bids: []events.AggregatedLevel{
-			{ExchangeID: 1, Simulation: 1, Price: "62700", Quantity: "1"},
-			{ExchangeID: 1, Simulation: 1, Price: "62690", Quantity: "2"},
+			{ExchangeID: 6, Simulation: 1, Price: "62700", Quantity: "1"},
+			{ExchangeID: 6, Simulation: 1, Price: "62690", Quantity: "2"},
 		},
 	},
 }

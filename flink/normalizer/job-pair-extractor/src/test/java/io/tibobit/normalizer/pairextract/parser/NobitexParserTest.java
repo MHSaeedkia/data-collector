@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Tests {@link NobitexParser} (ex1) against both captured wire samples (sample-raw-data.md § ex1):
  * the REST snapshot (NiFi stamps {@code action=snapshot} + injects {@code pair}) and the WebSocket
- * delta (Centrifugo envelope, no action, pub.offset as the ordering field).
+ * snapshot (Centrifugo envelope, no action, pub.offset as the ordering field).
  */
 class NobitexParserTest {
 
@@ -43,21 +43,22 @@ class NobitexParserTest {
     }
 
     /**
-     * Given the WebSocket Centrifugo delta, When parsed, Then the market comes from the channel
-     * suffix, the event is an UPDATE ordered by pub.offset with jump 1 (Centrifugo increments by
-     * one), event time = lastUpdate, and level strings survive verbatim.
+     * Given the WebSocket Centrifugo push, When parsed, Then the market comes from the channel
+     * suffix, the event is a SNAPSHOT ordered by pub.offset (2026-09-02: every push resends the
+     * whole book, so jump is never checked — see the class javadoc), event time = lastUpdate,
+     * and level strings survive verbatim.
      */
     @Test
-    @DisplayName("parses the WebSocket message as an update ordered by pub.offset, jump 1")
-    void parsesWebSocketUpdate() throws Exception {
+    @DisplayName("parses the WebSocket message as a snapshot ordered by pub.offset")
+    void parsesWebSocketSnapshot() throws Exception {
         List<ParsedBookEvent> parsed = parser.parse(Fixtures.bytes("ex1-update.json"));
 
         assertThat(parsed).hasSize(1);
         assertThat(parsed.get(0).getMarket()).isEqualTo("BTCUSDT");
         RawOrderBookEvent event = parsed.get(0).getEvent();
-        assertThat(event.getType()).isEqualTo("update");
+        assertThat(event.getType()).isEqualTo("snapshot");
         assertThat(event.getSequenceId()).isEqualTo(33259L);
-        assertThat(event.getSequenceJump()).isEqualTo(1L);
+        assertThat(event.getSequenceJump()).isZero();
         assertThat(event.getEventTime()).isEqualTo(1784021328931L);
         assertThat(event.getAsks()).hasSize(3);
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("62678");

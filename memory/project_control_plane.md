@@ -17,6 +17,23 @@ This closes the loop that `type="reset"` opened: before it, a gap emptied the ex
 (see [[type-validator]], [[aggregator]]) and the market stayed dark until the exchange happened
 to send a snapshot of its own. Delta-only feeds may never do that.
 
+**⚠ REVISED 2026-09-02 — every "ex1/ex2" reference below describes 2026-07-21→2026-09-02 only.**
+nobitex/bitpin WS pushes turned out to be full snapshots, not deltas ([[project_pair_extractor]]),
+so this feature can **no longer engage for ex1/ex2 at all** — `no_baseline`/`sequence_gap` and
+`askForSnapshot` live entirely in job 2's `update` branch, which neither exchange reaches any
+more. `ControlEx1NoBaselineThenGap` and `ControlEx1LaggingRestResync` (the e2e scenarios below
+that exercised this on ex1) were DELETED, not updated — their premise is now permanently
+unreachable. ex6 bybit is the current live example of the null-seq-REST-resync shape (its REST
+snapshot is also null-seq — see [[project_pair_extractor]]'s 2026-08-24 ex6 section).
+
+**UPDATE 2026-09-05 (PR #14 review)** — `ControlEx1LaggingRestResync` now HAS a replacement:
+`ControlEx6LaggingRestResync`, scenario **60**, ported to ex6. It was worth recreating because 46
+and 47 covered DIFFERENT branches — 46 the sequenced guard (`seq <= lastSeq`), 47 the event-time
+guard (`event_time < lastEventTime` on a null-seq snapshot) — and only 46 survived the deletion.
+Checked before writing it: 46's event times march strictly forward, so with 47 gone nothing in the
+suite emitted a book whose event time REGRESSES, which is the property that branch exists to allow.
+⚠ Its expected books are hand-computed, not observed live (same caveat as 48).
+
 ## Decisions
 
 **Avro on the Schema Registry, subject `control-command`** (schema `schemas/control_command.avsc`,
@@ -235,6 +252,10 @@ interval rather than one per episode ever opened.
 
 
 ## e2e for the DEADLOCK, not just the happy loop (44/45, added and verified live 2026-08-22)
+
+**⚠ `ControlEx1LaggingRestResync` (referenced throughout this section) was DELETED 2026-09-02** —
+see the top-of-file note. Read this section as history: it is accurate for the window it was
+written in, but the scenario it describes no longer exists in `data_control.go`.
 
 42 and 43 both re-sync with a snapshot the ordering guards were always willing to accept — ex6's
 is ahead of the pre-gap offset, ex1's is newer than the last accepted delta. **So the suite that
