@@ -567,6 +567,26 @@ User's call: put production in its own file and give the developers theirs back.
       `web/internal/kafka/consumer.go` and `e2e/consumer/consumer.go`. All four build clean.
       **Rule going forward: making a sink transactional is a change to every consumer of that topic,
       in every language.**
+- [ ] **⚠ ESCALATED 2026-09-02 by the user: "30 sec delay for an event in an ETL system is
+      catastrophic."** Full analysis in [[project_flink_production]] §11 and the published report.
+      `added_latency ≈ hops × interval ÷ 2` — 6 transactional hops × the 10 s default = ~30 s avg /
+      ~60 s worst, and it is NOT tunable (1 s avg would need a ~330 ms interval; `minPause` is
+      `interval/5` and `maxConcurrentCheckpoints` is 1). **Recommended: `AT_LEAST_ONCE` on the six
+      intermediate sinks, keep checkpointing — zero added latency, consumers need no change, and
+      duplicates are near-harmless because job 2 rejects them as `stale_or_duplicate` (not a resync
+      trigger). NOT yet decided.** Do this in order:
+    - [ ] **Measure first with `pipeline_timings`** (`book_build_out − event_time`) under
+          `EXACTLY_ONCE`. Nothing above is measured — it is arithmetic
+    - [ ] **Put a FLOOR under `staleness_threshold_seconds`.** Arrivals now step at the commit
+          cadence, so any threshold near the interval fires on healthy markets. The 2026-09-01 live
+          run used **20 s** — two commit cycles. No market below ~3 × the interval; a `CHECK`
+          constraint would make it hard to get wrong
+    - [ ] **A checkpoint-failure storm now looks exactly like a market-wide outage.** Tolerable 3 ×
+          timeout 120 s ⇒ minutes with no commits, every market downstream silent, and job 2 asks for
+          a snapshot for EVERY one. The cold-start burst, triggerable by a slow disk
+    - [ ] **Pin `CHECKPOINT_INTERVAL_MS` in compose** — set nowhere today, same gap as
+          `SNAPSHOT_RETRY_MS` and `REFRESH_INTERVAL_MS`
+    - [ ] **Raise the exporter's `output_threshold_seconds`** from 10 s, which is below ONE hop
 - [ ] **OPEN PRODUCT DECISION — EXACTLY_ONCE latency.** Records are invisible downstream until the
       producing job checkpoints, so 6 transactional hops add ~30s average / 60s worst case, against
       sub-second before. `lpa-staleness-exporter`'s `output_threshold_seconds: 10` is now below the
@@ -672,3 +692,59 @@ User's call: put production in its own file and give the developers theirs back.
       the entry above claiming gofmt clean. `gofmt -w`. Verified: `go build`/`go vet`/`gofmt -l`
       clean on `e2e/`, 189 Java tests still green. See [[project_control_plane]],
       [[project_e2e_harness]]
+
+
+## flink job 2 — staleness-triggered resync (branch `feat/flink-check-staleness`)
+
+Built 2026-08-31 (`d78d84d`), then **cut back**: the `no_data_received` half was removed and the
+`stale` half re-implemented on a per-key timer instead of a tick stream. Design, the reasoning for
+the cut, and the two vacuous-test lessons are in [[project_control_plane]] §"Silence closes the last
+gap". 66 job-2 tests, 282 across the normalizer. **Verified LIVE 2026-09-01 on the local docker
+stack** — see the same memory section for the run and what it did not cover.
+
+- [x] ~~Run it live~~ — done 2026-09-01. ex1/BTCUSDT, threshold 20s: snapshot accepted → 21s silence
+      → `RESET` (`source_ids: []`, `simulation: 1`, null book) + `snapshot_request` `reason: "stale"`.
+      Held at exactly 1 reset / 1 command through 4+ deadlines; recovery snapshot with an OLDER
+      `event_time` was ACCEPTED (0 rejects), then a NEW episode opened 21s later
+- [x] ~~Verify the postgres driver really loads on the cluster~~ — done: the job reached RUNNING with
+      both vertices up, which only happens if `RefreshingLookup.open()` read the watch list.
+      Confirmed `flink-connector-datagen` is NOT on the cluster classpath — bundling it would have
+      been necessary, which is one more reason the tick-stream design was the wrong one
+- [x] ~~An unwatched market is never judged silent~~ — done: pair 2 (`status='unsubscribe'`) held a
+      live key in job 2 state, went silent 2.5× the threshold, and produced nothing
+- [ ] **Test the threshold-edit / unsubscribe path live.** `RefreshingLookup` was only ever read at
+      `open()` in this run — the 60 s refresh was never exercised, so "edit the threshold in
+      Postgres and it lands without a resubmit" is still UNPROVEN live (it is unit-tested via
+      `resubscribedMarketIsWatchedAgain`)
+- [ ] **Confirm never-heard-from markets really are covered by the exporter.** The cut assumed a
+      subscribed market that has produced nothing already reads `stale=1` in
+      `lpa-staleness-exporter`. That was reasoned from [[project_staleness_exporter]], NOT verified
+      against `exporter.py` or a live dashboard. **If it turns out not to be covered, that is a gap
+      to close in the exporter — not by putting the roster back into job 2**
+- [ ] **Watch a cold start with a REAL watch list.** The live run had exactly ONE subscribed market.
+      Nothing has yet exercised many markets going stale at once, which is where the shared
+      suppression window and the per-key timers actually matter
+- [ ] **e2e coverage.** Silence is time-based, so it inherits the same "no e2e" gap as re-asking.
+      Decide whether a scenario with a tiny threshold is worth it, or whether the 16 unit tests plus
+      the live check are enough
+- [x] **Unsubscribe left a phantom book on every downstream topic** — found by the user in live
+      testing 2026-09-01, fixed the same day. `onTimer`'s unwatched branch was a bare `return`, so a
+      dropped market's book stood in job 5's MapState and job 6's union forever with nothing ever
+      watching that key again. It now emits a `RESET` and deliberately **no** `snapshot_request`.
+      ⚠ **this revises the "unwatched market judged nothing" result of the 2026-09-01 live run —
+      that was verified as correct and was in fact the bug.** A web-side age guard was considered and
+      **rejected by the user**: each stage goes to a different team, so a book with no feed behind it
+      must not be on the topic at all. Full note in [[project_control_plane]].
+      ⚠ **Verification owed — run it live: unsubscribe a fed market, confirm exactly ONE reset, ZERO
+      control commands, and the exchange leaving `p{id}-{side}`**
+- [ ] **NiFi must ignore `snapshot_request` for an unsubscribed market.** The user's fix, on the NiFi
+      side, not in this repo. Until it lands, losing the (now much narrower) refresh race still lets
+      the control plane reopen a feed the operator just closed
+- [ ] **`REFRESH_INTERVAL_MS` is set nowhere in `docker-compose.yml`** and takes its in-code default,
+      exactly like `SNAPSHOT_RETRY_MS` above. Same decision, same place to make it. ⚠ the default is
+      now **15 s**, and the constraint is that it stays well below the SMALLEST
+      `staleness_threshold_seconds` in `exchange_markets` — whatever is set in compose must respect
+      that, or unsubscribes start racing the silence timer again
+- [ ] Optional: re-register `control-command` so the registry carries the updated `reason` doc.
+      Doc-only, not a compatibility change — `stale` works without it (the live run proves it:
+      `reason: "stale"` serialised fine against the registered schema)

@@ -394,3 +394,217 @@ gap, the loop flagged in todo.md. The deadlock fix means the market will keep *a
 going silently dark, so this degrades into a request loop rather than a black hole, but it is the
 ex5-specific failure mode to look for on the live feed. `31-ex5-rest-snapshot-resync` is the e2e
 scenario that covers the happy version of this path.
+
+## Silence closes the last gap (2026-08-31) — staleness-triggered resync
+
+The deliberate hole above — *"a market that goes SILENT after the gap gets no retries"* — is now
+closed, on user request. Every key holds ONE processing-time deadline at `lastArrival +
+staleness_threshold_seconds`; passing it emits the same `RESET` a sequence gap does (so the
+exchange drops out of the aggregated view instead of serving a frozen book) and asks for a snapshot
+with `reason: "stale"`, through the SAME `askForSnapshot` suppression window every other reason
+uses.
+
+**No new DB column.** `exchange_markets.staleness_threshold_seconds INT NOT NULL DEFAULT 60`
+already existed and was already read by [[staleness-exporter]], which only ever *reported* it. Job
+2 now acts on the same number. One knob drives both "warn a human" and "auto-resync"; that coupling
+is the accepted cost of not adding a column and not hand-running another `ALTER TABLE` on the
+provisioned server DB.
+
+### ⚠ THE SCOPE WAS CUT BACK — read this before "restoring" anything
+
+The first implementation (commit `d78d84d`) ALSO detected markets that had **never** sent
+anything, as `reason: "no_data_received"`. The user asked for a second opinion before it ran, and
+**it was removed.** Do not add it back without re-reading this.
+
+The two conditions look like one feature and are not:
+
+- **`stale`** is derived from job 2's OWN stream. `lastArrivalMs` is a fact it already holds, and
+  the remedy — inject a `RESET` into the keyed stream — is something ONLY job 2 can do. It belongs
+  here.
+- **`no_data_received`** is not. Job 2 cannot know a market exists if it has never heard from it,
+  so the condition can only be found by importing the subscription roster from Postgres. That is
+  the question *"is the world the shape we expected?"*, which is monitoring, not validation.
+
+Three arguments settled it:
+
+1. **It was a duplicate.** `StalenessThresholdLoader` and `lpa-staleness-exporter` ran the *same
+   query* (`exchange_markets WHERE status = 'subscribe'`) against the same column to answer the
+   same question. [[staleness-exporter]] documents that this exact duplication already caused a
+   bug once — its `NORMALIZER_STAGES` drifted from `warmup.sh` and every DB-derived series became a
+   phantom pinned at `stale=1`. A never-fed market almost certainly already reads `stale=1` there.
+   *(Believed, from that note — not re-verified against `exporter.py`. Confirm before relying on it.)*
+2. **The remedy did not remedy.** A `snapshot_request` cannot start a subscription that was never
+   wired up. The loader's own javadoc already used this reasoning to exclude the pending statuses.
+   And the `simulation` flag was provably WRONG in this case (it sent 0/live because there was no
+   event to copy it from) — the design saying out loud that it lacked the information it needed.
+3. **It cost nearly all the complexity.** The `KeyedCoProcessFunction`, the second source, the
+   `DataGeneratorSource` + `StalenessTickFanOut`, the `flink-connector-datagen` bundle, the
+   **parallelism-1 ceiling on two operators**, a permanent N-ticks-per-poll keyed shuffle, and
+   migrating all 53 rule tests to a two-input harness — every one of those existed ONLY for the
+   never-received case. `stale` needs none of them, because the key already exists.
+
+**The timer objection was real but narrow.** "A keyed function cannot register a timer for a key
+that does not exist" is true, and it is an argument about the never-received case *only*. Once that
+case is out of scope, a timer is the right mechanism.
+
+### The timer, and how it avoids the defect that sank the first one
+
+The 2026-08-22 redesign deleted an `onTimer` because timers were registered per episode and
+cancelled nowhere, leaving several live chains each re-arming forever. This one is different by
+construction:
+
+- **`ValueState<Long> stalenessTimerAt` holds the single outstanding timer.** A timer is armed only
+  when it is null, and it is cleared at the very top of `onTimer` before anything else. A key can
+  never accumulate a second chain.
+- **No per-event churn.** An arriving event does NOT cancel and re-register. If the deadline fires
+  early, `onTimer` re-arms at `lastArrival + threshold` instead of judging — so detection still
+  lands exactly on the deadline, at no timer cost per event.
+- **The market's identity comes from its watch-list row, never from parsing the key string.**
+  Parsing the key was one of the three specific defects of the old timer. That is why the lookup
+  value is a `WatchedMarket` (exchange, pair, threshold) rather than a bare `Integer`.
+
+**A market absent from the watch list is not watched at all** — no default threshold — so an
+unsubscribe stops the asking on the next refresh with no resubmit. Guarded in BOTH `armSilenceTimer`
+and `onTimer`; either guard alone absorbs the other's mutation, so only the combined mutation is
+caught by a test.
+
+**`lastArrivalMs` is stamped on EVERY arriving event whatever its verdict.** That is what "nothing
+arrived" means: a key rejecting everything is alive and already re-asking on the rejection path, and
+treating it as stale too would make one fault ask twice.
+
+**The reset fires once per episode** (guarded on `resyncRequestedAt` having been null) while the ask
+repeats.
+
+**⚠ Parentless records.** A silence command has no trigger event, so `source_ids` is **empty**,
+never `[""]`; `event_time` on the reset is processing time; and `simulation` comes from
+`lastSimulation`. Because only markets that have spoken are watched, there is always a flag to copy
+— the "never spoke sends 0" limitation of the first version is gone with the feature that caused it.
+
+**⚠ Job 2 gained its first DB dependency**, the postgres driver shaded into the job jar (verified
+present in the shaded jar, not assumed) with the same explicit `Class.forName` as
+`ExchangeMarketsLoader`. `flink-connector-datagen` is NOT needed and was removed. The watch list
+rides inside the operator via `RefreshingLookup` and is read by key — no second stream, no extra
+shuffle, **no parallelism constraint**.
+
+**No compose change.** `POSTGRES_URL`/`POSTGRES_USER`/`POSTGRES_PASSWORD` appear nowhere in
+`docker-compose.yml`; jobs 3 and 4 run on the in-code defaults and job 2 now uses identical names
+and defaults. One new knob, `REFRESH_INTERVAL_MS` (60 s). `STALENESS_POLL_MS` is gone — the poll
+cadence WAS the tick stream; a timer needs no polling.
+
+**`reason` needed no schema change** — a plain `string` with `default: ""`, so `stale` is free; only
+the `.avsc` doc was updated, and re-registering is optional (docs only, not compatibility).
+Contrast the `type` ENUM trap in [[type-validator]].
+
+### Verification, including what it did NOT prove
+
+Job 2 is **66 tests** (53 pre-existing + 13 staleness); the 53 pass unchanged, which is the evidence
+that the rule set was not touched. Full normalizer build green, **282 tests across 7 modules**.
+Mutations run against the new logic — killed: no one-timer guard, judging without the early re-arm,
+reset on every deadline not once per episode, arrival never recorded, not clearing the spent timer,
+and defaulting the threshold for an unwatched market.
+
+**Two lessons about vacuous tests, both learned here the hard way:**
+
+- The first "one timer chain, not one per event" test asserted on the OUTPUT and **passed under the
+  mutation**. Duplicate chains are invisible downstream — the once-per-episode reset guard and the
+  shared ask window absorb them completely. What they are not is free: 21 chains is unbounded timer
+  *state* that grows with traffic. The test now asserts `harness.numProcessingTimeTimers() == 1`
+  directly, which is the only place the invariant is observable.
+- **One mutation still SURVIVES and is worth remembering: advancing `lastEventTime` inside the
+  silence reset changes nothing observable**, because asking opens a resync episode and the ordering
+  guards are suspended while one is outstanding, so the returning event is accepted and overwrites
+  the poisoned value before any guard reads it. Not routing the reset through `emit()` is therefore
+  defence in depth — **the exemption is the load-bearing part**, and it has been deleted by accident
+  once already.
+
+### VERIFIED LIVE 2026-09-01 (local docker stack)
+
+Ran on the compose stack (kafka + postgres + schema-registry + jobmanager + taskmanager-1), jobs 1
+and 2 submitted downstream-first. The seeded local DB has **only ex1/nobitex and all 50 rows
+`unsubscribe`**, so the test subscribed ex1/BTCUSDT (`market_id 1`) with
+`staleness_threshold_seconds = 20` before submitting — the row was restored to
+`unsubscribe`/60 afterwards.
+
+One nobitex REST snapshot (`action: "snapshot"`, `simulation: 1`) to `ex1-raw`, then silence:
+
+- accepted through job 1 → job 2 at **10:12:35**;
+- **10:12:56** (21 s) — `RESET` on `ex1-p1-type-validated-raw-flink`: `type: "reset"`, `asks`/`bids`
+  **null**, `sequence_id` null, `event_time` = processing time, `pair_extract_*` null, and the two
+  fields that matter — **`source_ids: []` (empty, NOT `[""]`)** and **`simulation: 1`** carried from
+  `lastSimulation` rather than defaulted to 0;
+- same instant — `control-plane`: `{"action":"snapshot_request","reason":"stale","exchange_id":1,`
+  `"pair_id":1,"simulation":1,"source_ids":[]}`. The ids came from the **watch-list row**, which is
+  the live proof that nothing parses the key string.
+
+Then, over ~90 s of continued silence (4+ deadlines): **exactly 1 reset and 1 command**. Recovery
+snapshot sent with an `event_time` **OLDER than the reset's** — **accepted, 0 rejects**, i.e. the
+resync exemption holds when reached from the silence path (the 2026-08-19 deadlock, new direction).
+21 s later a **NEW** episode opened (2nd reset + 2nd command) — and note the 2nd command appeared
+despite `SNAPSHOT_RETRY_MS` = 300 s, because the resync had CLEARED `resyncRequestedAt`. Episode
+boundaries work, not merely the suppression window.
+
+**The unwatched-market rule was confirmed with a live key, not a missing one.** Pair 2 (BTCIRT,
+`status = 'unsubscribe'`) was fed a snapshot so it held real keyed state in job 2, then left silent
+for 2.5× the threshold: **nothing**. That is the mechanism that makes an unsubscribe take effect.
+
+**The postgres driver loads on the cluster.** The job reaching RUNNING with both vertices up is
+itself the proof — `RefreshingLookup.open()` propagates a failed initial load. Also confirmed from
+the TaskManager classpath: **`flink-connector-datagen` is NOT on the cluster**, so the tick-stream
+design really would have had to bundle it. One more line in the ledger against it.
+
+**⚠ What this run did NOT prove.** (a) `RefreshingLookup` was only read at `open()` — the 60 s
+refresh never fired, so "edit the threshold in Postgres and it lands without a resubmit" is still
+unproven live. (b) Exactly ONE market was watched, so nothing exercised many markets going stale at
+once. (c) Still no e2e coverage. (d) Only `stale` exists to test — the never-received case is out of
+scope by design, and the assumption that [[staleness-exporter]] covers it is STILL unverified.
+
+⚠ The counts recorded above this section (43 unit tests) were stale; it was 53 before this change.
+
+## 2026-09-01 — unsubscribe empties the book (the phantom-book bug)
+
+**Found by the user in live testing, and it was two bugs wearing one coat.** Stopping NiFi
+altogether behaved correctly (threshold passes → `stale` → reset → web empty). *Unsubscribing* a
+market did not: the book blinked empty and then **came back and stayed forever**.
+
+**The mechanism, in order.** `REFRESH_INTERVAL_MS` was **60 s** and the default
+`staleness_threshold_seconds` is **60 s**, and on an unsubscribe both clocks start at the same
+instant — so whether the silence timer found the market still on the watch list was a coin flip.
+Losing the race sent a `snapshot_request`; NiFi answered it **for a market it had just been told to
+unsubscribe**; the returning snapshot was accepted (the resync exemption suspends the ordering
+guards); and by then the refresh had dropped the market, so `armSilenceTimer` armed nothing and
+**nothing ever watched that key again**.
+
+**But the race was the smaller half.** `onTimer`'s unwatched branch was a bare `return` — it stopped
+watching and *left the book standing*. Job 5 keeps its `MapState`, job 6 keeps the exchange in the
+union, and every consumer is served a book with no feed behind it for the life of the job. **A clean
+unsubscribe with no race at all had the same outcome.** The 2026-09-01 live run's
+"unwatched-market rule confirmed" note recorded exactly this behaviour as *correct* — it verified
+that nothing is ASKED for, and never asked what happens to the book.
+
+**Fix, and where the user put the boundary.** The obvious cheap fix — an age guard in the web that
+blanks a stale book — **was rejected by the user, correctly**: each pipeline stage is going to be
+handed to a different team, so a consumer-side guard protects one consumer and leaves the bad record
+on the topic for everyone else. **Correctness belongs at the producer.** So the unwatched branch now
+emits a `RESET` (`emitUnsubscribeReset`) and **deliberately no `snapshot_request`** — we are dropping
+the market, not recovering it, and asking is what told NiFi to reopen a closed feed. NiFi ignoring
+requests for unsubscribed markets is the user's separate fix on their side; with both in place the
+two race outcomes converge on the same end state, which is why the race stops mattering.
+
+**`REFRESH_INTERVAL_MS` 60 s → 15 s**, with the constraint written at the declaration: it must stay
+well below the SMALLEST `staleness_threshold_seconds` in the table. A quarter is the chosen margin.
+⚠ Still set nowhere in `docker-compose.yml` — same standing gap as `SNAPSHOT_RETRY_MS`.
+
+**Two new `ValueState<Integer>` (`lastExchangeId`/`lastPairId`), 7 → 9.** The unwatched branch has to
+name the market at the one moment the watch list no longer holds a row to name it from, and
+**parsing the key string stays forbidden** ([[project_type_validator]], and `WatchedMarket`'s own
+javadoc). Stored from the arriving event next to `lastSimulation`, and set BEFORE `armSilenceTimer`,
+which is what makes them provably non-null wherever the branch reads them.
+
+**Verification: 69 tests in job 2 (66 unchanged + 3 new), 285 across 7 modules, all green.**
+Mutations: dropping the reset — killed; also asking on unsubscribe — killed. **One SURVIVED, and it
+is the interesting one: clearing `lastExchangeId`/`lastPairId` is unobservable**, because the branch
+does not re-arm, so nothing can reach it twice. The no-re-arm is load-bearing; the clearing is
+defence in depth against a future re-arm. Javadoc says so rather than implying the pair is
+symmetric — the same vacuous-guard trap this file has now hit three times.
+⚠ **NOT run live.** The live check is the same one as before: unsubscribe a fed market and watch for
+exactly ONE reset, NO command, and the exchange dropping out of `p{id}-{side}`.

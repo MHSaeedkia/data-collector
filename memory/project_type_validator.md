@@ -322,3 +322,30 @@ Any future feed whose "sequence" is a timestamp should be assumed non-contiguous
 live frames and plot the interval distribution — the 2026-08-22 `600 ± 10` came from two captured
 frames 22 ms apart and was wrong in both directions. And a REST body that answers a resync must be
 null-seq unless its clock is provably the same one the deltas use. See [[project_pair_extractor]].
+
+## 2026-08-31 — job 2 watches for SILENCE (staleness)
+
+`TypeValidateFunction` stays a single-input `KeyedProcessFunction`; the rule set above is
+untouched. What was added is `onTimer`: every key holds ONE processing-time deadline at
+`lastArrival + staleness_threshold_seconds`, and passing it emits the same `RESET` a sequence gap
+does and asks the control plane for a snapshot with `reason: "stale"`. Three new state fields
+(`lastArrivalMs`, `lastSimulation`, `stalenessTimerAt`) — 4 → 7. **All 53 pre-existing tests pass
+unchanged**, which is the proof the rule set was not touched; job 2 is now 66 tests.
+
+`lastArrivalMs` is stamped on EVERY arriving event whatever its verdict — a key rejecting
+everything is alive and already re-asking on the rejection path, so calling it stale too would make
+one fault ask twice.
+
+**Only markets that have already spoken are watched.** The design, the reduction that got it there
+(a `no_data_received` reason and the whole tick-stream machinery were built and then removed), the
+watch-list dependency and the surviving mutations are all in [[project_control_plane]] — this note
+exists so nobody looks for them here.
+
+## 2026-09-01 — the unwatched branch is no longer a bare return
+
+`onTimer`'s "market is not on the watch list" branch used to `return` and walk away. It now emits a
+`RESET` first, because stopping watching and leaving the book standing means every downstream
+consumer keeps a book with no feed behind it forever. Two new states (`lastExchangeId`,
+`lastPairId`, 7 → 9) exist only so that branch can name the market without parsing the key. No
+`snapshot_request` on this path — dropping a market is not resyncing it. Full write-up, the race
+with `REFRESH_INTERVAL_MS` and the surviving mutation are in [[project_control_plane]].

@@ -33,6 +33,13 @@
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
         </dependency>
+        <!-- Job 2's first DB dependency: the staleness watch list comes from
+             exchange_markets. Must be shaded in AND loaded with an explicit
+             Class.forName - see StalenessThresholdLoader. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>
