@@ -13,6 +13,10 @@ passed for ex1 (snapshot) and ex8 (update incl. qty-"0" delete) on the local sta
 
 ## ex1 nobitex — snapshot/update split (REVISED 2026-07-21, was "only snapshots")
 
+**⚠ REVISED AGAIN 2026-09-02 — the "WS = delta" call below was itself wrong. See the dated
+section near the end of this file.** WS pushes are full snapshots too, ordered by their own
+`pub.offset` but never jump-checked.
+
 **The original "ex1 is a full snapshot on every message" assumption was WRONG.** nobitex serves
 the initial book over REST and then only **deltas** over WebSocket. NiFi now publishes TWO
 payload shapes to `ex1-raw`, and `NobitexParser` branches on them:
@@ -36,6 +40,9 @@ Fixtures: `ex1-snapshot.json` is now the REST payload; the old WS Centrifugo mes
 `ex1-update.json` (BitpinParserTest's foreign-channel case + smoke both follow it).
 
 ## ex2 bitpin — same split (2026-07-25, was "snapshot on every message")
+
+**⚠ REVISED AGAIN 2026-09-02 — same correction as ex1, same reason. See the dated section near
+the end of this file.**
 
 **The exact same wrong assumption, corrected the same way.** bitpin also serves the initial book
 over REST and only deltas over WS, so `BitpinParser` is now structurally identical to
@@ -466,3 +473,77 @@ UTC conversion included, since no ex9 scenario blanks event time. **Still unprov
 suite BITES (no live mutation check yet, unlike scenario 31), and whether `TS` is really UTC —
 that one is unfalsifiable from the payload and needs a wall-clock comparison at capture time.
 See [[e2e-harness]].
+
+## 2026-09-02 — ex1/ex2 REVISED AGAIN: WS pushes are snapshots, not deltas
+
+User supplied fresh live captures (`nobitex-snapshots.txt`, `bitpin-snapshots.txt` — several
+consecutive WS pushes each) and asked for a full audit of every place the codebase assumed the
+2026-07-21/07-25 "WS = delta" classification. **That classification was wrong**, confirmed by
+inspection of the new captures: consecutive messages each carry the FULL current book (24–50+
+levels per side), and a price level that disappears between two consecutive pushes carries no
+`qty=0` entry anywhere in the later message — a true delta feed cannot signal a removal that way.
+Both AskUserQuestion answers from the user were explicit: treat WS pushes as `type=snapshot`
+(mirroring the existing "a snapshot is never jump-checked" pattern already used for ex4/ex5's
+REST-sequenced snapshots), and trust the new captures over the July finding.
+
+**The fix is confined to the two parsers — job 2 (type-validator) and job 5 (book-builder)
+needed ZERO code changes**, because both were already exchange-agnostic and already supported
+exactly this shape: a `snapshot` type carrying a non-null `sequence_id` (ex4 `pub.offset`, ex5
+REST `data.ts`) gets ordered by "not `<= last`" (→ `stale_or_duplicate` if it is) with NO jump
+check — the class javadoc's own words are "ordering is the WHOLE test... `sequence_jump` is
+deliberately never applied to a snapshot." So `NobitexParser`/`BitpinParser`'s WS branch just
+needed `type="update"→"snapshot"` and `sequence_jump=1→0` (kept `sequence_id=pub.offset`, which
+is strictly better ordering than falling back to event time). This is the same generalization
+[[project_type_validator]] already documents for job 2's snapshot branch — nothing new was built,
+an existing code path just started being reached by two more exchanges.
+
+**Consequence for the null-seq REST resync bootstrap (`baselinePending`).** It is still set on
+every accepted REST snapshot (unchanged — REST behavior did not change), but for ex1/ex2 it is
+now **never consumed**, because consuming it happens only in job 2's `update` branch and neither
+exchange sends that type any more. ex1/ex2 join ex3/ex9 in the "flag set but never consumed"
+category — see the corrected class javadoc in `TypeValidateFunction.java`.
+
+**Consequence for the control plane.** `no_baseline`/`sequence_gap` and the `snapshot_request`
+command they trigger live ENTIRELY in job 2's `update` branch (`askForSnapshot`). Since ex1/ex2
+no longer produce that type, **the control plane can no longer engage for these two exchanges at
+all** — a dropped/missed WS push is silently accepted as the new book (ordered only by
+`seq <= last`, no gap detection), by design, per the chosen tradeoff. This was explicitly
+disclosed and accepted via AskUserQuestion, not a silent regression. `ControlEx1NoBaselineThenGap`
+and `ControlEx1LaggingRestResync` (e2e scenarios 45/47) were **removed** 2026-09-02 since their
+premises are now permanently unreachable through ex1; the generic episode/resync-clears-the-flag
+machinery they exercised remains covered by the ex6-flavored pair (44/46) and, at the unit level,
+by `TypeValidateFunctionTest`'s cases (relabeled from "ex1 nobitex" to "ex6" since ex6's REST
+snapshot is also null-seq and is now the only live example of this bootstrap — [[project_type_validator]]).
+
+**e2e scenario rewrite (`e2e/scenario/data_ex1.go`, `data_ex2.go`).** Every WS-driven
+`WantSnapshots` entry had to be recomputed: job 5's snapshot branch CLEARS the side before
+applying an event's own levels, so a WS push now REPLACES the book wholesale instead of merging —
+a previously-resting level not re-sent by that push is simply gone. The Sources JSON payloads
+were left untouched (a small 2–3-level WS fixture is still a valid, if sparse, snapshot); only the
+expected outputs changed. Three scenarios per exchange had their whole premise invalidated and
+were renamed: `Ex{1,2}RestThenWsResync` → `Ex{1,2}WsSnapshotsReplaceWholesale` (no more
+REST-bootstraps-WS; each stream is independently ordered by its own counter, and a huge offset
+jump — 1001→9000 in the fixtures — is silently accepted), `Ex{1,2}UpdateBeforeSnapshot` →
+`Ex{1,2}WsSnapshotAloneEstablishesBaseline` (a WS push with no prior REST snapshot is now
+ACCEPTED immediately, not rejected `no_baseline`), `Ex{1,2}SequenceGap` →
+`Ex{1,2}WsGapAcceptedStaleRejected` (an offset skip is silently accepted — no gap, no reset, no
+control command — but the surviving `seq <= last` check still catches a genuinely out-of-order WS
+push as `stale_or_duplicate`, which the rewritten scenario now demonstrates using the fixture's
+own out-of-order step rather than inventing a new one). The other three scenarios per exchange
+(`NoiseFrames`, `StaleRestReplay`, `PrecisionDust` + ex1's two `Rebase*`) kept their names and
+premises; only their post-WS-event expected book state changed to reflect replace-not-merge —
+`PrecisionDust`/`RebaseToman`/`RebaseScaledUnit` each lost a previously-resting level from their
+"after WS event" expectation for exactly this reason, which is a good worked example of the bug
+this fix closes. `scenarios.go` numbering (01–14, 44–48) was NOT renumbered — retired slots (45,
+47) are left with an explanatory comment, per the standing "grep identifiers, not numbers"
+convention ([[e2e-harness]]).
+
+**Verification:** all 189 Java tests across `common`+`job-pair-extractor`+`job-type-validator`
+green, `job-book-builder`'s 28 tests green untouched (confirms it needed no change), `go build`/
+`go vet` clean on `e2e/`. **Not run live** — no docker stack available this session.
+
+**Why:** the exchanges' WS feeds may simply have changed behavior since July, or the original
+capture/analysis was wrong; either way, don't re-trust the July "delta" classification without a
+fresh capture. **How to apply:** if a THIRD capture ever contradicts this again, re-run the same
+audit (parser → job 2 → job 5 → e2e → control-plane → docs) before touching code — this file's
+own history is the cautionary tale.

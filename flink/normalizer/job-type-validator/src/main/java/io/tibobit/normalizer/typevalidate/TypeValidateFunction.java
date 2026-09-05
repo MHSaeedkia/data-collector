@@ -26,14 +26,17 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * <li><b>No ordering field</b> ({@code sequence_id == null}): no sequence to
  * order by, so out-of-order is detected by <b>event time</b> instead — a
  * null-seq snapshot older than the last accepted event is rejected
- * {@code out_of_order} (an old ex1 REST snapshot replayed after newer WS deltas
- * must not overwrite the newer book). Three exchanges land here: ex3 wallex
- * (never sends updates), ex9 lbank (a full-snapshot feed with no counter on the
- * wire at all — added 2026-08-26, and like ex3 it never sends updates), and the
- * ex1 nobitex REST snapshot (a resync whose Centrifugo offset is unknown). An
- * accepted one sets {@code baselinePending} so that the next update on the key
- * adopts its offset as a fresh baseline (see [[pair-extractor]]); for ex3 and
- * ex9 that flag is never consumed.
+ * {@code out_of_order} (an old REST snapshot replayed after newer WS events
+ * must not overwrite the newer book). Exchanges land here whenever their REST
+ * snapshot has no counter of its own: ex3 wallex and ex9 lbank (neither ever
+ * sends anything else), ex1 nobitex and ex2 bitpin (REVISED 2026-09-02 — their
+ * WS pushes turned out to be snapshots too, each carrying its OWN counter, so
+ * only the REST branch ever lands here now), and ex6 bybit's REST snapshot (a
+ * resync whose counter is a different, non-comparable one from its WS `u`). An
+ * accepted one sets {@code baselinePending} so that the next {@code update} on
+ * the key adopts its offset as a fresh baseline (see [[pair-extractor]]) — for
+ * ex1, ex2, ex3 and ex9, which never send an {@code update}, that flag is set
+ * but never consumed.
  *
  * <p>
  * Note the comparison is {@code <}, not {@code <=}: a frame whose event time
@@ -50,13 +53,14 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * interval since the last update is the collector's choice, not the exchange's
  * cadence. Contiguity therefore has exactly two sites, both in the update
  * branch below — snapshot → next update, and update → update.</li>
- * <li><b>Update</b> ({@code type == "update"}, delta feeds
- * ex1/ex2/ex5/ex6/ex8): needs a baseline and a contiguous sequence. No baseline
- * yet → {@code no_baseline}; still waiting to re-sync after a gap →
- * {@code awaiting_snapshot}; {@code sequence_id} within
- * {@code sequence_jump_tolerance} of {@code lastSeq + sequence_jump} → valid
- * (the tolerance is 0 for every exchange but ex5/bitget, whose sequence is a
- * millisecond clock — see the window comment in {@code processElement});
+ * <li><b>Update</b> ({@code type == "update"}, delta feeds ex5/ex6/ex8 —
+ * ex1/ex2 REVISED 2026-09-02 out of this group, see above): needs a baseline
+ * and a contiguous sequence. No baseline yet → {@code no_baseline}; still
+ * waiting to re-sync after a gap → {@code awaiting_snapshot};
+ * {@code sequence_id} within {@code sequence_jump_tolerance} of
+ * {@code lastSeq + sequence_jump} → valid (the tolerance is 0 for every
+ * exchange but ex5/bitget, whose sequence is a millisecond clock — see the
+ * window comment in {@code processElement});
  * {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
  * forward jump is a gap → {@code sequence_gap}, and the stream is marked
  * untrusted (every update rejected until the next snapshot re-syncs).</li>
@@ -96,7 +100,7 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * <p>
  * State per key: {@code lastSeq} (last accepted sequence id),
  * {@code lastEventTime} (ordering for null-seq snapshots),
- * {@code baselinePending} (the ex1 REST resync bootstrap),
+ * {@code baselinePending} (the null-seq REST resync bootstrap, e.g. ex6),
  * {@code resyncRequestedAt}, and for silence {@code lastArrivalMs},
  * {@code lastSimulation} and {@code stalenessTimerAt}. Topics are
  * single-partition so per-key order holds; no checkpointing configured
@@ -595,13 +599,15 @@ public class TypeValidateFunction
      *
      * <p>
      * Without this exemption the key deadlocks, which is the bug this feature
-     * shipped with. The ex1/ex2 resync snapshot is the null-seq REST one, and
-     * its {@code event_time} comes from a different clock than the WS deltas
-     * that set {@code lastEventTime} — so it can easily look "old" and be
-     * rejected. {@code lastEventTime} only advances inside {@link #emit}, which
-     * a rejected event never reaches, so every subsequent snapshot fails the
-     * identical stale comparison: the guard that rejected the resync is the
-     * guard that can never afterwards be satisfied.
+     * shipped with (discovered on ex1/ex2's old delta-feed shape — REVISED
+     * 2026-09-02, see the class javadoc; ex6 bybit's REST/WS split is the
+     * current live example). A resync snapshot's {@code event_time} can come
+     * from a different clock than whatever last set {@code lastEventTime} — so
+     * it can easily look "old" and be rejected. {@code lastEventTime} only
+     * advances inside {@link #emit}, which a rejected event never reaches, so
+     * every subsequent snapshot fails the identical stale comparison: the guard
+     * that rejected the resync is the guard that can never afterwards be
+     * satisfied.
      *
      * <p>
      * Accepting an out-of-date snapshot here is strictly better than that: the

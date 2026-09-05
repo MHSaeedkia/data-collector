@@ -7,20 +7,20 @@ var Scenarios = []struct {
 	Name string
 	S    Scenario
 }{
-	// Nobitex
-	{"01-ex1-rest-then-ws-resync", Ex1RestThenWsResync},
-	{"02-ex1-update-before-snapshot", Ex1UpdateBeforeSnapshot},
-	{"03-ex1-sequence-gap", Ex1SequenceGap},
+	// Nobitex — WS pushes are snapshots, not deltas (REVISED 2026-09-02, see data_ex1.go)
+	{"01-ex1-ws-snapshots-replace-wholesale", Ex1WsSnapshotsReplaceWholesale},
+	{"02-ex1-ws-snapshot-alone-establishes-baseline", Ex1WsSnapshotAloneEstablishesBaseline},
+	{"03-ex1-ws-gap-accepted-stale-rejected", Ex1WsGapAcceptedStaleRejected},
 	{"04-ex1-noise-frames", Ex1NoiseFrames},
 	{"05-ex1-stale-rest-replay", Ex1StaleRestReplay},
 	{"06-ex1-precision-dust", Ex1PrecisionDust},
 	{"07-ex1-rebase-toman", Ex1RebaseToman},
 	{"08-ex1-rebase-scaled-unit", Ex1RebaseScaledUnit},
 
-	// Bitpin
-	{"09-ex2-rest-then-ws-resync", Ex2RestThenWsResync},
-	{"10-ex2-update-before-snapshot", Ex2UpdateBeforeSnapshot},
-	{"11-ex2-sequence-gap", Ex2SequenceGap},
+	// Bitpin — WS pushes are snapshots, not deltas (REVISED 2026-09-02, see data_ex2.go)
+	{"09-ex2-ws-snapshots-replace-wholesale", Ex2WsSnapshotsReplaceWholesale},
+	{"10-ex2-ws-snapshot-alone-establishes-baseline", Ex2WsSnapshotAloneEstablishesBaseline},
+	{"11-ex2-ws-gap-accepted-stale-rejected", Ex2WsGapAcceptedStaleRejected},
 	{"12-ex2-noise-frames", Ex2NoiseFrames},
 	{"13-ex2-stale-rest-replay", Ex2StaleRestReplay},
 	{"14-ex2-precision-dust", Ex2PrecisionDust},
@@ -67,15 +67,19 @@ var Scenarios = []struct {
 
 	// Control plane — the snapshot requests job 2 sends NiFi. Grouped by feature
 	// rather than by exchange; see data_control.go.
+	// 45 (control-ex1-no-baseline-then-gap) was REMOVED 2026-09-02: it asserted a
+	// no_baseline/sequence_gap episode on nobitex WS pushes, which are snapshots
+	// now, not deltas, so that code path can no longer be reached through ex1.
+	// Number left retired rather than reused or renumbered — grep the Go
+	// identifiers, not the numbers, per the convention below.
 	{"44-control-ex6-gap-resync-gap", ControlEx6GapResyncGap},
-	{"45-control-ex1-no-baseline-then-gap", ControlEx1NoBaselineThenGap},
 
-	// Control plane — the resync the ordering guards used to throw away, which
-	// is the deadlock fixed on 2026-08-19. 46 is the sequenced guard, 47 the
-	// event-time one; both prove the resync was ACCEPTED and that the episode
-	// re-armed. See data_control.go.
+	// Control plane — the resync the sequenced ordering guard used to throw away,
+	// which is the deadlock fixed on 2026-08-19; proves the resync was ACCEPTED
+	// and that the episode re-armed. See data_control.go. 47
+	// (control-ex1-lagging-rest-resync, the event-time-guard variant) was REMOVED
+	// 2026-09-02 for the same reason as 45.
 	{"46-control-ex6-stale-resync-accepted", ControlEx6StaleResyncAccepted},
-	{"47-control-ex1-lagging-rest-resync", ControlEx1LaggingRestResync},
 
 	// Bybit's SECOND stream, the REST depth snapshot (added 2026-08-24). Lives here
 	// rather than with 32-37 because it is a resync scenario: it is the regression
@@ -103,4 +107,12 @@ var Scenarios = []struct {
 	{"57-ex9-duplicate-timestamp", Ex9DuplicateTimestamp},
 	{"58-ex9-noise-frames", Ex9NoiseFrames},
 	{"59-ex9-precision-dust", Ex9PrecisionDust},
+
+	// Control plane — the EVENT-TIME half of the deadlock (added 2026-09-05). 46 covers
+	// the sequenced ordering guard yielding to an outstanding request; this covers the
+	// null-seq/event-time guard doing the same. It replaces the retired 47
+	// (control-ex1-lagging-rest-resync), ported to ex6 because bybit's REST snapshot is
+	// now the platform's only live null-seq resync feeding a real delta stream. Appended
+	// as 60 rather than reusing 47, per the convention above. See data_control.go.
+	{"60-control-ex6-lagging-rest-resync", ControlEx6LaggingRestResync},
 }

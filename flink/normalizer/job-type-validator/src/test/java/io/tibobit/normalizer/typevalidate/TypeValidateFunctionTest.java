@@ -80,7 +80,7 @@ class TypeValidateFunctionTest {
     }
 
     /**
-     * Null-seq snapshot (ex3 wallex / ex1 nobitex REST) with an explicit event
+     * Null-seq snapshot (ex3 wallex / ex6 bybit REST) with an explicit event
      * time — the field the out-of-order guard orders these by, since they carry
      * no sequence id.
      */
@@ -481,15 +481,18 @@ class TypeValidateFunctionTest {
         assertThat(reset.getSimulation()).isEqualTo(1);
     }
 
-    // ---- ex1 nobitex: null-seq REST snapshot resyncs the WS delta stream
+    // ---- ex6 bybit: null-seq REST snapshot resyncs the WS delta stream
+    // (ex1/ex2 used this same shape until 2026-09-02 — see TypeValidateFunction's
+    // class javadoc; both now send WS snapshots instead, so ex6 is the current
+    // live example of this bootstrap)
     // ---------
     @Test
-    @DisplayName("ex1: the first update after a null-seq REST snapshot adopts its offset as the baseline, then gaps are enforced")
+    @DisplayName("ex6: the first update after a null-seq REST snapshot adopts its offset as the baseline, then gaps are enforced")
     void restSnapshotResyncsThenGapChecks() throws Exception {
-        send(nullSeqSnapshot(1, 1, 499L)); // REST snapshot: no offset, flags a resync
-        send(delta(1, 1, "update", 500L, 1L)); // first WS delta -> adopts 500 as baseline
-        send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok
-        send(delta(1, 1, "update", 505L, 1L)); // gap (expected 502) -> sequence_gap
+        send(nullSeqSnapshot(6, 1, 499L)); // REST snapshot: no offset, flags a resync
+        send(delta(6, 1, "update", 500L, 1L)); // first WS delta -> adopts 500 as baseline
+        send(delta(6, 1, "update", 501L, 1L)); // contiguous -> ok
+        send(delta(6, 1, "update", 505L, 1L)); // gap (expected 502) -> sequence_gap
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(null, 500L, 501L);
@@ -498,15 +501,15 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("ex1: a later REST snapshot re-anchors the baseline unconditionally, recovering from awaiting_snapshot")
+    @DisplayName("ex6: a later REST snapshot re-anchors the baseline unconditionally, recovering from awaiting_snapshot")
     void laterRestSnapshotReanchors() throws Exception {
-        send(nullSeqSnapshot(1, 1, 499L)); // resync
-        send(delta(1, 1, "update", 500L, 1L)); // baseline 500
-        send(delta(1, 1, "update", 505L, 1L)); // gap -> sequence_gap, awaiting
-        send(delta(1, 1, "update", 506L, 1L)); // still awaiting -> awaiting_snapshot
-        send(nullSeqSnapshot(1, 1, 899L)); // REST re-snapshot (newer) -> clears awaiting, flags resync
-        send(delta(1, 1, "update", 900L, 1L)); // adopts 900 unconditionally
-        send(delta(1, 1, "update", 901L, 1L)); // contiguous -> ok
+        send(nullSeqSnapshot(6, 1, 499L)); // resync
+        send(delta(6, 1, "update", 500L, 1L)); // baseline 500
+        send(delta(6, 1, "update", 505L, 1L)); // gap -> sequence_gap, awaiting
+        send(delta(6, 1, "update", 506L, 1L)); // still awaiting -> awaiting_snapshot
+        send(nullSeqSnapshot(6, 1, 899L)); // REST re-snapshot (newer) -> clears awaiting, flags resync
+        send(delta(6, 1, "update", 900L, 1L)); // adopts 900 unconditionally
+        send(delta(6, 1, "update", 901L, 1L)); // contiguous -> ok
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(null, 500L, null, 900L, 901L);
@@ -516,22 +519,22 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("ex1: an update before any REST snapshot still rejects no_baseline (resync flag gates the bootstrap)")
+    @DisplayName("ex6: an update before any REST snapshot still rejects no_baseline (resync flag gates the bootstrap)")
     void updateBeforeAnyRestSnapshotRejected() throws Exception {
-        send(delta(1, 1, "update", 500L, 1L));
+        send(delta(6, 1, "update", 500L, 1L));
         assertThat(valid()).isEmpty();
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.NO_BASELINE);
     }
 
     @Test
-    @DisplayName("ex1: an OLD REST snapshot replayed after newer WS deltas is rejected out_of_order and does NOT re-arm the resync")
+    @DisplayName("ex6: an OLD REST snapshot replayed after newer WS deltas is rejected out_of_order and does NOT re-arm the resync")
     void staleRestSnapshotAfterUpdatesRejected() throws Exception {
-        send(nullSeqSnapshot(1, 1, 499L)); // resync, event time 499
-        send(delta(1, 1, "update", 500L, 1L)); // adopts 500 as baseline (event time 500)
-        send(delta(1, 1, "update", 501L, 1L)); // contiguous -> ok (event time 501)
-        send(nullSeqSnapshot(1, 1, 499L)); // OLD snapshot replayed: 499 < 501 -> out_of_order
-        send(delta(1, 1, "update", 600L, 1L)); // if the stale snapshot had wrongly re-armed the
+        send(nullSeqSnapshot(6, 1, 499L)); // resync, event time 499
+        send(delta(6, 1, "update", 500L, 1L)); // adopts 500 as baseline (event time 500)
+        send(delta(6, 1, "update", 501L, 1L)); // contiguous -> ok (event time 501)
+        send(nullSeqSnapshot(6, 1, 499L)); // OLD snapshot replayed: 499 < 501 -> out_of_order
+        send(delta(6, 1, "update", 600L, 1L)); // if the stale snapshot had wrongly re-armed the
         // resync this would be ADOPTED; instead it is a gap
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
@@ -750,10 +753,10 @@ class TypeValidateFunctionTest {
     @Test
     @DisplayName("control-plane: a null-seq snapshot resolving a no-baseline condition clears the request flag too")
     void nullSeqBaselineClearsRequestFlag() throws Exception {
-        send(delta(1, 1, "update", 500L, 1L)); // no baseline (ex1 before its REST snapshot) -> request #1
-        send(nullSeqSnapshot(1, 1, 499L)); // REST snapshot arrives, flags a resync
-        send(delta(1, 1, "update", 900L, 1L)); // adopts baseline unconditionally, clears request flag
-        send(delta(1, 1, "update", 950L, 1L)); // a fresh gap -> request #2
+        send(delta(6, 1, "update", 500L, 1L)); // no baseline (ex6 before its REST snapshot) -> request #1
+        send(nullSeqSnapshot(6, 1, 499L)); // REST snapshot arrives, flags a resync
+        send(delta(6, 1, "update", 900L, 1L)); // adopts baseline unconditionally, clears request flag
+        send(delta(6, 1, "update", 950L, 1L)); // a fresh gap -> request #2
 
         assertThat(controlCommands()).hasSize(2);
     }
@@ -771,25 +774,25 @@ class TypeValidateFunctionTest {
 
     // ---- control-plane: escaping a stuck resync (regression, 2026-08-19) -------
     @Test
-    @DisplayName("control-plane: a resync snapshot older than the last delta is ACCEPTED, not deadlocked (ex1/ex2)")
+    @DisplayName("control-plane: a resync snapshot older than the last delta is ACCEPTED, not deadlocked (ex6)")
     void resyncSnapshotWithLaggingClockIsAccepted() throws Exception {
-        // ex1 shape: REST snapshot seeds the resync, first WS delta adopts the baseline.
-        send(nullSeqSnapshot(1, 1, 1_000L));
-        send(delta(1, 1, "update", 10L, 1L));   // adopts baseline, lastEventTime = 10
-        send(delta(1, 1, "update", 11L, 1L));   // contiguous, lastEventTime = 11
-        send(delta(1, 1, "update", 99L, 1L));   // GAP -> one command, book emptied by the reset
+        // ex6 shape: REST snapshot seeds the resync, first WS delta adopts the baseline.
+        send(nullSeqSnapshot(6, 1, 1_000L));
+        send(delta(6, 1, "update", 10L, 1L));   // adopts baseline, lastEventTime = 10
+        send(delta(6, 1, "update", 11L, 1L));   // contiguous, lastEventTime = 11
+        send(delta(6, 1, "update", 99L, 1L));   // GAP -> one command, book emptied by the reset
         assertThat(controlCommands()).hasSize(1);
 
         // NiFi answers with a REST snapshot whose event_time trails the last accepted delta —
         // different clock, not an old book. Before the fix this rejected out_of_order, and since
         // lastEventTime only advances in emit() the key could never recover or re-ask.
-        send(nullSeqSnapshot(1, 1, 5L));
+        send(nullSeqSnapshot(6, 1, 5L));
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
 
         // and the resync really resolved: the next gap opens a NEW episode and asks again.
-        send(delta(1, 1, "update", 200L, 1L));  // adopts the fresh baseline
-        send(delta(1, 1, "update", 500L, 1L));  // GAP #2
+        send(delta(6, 1, "update", 200L, 1L));  // adopts the fresh baseline
+        send(delta(6, 1, "update", 500L, 1L));  // GAP #2
         assertThat(controlCommands()).hasSize(2);
     }
 

@@ -14,6 +14,17 @@ valid → `ex{id}-p{id}-type-validated-raw-flink` (SAME `raw-order-book-event` s
 rejects → dead-letter `ex{id}-p{id}-rejected-flink` (`rejected-order-book-event`). 14 harness
 tests + live smoke 3/3 green. (2026-07-21: ex1 became a delta feed — see the ex1 resync note.)
 
+**⚠ REVISED 2026-09-02 — ex1/ex2 are NOT delta feeds after all.** Every "ex1/ex2 = delta" and
+"ex1 resync bootstrap" reference below describes the 2026-07-21→2026-09-02 window only. Fresh
+live captures showed nobitex/bitpin WS pushes are full snapshots (see
+[[project_pair_extractor]]'s 2026-09-02 section) — job 2 needed **zero code changes** for the
+correction, because the snapshot branch (item 2 below) already supported a sequenced snapshot
+with no jump check, exactly what ex1/ex2's WS side needed. Net effect on THIS file's rules:
+ex1/ex2 now live entirely in items 1 (their REST body) and 2 (their WS body) below; item 3
+("delta feeds") is ex5/ex6/ex8 only. `baselinePending` is still set by ex1/ex2's REST snapshot
+but never consumed (joins ex3/ex9), since nothing in an all-snapshot exchange ever reaches the
+`update` branch that used to consume it.
+
 ## The rule set (the important decision)
 
 The todo.md M3 sketch ("snapshot = unconditional baseline") was RECONCILED with the later,
@@ -31,7 +42,8 @@ awaitingSnapshot}`:
    `lastSeq != null && seq <= lastSeq` → reject `stale_or_duplicate`; else accept, set
    `lastSeq = seq`, clear `awaitingSnapshot`. This is the snapshot-feed staleness check AND a
    delta feed's re-sync in one branch. (Non-null-seq snapshots only: ex2/4/5 + ex6/ex8.)
-3. **`type == "update"`** (delta feeds ex1/ex6/ex8): FIRST `baselinePending` → adopt `lastSeq =
+3. **`type == "update"`** (delta feeds ex5/ex6/ex8 — ex1/ex2 REVISED OUT of this group
+   2026-09-02, see above): FIRST `baselinePending` → adopt `lastSeq =
    seq` unconditionally, clear the flag, accept (ex1 resync bootstrap); else `lastSeq == null` →
    reject `no_baseline`; `awaitingSnapshot` → reject `awaiting_snapshot`; `seq == lastSeq +
    sequence_jump` → accept, `lastSeq = seq`; `seq <= lastSeq` → reject `stale_or_duplicate`; else
@@ -40,6 +52,12 @@ awaitingSnapshot}`:
    `awaiting_snapshot` / `no_baseline`.
 
 ## ex1 nobitex resync (added 2026-07-21, coupled with [[pair-extractor]])
+
+**⚠ HISTORICAL — superseded 2026-09-02, see the top-of-file note.** ex1 no longer sends an
+`update` type at all, so the bootstrap this section describes no longer triggers for ex1 (its
+`baselinePending` is set but never consumed, like ex3/ex9). Kept for the reasoning trail — the
+out-of-order guard it introduced is still live and still exercised by every null-seq snapshot,
+including ex1/ex2's REST bodies.
 
 ex1 flipped from a snapshot-only feed to a **REST snapshot + WS delta** feed. The REST snapshot
 carries **no offset** (`sequence_id = null`), so it can't seed `lastSeq` like ex6/ex8 snapshots

@@ -15,14 +15,13 @@ import java.util.List;
  *       and injects the market as a top-level {@code "pair"} field. Levels are [price, qty]
  *       string pairs, no ordering field → {@code type="snapshot"}, {@code sequence_id=null};
  *       event time = {@code event_time} as <b>epoch millis</b> (a JSON number — NOT the
- *       ISO-8601 string the WS side uses under the same field name, user 2026-07-25). Job 2
- *       treats a null-seq snapshot as a resync signal, so the first WS update after it adopts
- *       the offset as the baseline.</li>
- *   <li><b>WebSocket update</b>: the Centrifugo publication we already consumed — channel
- *       {@code orderbook:{market}}. These are DELTAS, not snapshots (the old assumption was
- *       wrong) → {@code type="update"}, {@code sequence_id=pub.offset}, {@code sequence_jump=1}
- *       (Centrifugo offsets increment by one per publication); event time =
- *       {@code data.event_time}.</li>
+ *       ISO-8601 string the WS side uses under the same field name, user 2026-07-25).</li>
+ *   <li><b>WebSocket snapshot</b>: the Centrifugo publication we already consumed — channel
+ *       {@code orderbook:{market}}. <b>REVISED 2026-09-02</b>, same finding and same fix as ex1
+ *       (see its javadoc): captures show every push resends the WHOLE book, so the 2026-07-25
+ *       "these are deltas" call was wrong → {@code type="snapshot"},
+ *       {@code sequence_id=pub.offset}, {@code sequence_jump=0} (unchecked on a snapshot — see
+ *       job 2); event time = {@code data.event_time}.</li>
  * </ul>
  *
  * Anything else (connect acks, pings, malformed frames) is dropped by the whitelist rule.
@@ -40,8 +39,8 @@ public class BitpinParser implements RawExchangeParser {
             return parseRestSnapshot(root);
         }
 
-        // Otherwise a WebSocket delta (Centrifugo push) — or noise, which parseWsUpdate drops.
-        return parseWsUpdate(root);
+        // Otherwise a WebSocket snapshot (Centrifugo push) — or noise, which parseWsSnapshot drops.
+        return parseWsSnapshot(root);
     }
 
     private List<ParsedBookEvent> parseRestSnapshot(JsonNode root) {
@@ -59,7 +58,7 @@ public class BitpinParser implements RawExchangeParser {
         return List.of(new ParsedBookEvent(root.get("pair").asText(), event));
     }
 
-    private List<ParsedBookEvent> parseWsUpdate(JsonNode root) {
+    private List<ParsedBookEvent> parseWsSnapshot(JsonNode root) {
         JsonNode push = Centrifugo.push(root);
         if (push == null || !push.get("channel").asText().startsWith(CHANNEL_PREFIX)) {
             return List.of();
@@ -70,8 +69,8 @@ public class BitpinParser implements RawExchangeParser {
             return List.of();
         }
         String market = push.get("channel").asText().substring(CHANNEL_PREFIX.length());
-        RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "update",
-                push.get("pub").get("offset").asLong(), 1L,
+        RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "snapshot",
+                push.get("pub").get("offset").asLong(), 0L,
                 Instant.parse(data.get("event_time").asText()).toEpochMilli(),
                 Levels.fromStringPairs(data.get("asks")),
                 Levels.fromStringPairs(data.get("bids")));

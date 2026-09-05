@@ -13,8 +13,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Tests {@link BitpinParser} (ex2) against the captured wire samples (sample-raw-data.md § ex2):
  * the REST snapshot (action=snapshot, injected {@code pair}, no offset) and the Centrifugo WS
- * delta (channel {@code orderbook:{market}}, pub.offset with jump 1), both with an ISO-8601
- * event_time.
+ * snapshot (channel {@code orderbook:{market}}, pub.offset, jump never checked), both with an
+ * ISO-8601 event_time.
  */
 class BitpinParserTest {
 
@@ -45,20 +45,20 @@ class BitpinParserTest {
 
     /**
      * Given the captured WS publication, When parsed, Then the market comes from the channel
-     * suffix and it is an UPDATE (a delta, not a snapshot) keyed by pub.offset with jump 1 —
-     * Centrifugo offsets increment by exactly one.
+     * suffix and it is a SNAPSHOT (2026-09-02: every push resends the whole book — see the class
+     * javadoc) keyed by pub.offset, jump never checked.
      */
     @Test
-    @DisplayName("parses the WebSocket delta as an update")
-    void parsesWsUpdate() throws Exception {
+    @DisplayName("parses the WebSocket push as a snapshot")
+    void parsesWsSnapshot() throws Exception {
         List<ParsedBookEvent> parsed = parser.parse(Fixtures.bytes("ex2-update.json"));
 
         assertThat(parsed).hasSize(1);
         assertThat(parsed.get(0).getMarket()).isEqualTo("BTC_USDT");
         RawOrderBookEvent event = parsed.get(0).getEvent();
-        assertThat(event.getType()).isEqualTo("update");
+        assertThat(event.getType()).isEqualTo("snapshot");
         assertThat(event.getSequenceId()).isEqualTo(11286199L);
-        assertThat(event.getSequenceJump()).isOne();
+        assertThat(event.getSequenceJump()).isZero();
         assertThat(event.getEventTime())
                 .isEqualTo(Instant.parse("2026-07-14T05:56:09.833955Z").toEpochMilli());
         assertThat(event.getBids().get(0).getPrice()).isEqualTo("62672.30");

@@ -95,14 +95,21 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
 - **7 live exchanges, not 3**: 1=nobitex, 2=bitpin, 3=wallex, 4=ramzinex, 5=bitget, 6=bybit,
   7=ompfinex (server `exchanges` table; 8=okx exists in DB, no topic yet). The market key inside
   each payload's channel/topic string == `exchange_markets.market` exactly.
-- **⚠ The regime classification below is PARTLY SUPERSEDED** — `ex1` (2026-07-21) and `ex2`
-  (2026-07-25) were BOTH re-classified from full-snapshot-every-msg to **REST snapshot + WS
-  delta**: their WS messages are deltas (`type=update`, `pub.offset`, jump 1) and the full book
-  arrives over REST tagged `action:"snapshot"` with an injected `pair` (null seq → job-2 resync).
-  So they are delta feeds subject to the gap/jump rule, NOT the out-of-order-only check described
-  in (b) below. **ex5 bitget followed them 2026-08-22** (see the next bullet), so **only ex4
-  ramzinex remains a true snapshot feed**. See [[pair-extractor]] / [[type-validator]] and
-  `sample-raw-data.md`. The rest of this record stands as written.
+- **⚠ The regime classification below is PARTLY SUPERSEDED, and superseded AGAIN 2026-09-02** —
+  `ex1` (2026-07-21) and `ex2` (2026-07-25) were BOTH re-classified from full-snapshot-every-msg
+  to **REST snapshot + WS delta**: their WS messages were believed to be deltas (`type=update`,
+  `pub.offset`, jump 1) and the full book arrives over REST tagged `action:"snapshot"` with an
+  injected `pair` (null seq → job-2 resync). **That belief was itself wrong** — fresh live
+  captures 2026-09-02 showed WS pushes are full snapshots too (a level can vanish between two
+  pushes with no zero-quantity entry marking it, which no delta feed can do). So ex1/ex2 are
+  BACK to full-snapshot-every-msg on both streams, ordered by REST's null event-time and WS's own
+  `pub.offset` (jump 0, never checked) respectively — subject to the out-of-order-only check in
+  (b) below, not the gap/jump rule. **ex5 bitget followed the (now-corrected) delta path
+  2026-08-22** (see the next bullet) and is unaffected by this reversal — it remains a real delta
+  feed. **ex4 ramzinex and now ex1/ex2 again are true snapshot feeds.** See
+  [[pair-extractor]] / [[type-validator]] and `sample-raw-data.md`. The rest of this record
+  (below, and the "delta-with-seq — TWO exchanges" bullet) describes the ORIGINAL 2026-07-13
+  classification and is accurate again for ex1/ex2 as of 2026-09-02.
 - **⚠ ex5 bitget SUPERSEDED 2026-08-22 — new wire sample from the exchange.** The feed moved off
   the `books50` channel onto the price-GROUPED `depth` channel (`arg.params.scale: "0.01"`,
   `instType` `SPOT` → `sp`), and three things changed together: `action` gained the `"update"`
