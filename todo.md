@@ -609,3 +609,30 @@ User's call: put production in its own file and give the developers theirs back.
       (`is_control_batch` is defined and referenced nowhere). A conformant client returns nothing for
       its `seek(end - 1)` and every Flink topic goes silently unmeasured. See
       [[project_flink_production]]
+- [x] **Kafka broker OOM'd roughly once a day (4x, 2026-09-02..04)** — root cause found and fixed on
+      `fix/kafka-broker-oom-producer-churn`, **NOT deployed, NOT observed live**. `EXACTLY_ONCE` +
+      10s checkpointing (PR #12, merged the day the OOMs started) + `KafkaSinkBuilder`'s
+      **INCREMENTING** default = a new transactional.id, and so a new producer id, every checkpoint;
+      the broker held each for **7 days** on the **1 GB default heap**. Fixed by `POOLING` on all 8
+      sinks, 1h transactional-id/producer-id expiration, and a heap floor in both compose files.
+      Full note + traps in [[project_kafka_broker_memory]]
+- [ ] **Deploy and verify the broker fix.** Nothing below has been seen working:
+      - [ ] `free -g` on the box first — `docker-compose.prod.yml` assumes 4G of broker heap is
+            affordable, and the dev file's 2G is a guess sized for a small box, not a measurement
+      - [ ] Bring the broker up (it has been DOWN since 2026-09-04 17:17) and **rebuild + resubmit
+            the 6 normalizer jobs** — the POOLING change is in the jars, not in config
+      - [ ] After an hour up, confirm the churn stopped: producer ids per partition should sit in
+            the single digits, like NiFi's `ex{id}-raw` (5-8), not ~1700. Read them off a broker
+            restart's `Wrote producer snapshot ... with N producer ids` lines, or
+            `docker logs taskmanager | grep -c 'ProducerId set to'` — **with the broker UP**, since
+            that check returns 0 for the trivial reason when nothing is producing
+      - [ ] Watch the first job restart after the switch: POOLING recovers by LISTING transactions
+            to abort, a different path from INCREMENTING, and it is a **one-way** switch
+- [ ] **No alert can catch the next broker OOM.** `kafka-exporter` exposes no JVM heap metric and
+      M9's rules are Flink-only — three days of heap growth were invisible. Needs a JMX exporter on
+      the broker and a heap rule, and the `kafka-topics --list` healthcheck (a JVM start plus ~3000
+      topics' metadata every 15s, with a 10s timeout) replaced with something cheap
+- [ ] **Decide on the 10s checkpoint interval.** Deliberately left untouched by the OOM fix. With
+      `EXACTLY_ONCE` + `read_committed` each of the 6 chained jobs only publishes on commit, so the
+      interval is a **per-hop latency floor**: ~6 x 10s end to end. That is a product decision about
+      how fresh the book must be, not a memory one

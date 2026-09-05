@@ -10,6 +10,7 @@ import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
+import org.apache.flink.connector.kafka.sink.TransactionNamingStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -82,6 +83,14 @@ public class AggregatorJob {
                                 .build())
                         .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
                         .setTransactionalIdPrefix("job6-aggregated")
+                        // POOLING rather than the INCREMENTING default. INCREMENTING mints a NEW
+                        // transactional.id — and so a NEW producer id — on EVERY checkpoint, and the
+                        // broker holds each dead id's state for transactional.id.expiration.ms plus an
+                        // entry in the producer state of every partition that transaction touched. At a
+                        // 10s interval over ~3000 partitions that is what OOM'd the 1 GB broker daily
+                        // (2026-09-02..04). POOLING reuses a small fixed pool of ids instead.
+                        // One-way switch: INCREMENTING -> POOLING is supported, the reverse is not.
+                        .setTransactionNamingStrategy(TransactionNamingStrategy.POOLING)
                         .build())
                 .name("aggregated-order-book-sink");
 

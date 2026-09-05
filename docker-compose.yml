@@ -126,6 +126,43 @@ services:
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
             KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+            # --- Broker memory. The 2026-09-02..04 daily OOM lived here. ---
+            #
+            # Kafka's default heap is 1 GB and nothing here used to override it. The
+            # broker died of `java.lang.OutOfMemoryError: Java heap space` roughly once a
+            # day from the moment EXACTLY_ONCE checkpointing landed (PR #12, 2026-09-02),
+            # and needed a MANUAL restart every time: the JVM exits 0, and Docker restarts
+            # a container for neither `exit 0` nor a failed healthcheck, so `on-failure`
+            # never fired. `docker inspect` showed `OOMKilled=false` — that flag is the
+            # KERNEL killer, which never ran because the container has no memory limit.
+            #
+            # Three settings, and the two expiration ones matter more than the heap:
+            #
+            # HEAP — deliberately modest, and Xms stays small. THIS FILE RUNS ON 5+ DEV
+            # BOXES and must stay host-agnostic — the same reason the TaskManager above is
+            # capped at 2g. It is a safety margin, NOT the fix; the fix is that the two
+            # expirations below stop the heap filling in the first place.
+            #
+            # TRANSACTIONAL_ID_EXPIRATION_MS — the real fix, 7 DAYS by default. Every
+            # transactional.id the coordinator has ever seen is held in memory, with the
+            # set of partitions its transaction touched, for that whole window. Flink's
+            # default INCREMENTING naming strategy minted a brand-new id every checkpoint
+            # — 8 sinks x 6 checkpoints/min = ~70k dead ids/day, each carrying up to a few
+            # hundred TopicPartition objects. 1h is still 6x the sinks' own 10m
+            # transaction.timeout.ms and 4x the 15m transaction.max.timeout.ms ceiling, so
+            # no live transaction can be caught by it. The sinks were switched to
+            # POOLING in the same change, which stops the ids being minted at all; this is
+            # the belt to that braces, and it also drains the backlog already on disk.
+            #
+            # PRODUCER_ID_EXPIRATION_MS — 24h by default: how long each PARTITION remembers
+            # a producer id it has not heard from. The shutdown log showed ~1700 ids on
+            # every busy partition (NiFi's own `ex{id}-raw`: 5-8) across ~3000 partitions.
+            # 1h matches the 1h retention `warmup.sh` puts on the stage topics — there is no
+            # value in remembering a producer longer than the data it wrote.
+            KAFKA_HEAP_OPTS: "-Xmx2G -Xms512m"
+            KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
+            KAFKA_PRODUCER_ID_EXPIRATION_MS: 3600000
             CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg==
         volumes:
             - data-collector-kafka-data:/var/lib/kafka/data
