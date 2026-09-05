@@ -349,3 +349,40 @@ consumer keeps a book with no feed behind it forever. Two new states (`lastExcha
 `lastPairId`, 7 → 9) exist only so that branch can name the market without parsing the key. No
 `snapshot_request` on this path — dropping a market is not resyncing it. Full write-up, the race
 with `REFRESH_INTERVAL_MS` and the surviving mutation are in [[project_control_plane]].
+
+**2026-09-05 — the window is the wrong instrument for ex8/okx, measured.** The 2026-08-22 note above
+says ex8's "jump 300 / tolerance 0" is a *"real counter and a real fixed cadence"*. Half right: the
+cadence is real and exactly 300 ms (0 of 51,907 live transitions land off the 300 grid), but okx
+skips grid steps — only **79.52%** of transitions are `+300`, 15.22% are `+600`, and the tail runs
+to `+13200`. **Every tolerance from 0 to 299 scores the identical 79.52%**, because a symmetric band
+around 300 cannot reach 600 without its lower bound hitting 0, where `seq == last` is accepted as
+valid by the window BEFORE the `seq <= last` branch can call it a duplicate — the hole todo.md
+already tracks. So the useful constraint to remember when tuning any `jump 300` feed:
+**`tolerance <= jump - 1`, always, or the window legalises duplicates.**
+
+The shape ex8 actually needs is a **multiple** rule (`seq > last && (seq - last) % jump == 0`), not a
+window — one branch here plus one backward-compatible schema field, exactly the way
+`sequence_jump_tolerance` landed. Full measurement, the two other options weighed against it, and
+the reason `ts` can never detect a dropped frame on this channel: [[project_pair_extractor]] § ex8.
+Not implemented — measure-and-offer only, awaiting the user's pick.
+
+**2026-09-05 (later the same day) — ex8 moved to a DYNAMIC jump, and the "multiple rule" proposal
+above is WITHDRAWN unimplemented.** The team switched okx to the `books` channel
+(`wss://ws.okx.com:8443/ws/v5/public`), which carries `seqId`/`prevSeqId`. `OkxParser` now stamps
+`sequence_jump = seqId - prevSeqId` per message, so this function's `seq == lastSeq + jump` reduces
+to `prevSeqId == lastSeq` — exact contiguity with **no window, no tolerance, and no change to job
+2**. So the grid/multiple rule and the extra schema field are not needed and were never written; the
+`sequence_jump_tolerance` field stays used by ex5/bitget alone. Details in
+[[project_pair_extractor]] § ex8 IMPLEMENTED.
+
+**What DID change here: the dynamic jump finally has cover.** It had none — ex7/ompfinex has relied
+on it since 2026-08-24 and nothing in this suite exercised a per-message jump. Added (69 → 71):
+`dynamicJumpChainsEachMessageToItsNamedPredecessor` (four messages, jumps 0/4/7/2 — no constant
+would pass) and `dynamicJumpRejectsAnUnseenPredecessor` (a jump of 4, a perfectly healthy-looking
+value, but measured from a predecessor never accepted → `sequence_gap` + RESET). Mutation-checked:
+`expected = last + 1` fails 13 tests, both new ones among them.
+
+⚠ **The table at "8 okx | `ts` | 300 | `seq > lastSeq` only" earlier in this file is now STALE** —
+ex8's sequence is `seqId`, its jump is dynamic, and only ex5 is still sequenced by a timestamp.
+Test labels that said "(ex8, jump 300)" were relabelled "(fixed jump 300)": those tests still pin
+real generic behaviour, they were just mis-attributed after the switch.

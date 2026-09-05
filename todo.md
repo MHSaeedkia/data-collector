@@ -864,28 +864,130 @@ stack** — see the same memory section for the run and what it did not cover.
       nothing else — no `seqId`, no `prevSeqId`, no counter.** A sequence only one of the two streams
       carries cannot order the other. `ts` stays; the REST body stays null-seq; `seqId` is IGNORED,
       which the parser does and `61-ex8-rest-snapshot-resync` pins.
-- [ ] **Measure the ex8 `ts` interval distribution — and note this is now LESS urgent than it looked.**
-      ⚠ **Correcting an earlier entry in this file:** it claimed `jump 300, tolerance 0` was
-      extrapolated from two frames and therefore wrong. The 2026-09-05 capture gives
-      `1788606183009 → 1788606183309` — **exactly +300 again**, a different day and a different
-      market grouping. Two independent captures, two exact intervals: evidence FOR the cadence.
-      **Unproven either way on two data points.**
-      The likelier explanation for the live gaps is now **dropped frames**: at 300 ms with tolerance
-      0, ONE lost frame (exchange, NiFi or Kafka) puts the next `ts` at +600 and job 2 correctly
-      calls a gap. If that is it, the REST-branch fix was the whole fault and no window change is
-      needed. **Do not widen the window on the ex5 analogy alone** — measure first:
-      `docker exec kafka kafka-console-consumer --bootstrap-server kafka:29092 --topic ex8-raw \
-        --timeout-ms 300000 2>/dev/null | grep 'BTC-USDT' | grep -o '"ts":"[0-9]*"' \
-        | grep -o '[0-9]*' | awk 'p{print $1-p} {p=$1}' | sort -n | uniq -c | sort -rn | head`
-- [ ] **⚠ NEW, UNANSWERED — do the WS and REST books share a price grid?** The WS channel is
-      price-GROUPED (`arg.grouping`, live value **`"0.1"`**, not the `"1"` the docs still describe);
-      the REST depth endpoint is not grouped. On `BTC-USDT` this is harmless — `0.1` IS bitcoin's
-      tick. But the REST `ZEC-USDT` body carries **2-decimal** prices. **If any market is subscribed
-      with a grouping coarser than its tick, then after a resync the book holds REST levels the WS
-      deltas can never address** — a delete at `1011.9` will not remove `1011.99` — and the two grids
-      accumulate until the next snapshot. Needs one WS frame AND one REST body **for the same
-      market**; we have BTC's WS and ZEC's REST, never both for one. Nothing in the parser can fix
-      this if it is real: it is what `grouping` NiFi subscribes with per market.
+- [x] **MEASURED 2026-09-05 on the dev server — 15.0 min, 51,930 WS frames, 51,907 transitions,
+      23 markets.** The ex5 treatment, finally applied. Results, and they close the question both
+      ways at once: **the 300 ms cadence is REAL and exact** (0 of 51,907 forward deltas are off the
+      300 grid, 0.0000%) — so `jump = 300` was always right — **but only 79.52% of transitions are
+      `+300`**; okx skips whole grid steps (`+600` 15.22%, `+900` 2.65%, tail to `+13200`), plus
+      0.254% at exactly `−300` (NiFi↔Kafka reordering, correctly rejected `stale_or_duplicate`).
+      ⚠ **The "dropped frames" hypothesis in the previous version of this item is DEAD:** median
+      Kafka *arrival* delta is 322/324/310/314 ms for the `+300`/`+600`/`+900`/`>900` buckets — a
+      lost frame would arrive ~600 ms out, not ~310. The wall clock keeps its drumbeat while `ts`
+      skips. Two more facts proven at scale: `books-grouped` carries `seqId`/`prevSeqId` on **0 of
+      51,930** frames (REST: 4,828/4,828), and the WS channel sends **ZERO snapshots** (`action` is
+      `"update"` on 51,930/51,930), making ex8 structurally identical to ex5 — REST is its only
+      baseline. See [[project_pair_extractor]] § ex8 for the full distribution and method.
+- [x] **RESOLVED 2026-09-05 by switching channel, NOT by any window change — see the item two
+      below. Kept because the measurement is the reason the switch happened.**
+      **A TOLERANCE IS NOT THE FIX — measured, it buys exactly 0%.** `300 ± 0`, `±10`,
+      `±50`, `±100`, `±150`, `±200`, `±250`, `±299` **all score the identical 79.52%**: the misses
+      are a whole step beyond the band, and a symmetric window around 300 cannot reach 600 without
+      its lower bound touching 0, where `seq == last` is accepted as *valid* before the `seq <= last`
+      duplicate branch is reached. ex5's problem was jitter (`300 ± ε`); ex8's is `300 × k`.
+      Three options, none implemented — awaiting a pick:
+      **(a) grid rule, the correct model** — `seq > last && (seq - last) % jump == 0`, 100% of
+      observed forward transitions, still rejects the −300s; costs one backward-compatible schema
+      field + one branch in job 2, exactly the way `sequence_jump_tolerance` landed.
+      **(b) parser constants only, ships today** — `[J−T, J+T]` with `T = J−1` is `[1, 2J−1]`, so
+      `jump 901 / tol 900` = 99.20% and `jump 2101 / tol 2100` = 99.67%; one line, no schema, no
+      job change, but the constants read as nonsense and it accepts off-grid values.
+      ⚠ **(c) BELOW IS WITHDRAWN — `books` and `books-l2-tbt` are NOT reachable from our endpoint.**
+      See the channel item under this one; it is replaced by the `books5` / WS-resubscribe options.
+      **(c) ~~the real fix, NiFi side~~** — resubscribe okx to `books` / `books-l2-tbt`, which carry
+      `seqId`/`prevSeqId`: exact contiguity, REAL drop detection for the first time, and the REST
+      body's already-present `seqId` seeds the resync, deleting the null-seq workaround.
+      ⚠ (c) is unverified — okx channel behaviour is an external API claim nothing here has tested.
+      **Keep in mind whichever wins: `ts` on `books-grouped` cannot detect a dropped frame at all** —
+      a legitimate skipped step and a lost frame are byte-identical `+600`s. Only (c) changes that.
+- [x] **DECIDED AND IMPLEMENTED — neither A nor B; the team chose `books` on the PUBLIC endpoint.
+      See the item below for what shipped. Probed live 2026-09-05
+      against the real exchange, not the docs.** Two findings reframe everything:
+      **(1) We are not on okx's public API.** NiFi points at `wss://wspri.okx.com:8443/ws/v5/ipublic`
+      (from NiFi's `conf/flow.json.gz`); the dev server gets **HTTP 403** from `www.okx.com`
+      directly. `books-grouped` is undocumented and is **rejected `60018 doesn't exist` on BOTH**
+      `/ws/v5/public` and `/ws/v5/business` — it is real only on `ipublic`. **The public docs do not
+      describe our feed; do not reason from them.**
+      **(2) `ipublic` serves EXACTLY TWO order book channels** (`books`, `bbo-tbt`, `books-rpi`,
+      `books-l2-tbt`, `books50-l2-tbt`, `books10/15/20/25/50/100/400`, `books5-grouped` — all
+      rejected 60018): `books-grouped` (≤**150** levels/side, one `snapshot` on subscribe then
+      deltas, no seqId, exact 300 ms grid) and **`books5` (5 levels/side, EVERY push a full book,
+      no `action` field at all, no seqId, 100 ms grid)**. `books5` verified on 8 of our real markets:
+      8/8 subscribe, 485 msgs/20 s, always 5/5, never an `action` field.
+      **Also corrects the "zero snapshots" claim above:** every fresh `books-grouped` subscribe
+      returns `action:"snapshot"` first (3/3, 150 levels/side) — so **a WS RESUBSCRIBE is a valid
+      resync source**, on the delta feed's own clock and grid, which is what the control-plane item
+      suspected and what would delete the REST two-clocks problem.
+      **A — `books5`, snapshot-only (user's proposal, and it is sound):** ex8 stops being a delta
+      feed (`type="snapshot"`, `sequence_id=null`, event-time ordered — the ex1/ex2/ex3 shape). Kills
+      the whole problem class: no jump, tolerance, gap, RESET, control-plane request, REST resync or
+      black hole, and `parseRestSnapshot` becomes dead weight. **Cost: 150 → 5 levels/side.**
+      **B — keep `books-grouped` for depth and fix it properly:** grid rule + resync by **WS
+      resubscribe** instead of REST. Deep and correct; costs a schema field, a job-2 branch, a NiFi
+      change, and keeps the delta machinery.
+      **The ONLY thing that decides it is whether 5 levels/side is enough for the product.** Nothing
+      in the pipeline caps depth (no `max_levels`/`depth_limit` in `flink/`, `web/`, `schemas/`,
+      `postgres/`) and the aggregator unions all exchanges' levels, so okx would contribute 5 where
+      others contribute full depth. Today's slippage is a flat percent per `exchange_markets` row, so
+      nothing currently reads deep levels — but a depth-walked slippage later would need B.
+      Bandwidth favours A: ~3/s/market of 10 levels beats deltas plus 323.9 REST snapshots/min of
+      200 levels. See [[project_pair_extractor]] § ex8 channel question.
+      **OUTCOME: neither.** The team took a third option this probe had wrongly excluded — `books` on
+      `wss://ws.okx.com:8443/ws/v5/public`. It is absent from `ipublic`, which is why the probe above
+      ruled it out, but the PUBLIC endpoint has it and NiFi is moving there. It keeps the depth (400
+      a side, better than either A or B) AND gets exact contiguity, so the depth-vs-correctness
+      trade-off this item agonised over turned out to be false.
+
+- [x] **SHIPPED on `feat/ex8-okx-books-channel` (2026-09-05) — ex8 now consumes okx `books`.**
+      `wss://ws.okx.com:8443/ws/v5/public`, channel `books`: 400 levels/side, four-element levels,
+      `seqId` + `prevSeqId` + `checksum`. Reachability confirmed first — `ws.okx.com:8443` completes
+      TLS from both the dev host and the NiFi container (`www.okx.com:443` is blocked from that box,
+      which is why REST needed a proxy; the WS host does not).
+      **`OkxParser` stamps `sequence_id = seqId` and a DYNAMIC `sequence_jump = seqId - prevSeqId`**
+      (the ex7 pattern), so job 2's `seq == lastSeq + jump` reduces to `prevSeqId == lastSeq` —
+      exact contiguity, **zero change to job 2**, no schema change, no registry re-register, no
+      tolerance. Measured 6,516/6,516 live transitions chained, 0 broken, on 5 markets.
+      ⚠ **A snapshot stamps jump 0** — its `prevSeqId` is the `-1` sentinel and deriving from it
+      would compute `seqId + 1`; this also keeps the "a snapshot is ordered, never jump-checked"
+      invariant. The REST branch stays null-seq but for a NEW reason: same counter now, but a
+      snapshot's `seqId` is not any later update's `prevSeqId`.
+      Updated: `OkxParser` + javadoc, its 3 fixtures (real captured consecutive snapshot/update
+      pair), `OkxParserTest` 5→8, all 7 ex8 e2e scenarios, `sample-raw-data.md` § ex8, and stale
+      cross-refs in `RawOrderBookEvent`/`BitgetParser` javadoc. **292 normalizer tests green, e2e
+      build/vet/gofmt/test clean.** Mutation-checked 3 ways on the parser, 1 way on job 2.
+- [x] **Job 2 had NO test for the dynamic jump at all** — ex7 has relied on it since 2026-08-24 and
+      nothing exercised a per-message jump. Two added (69→71):
+      `dynamicJumpChainsEachMessageToItsNamedPredecessor` (jumps 0/4/7/2 — no constant would pass)
+      and `dynamicJumpRejectsAnUnseenPredecessor`. Mutating `expected = last + 1` fails 13 tests.
+- [ ] **⚠ RUN THE ex8 SCENARIOS LIVE once NiFi's change lands.** Nothing here has been verified
+      against a real feed: `ex8-raw` on the dev server still carries `books-grouped`, so all 7 ex8
+      scenarios would fail against it today, and their expected books were preserved from the old
+      scenarios rather than re-observed. `Ex8RestSnapshotResync`'s one-reject/one-command count is
+      the assertion most worth watching. Also re-check the accept rate — the baseline to beat is
+      `ex8-p1` at **3.8%** accepted and 323.9 REST resyncs/min.
+- [ ] **Ask the NiFi team to answer resyncs with a RESUBSCRIBE rather than a REST fetch.** Documented
+      in `sample-raw-data.md` § ex8: a fresh subscribe returns a 400-level snapshot on the feed's own
+      counter, so `lastSeq` is re-seeded exactly and the next update chains straight to it — no
+      baseline gap. The REST path still works (and is kept as the tested fallback) but costs a
+      `baselinePending` bootstrap every single resync.
+- [ ] **`checksum` is parsed-past and ignored.** okx ships a CRC32 book-integrity value on every
+      `books` frame; nothing in the platform verifies a checksum (same as ex5). It read `0` on all
+      6,521 captured frames, so it may not even be populated on this feed — worth one look before
+      anyone designs a book-integrity check around it.
+- [x] **The damage this was doing, kept as the baseline to compare against after the switch.**
+      ⚠ Still true on the dev server until NiFi's change lands. ~20.5% of updates
+      gap, each gap RESETs the book and asks the control plane, and NiFi answers by REST:
+      **323.9 REST snapshots/min across 23 markets (~14/min/market)** measured live. Lifetime topic
+      counts: `ex8-p1` 206,188 raw → 196,293 rejected → **7,734 accepted (3.8%)**, every other ex8
+      pair within a point of it. Post-restart reject tails are ~90% `awaiting_snapshot` / ~8%
+      `sequence_gap` — the resync black hole IS fixed (episodes close now), the gap rate is not.
+- [x] **ANSWERED 2026-09-05 — the WS and REST books DO share a price grid; no mismatch.** Captured
+      both streams for the **same** market on all 23 subscribed markets (the pairing that was
+      missing — we had BTC's WS and ZEC's REST, never both for one). Every market's `arg.grouping`
+      equals the tick its REST body quotes at: BTC/BNB `0.1`, ETH/SOL/AAVE/OKB/**ZEC** `0.01`,
+      AVAX/GRAM/HYPE/LINK/NEAR/UNI `0.001`, ADA/DOT/SUI/WLD/XRP `0.0001`, DOGE/TRX/XLM `0.00001`,
+      PEPE/SHIB `1e-9`. The ZEC worry was unfounded — its grouping IS 2 decimals. *(Method caveat:
+      the grid is inferred from the decimal places of quoted top-of-book prices, so it is a lower
+      bound on coarseness; it agrees with `grouping` on all 23, which is what makes it convincing.)*
 - [x] **e2e coverage for the ex8 resync: `61-ex8-rest-snapshot-resync` added** (`Ex8RestSnapshotResync`
       in `data_ex8.go`, registered in `scenarios.go`; e2e build/vet/gofmt clean, `go test ./scenario/...`
       ok). ⚠ **never run against a live stack.**

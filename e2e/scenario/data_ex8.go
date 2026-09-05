@@ -1,5 +1,9 @@
-// Scenarios for ex8/okx — a single-shape feed: every frame is a book frame carrying its
-// own sequence in `ts`.
+// Scenarios for ex8/okx on the `books` channel (`wss://ws.okx.com:8443/ws/v5/public`), which
+// replaced `books-grouped` on 2026-09-05. Every WS frame carries a real chained counter: `seqId`
+// with `prevSeqId` naming its predecessor, so the parser stamps a DYNAMIC jump of
+// `seqId - prevSeqId` and job 2's `seq == lastSeq + jump` reduces to `prevSeqId == lastSeq`.
+// `ts` is the event time only — it no longer sequences anything, which is why the ts values below
+// still step by 300 while the seqId steps do not.
 // The conventions these follow are in data.go.
 
 package scenario
@@ -16,19 +20,21 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	"id": "ca0f8d01-294f-42fa-853a-7e7289f636c6",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
 			"asks": [
-				["62771", "0.29045069"],
-				["62775", "1.05000000"]
+				["62771", "0.29045069", "0", "1"],
+				["62775", "1.05000000", "0", "1"]
 			],
-			"bids": [["62769", "0.55175335"]],
-			"ts": "1800000000300"
+			"bids": [["62769", "0.55175335", "0", "1"]],
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": 4429784540
 		}
 	]
 }`,
@@ -37,28 +43,30 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	"id": "60a0a661-a7db-482c-96f7-d670cdfa5bd3",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["62770", "2.21924167"],
-				["62771", "0.17447383"],
-				["62772", "0.19067482"],
-				["62775", "1.05000000"],
-				["62780", "0.33476925"]
+				["62770", "2.21924167", "0", "1"],
+				["62771", "0.17447383", "0", "1"],
+				["62772", "0.19067482", "0", "1"],
+				["62775", "1.05000000", "0", "1"],
+				["62780", "0.33476925", "0", "1"]
 			],
 			"bids": [
-				["62769", "0.50795335"],
-				["62768", "0.02744953"],
-				["62767", "0.20630833"],
-				["62765", "0.90000000"],
-				["62760", "1.31062803"]
+				["62769", "0.50795335", "0", "1"],
+				["62768", "0.02744953", "0", "1"],
+				["62767", "0.20630833", "0", "1"],
+				["62765", "0.90000000", "0", "1"],
+				["62760", "1.31062803", "0", "1"]
 			],
-			"ts": "1800000000600"
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784550,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -67,23 +75,25 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 	"id": "b87c615c-dc81-428d-8227-a00fa614e7c6",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
 			"asks": [
-				["62771", "0.29045069"],
-				["62772", "0"],
-				["62790", "0.40000000"]
+				["62771", "0.29045069", "0", "1"],
+				["62772", "0", "0", "0"],
+				["62790", "0.40000000", "0", "1"]
 			],
 			"bids": [
-				["62769", "0.55175335"],
-				["62758", "1.10000000"]
+				["62769", "0.55175335", "0", "1"],
+				["62758", "1.10000000", "0", "1"]
 			],
-			"ts": "1800000000900"
+			"ts": "1800000000900",
+			"checksum": 0,
+			"seqId": 4429784557,
+			"prevSeqId": 4429784550
 		}
 	]
 }`,
@@ -166,28 +176,30 @@ var Ex8HappyPath = Scenario{
 	"id": "73c46589-6b55-4335-a044-eca17b9991ef",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["62800", "1.50000000"],
-				["62801", "0.85000000"],
-				["62802", "2.20000000"],
-				["62805", "0.40000000"],
-				["62810", "3.10000000"]
+				["62800", "1.50000000", "0", "1"],
+				["62801", "0.85000000", "0", "1"],
+				["62802", "2.20000000", "0", "1"],
+				["62805", "0.40000000", "0", "1"],
+				["62810", "3.10000000", "0", "1"]
 			],
 			"bids": [
-				["62799", "1.20000000"],
-				["62798", "0.60000000"],
-				["62795", "2.40000000"],
-				["62790", "0.95000000"],
-				["62785", "4.00000000"]
+				["62799", "1.20000000", "0", "1"],
+				["62798", "0.60000000", "0", "1"],
+				["62795", "2.40000000", "0", "1"],
+				["62790", "0.95000000", "0", "1"],
+				["62785", "4.00000000", "0", "1"]
 			],
-			"ts": "1800000000300"
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -196,20 +208,22 @@ var Ex8HappyPath = Scenario{
 	"id": "23d6e762-3672-463e-a115-22c3b6c14bcd",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
 			"asks": [
-				["62800", "1.00000000"],
-				["62802", "0"],
-				["62807", "0.70000000"]
+				["62800", "1.00000000", "0", "1"],
+				["62802", "0", "0", "0"],
+				["62807", "0.70000000", "0", "1"]
 			],
-			"bids": [["62799", "1.45000000"]],
-			"ts": "1800000000600"
+			"bids": [["62799", "1.45000000", "0", "1"]],
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784551,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -218,19 +232,21 @@ var Ex8HappyPath = Scenario{
 	"id": "37a564f5-221a-495d-baf1-bd74671b193c",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["62803", "0.33000000"]],
+			"asks": [["62803", "0.33000000", "0", "1"]],
 			"bids": [
-				["62798", "0"],
-				["62780", "5.50000000"]
+				["62798", "0", "0", "0"],
+				["62780", "5.50000000", "0", "1"]
 			],
-			"ts": "1800000000900"
+			"ts": "1800000000900",
+			"checksum": 0,
+			"seqId": 4429784558,
+			"prevSeqId": 4429784551
 		}
 	]
 }`,
@@ -239,18 +255,20 @@ var Ex8HappyPath = Scenario{
 	"id": "936124ea-e1a8-4b0f-a8d6-c4fc7a0ddc37",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
 			"asks": [
-				["62800", "0.90000000"],
-				["62810", "0"]
+				["62800", "0.90000000", "0", "1"],
+				["62810", "0", "0", "0"]
 			],
-			"ts": "1800000001200"
+			"ts": "1800000001200",
+			"checksum": 0,
+			"seqId": 4429784560,
+			"prevSeqId": 4429784558
 		}
 	]
 }`,
@@ -366,28 +384,30 @@ var Ex8SequenceGap = Scenario{
 	"id": "756f528b-e41c-4d6a-8380-6165b65e4a1e",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["62800", "1.50000000"],
-				["62801", "0.85000000"],
-				["62802", "2.20000000"],
-				["62805", "0.40000000"],
-				["62810", "3.10000000"]
+				["62800", "1.50000000", "0", "1"],
+				["62801", "0.85000000", "0", "1"],
+				["62802", "2.20000000", "0", "1"],
+				["62805", "0.40000000", "0", "1"],
+				["62810", "3.10000000", "0", "1"]
 			],
 			"bids": [
-				["62799", "1.20000000"],
-				["62798", "0.60000000"],
-				["62795", "2.40000000"],
-				["62790", "0.95000000"],
-				["62785", "4.00000000"]
+				["62799", "1.20000000", "0", "1"],
+				["62798", "0.60000000", "0", "1"],
+				["62795", "2.40000000", "0", "1"],
+				["62790", "0.95000000", "0", "1"],
+				["62785", "4.00000000", "0", "1"]
 			],
-			"ts": "1800000000300"
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -396,16 +416,18 @@ var Ex8SequenceGap = Scenario{
 	"id": "9aefe424-fc12-4b8d-a311-1fe768ff7cbe",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["62801", "0.95000000"]],
-			"bids": [["62795", "2.60000000"]],
-			"ts": "1800000000600"
+			"asks": [["62801", "0.95000000", "0", "1"]],
+			"bids": [["62795", "2.60000000", "0", "1"]],
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784551,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -414,16 +436,18 @@ var Ex8SequenceGap = Scenario{
 	"id": "9c1d91ad-24da-4a88-8687-27c50aa53ba9",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["62805", "0"]],
-			"bids": [["62790", "1.10000000"]],
-			"ts": "1800000001500"
+			"asks": [["62805", "0", "0", "0"]],
+			"bids": [["62790", "1.10000000", "0", "1"]],
+			"ts": "1800000001500",
+			"checksum": 0,
+			"seqId": 4429784563,
+			"prevSeqId": 4429784559
 		}
 	]
 }`,
@@ -432,16 +456,18 @@ var Ex8SequenceGap = Scenario{
 	"id": "1dd810e4-7581-4173-aa1e-c19c3ee3d610",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["62807", "0.50000000"]],
-			"bids": [["62785", "3.80000000"]],
-			"ts": "1800000001800"
+			"asks": [["62807", "0.50000000", "0", "1"]],
+			"bids": [["62785", "3.80000000", "0", "1"]],
+			"ts": "1800000001800",
+			"checksum": 0,
+			"seqId": 4429784570,
+			"prevSeqId": 4429784563
 		}
 	]
 }`,
@@ -450,24 +476,26 @@ var Ex8SequenceGap = Scenario{
 	"id": "9e962142-8cb6-4326-bfc8-cc2986996abb",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["63000", "2.00000000"],
-				["63010", "1.10000000"],
-				["63020", "0.75000000"]
+				["63000", "2.00000000", "0", "1"],
+				["63010", "1.10000000", "0", "1"],
+				["63020", "0.75000000", "0", "1"]
 			],
 			"bids": [
-				["62990", "1.80000000"],
-				["62980", "2.50000000"],
-				["62970", "3.30000000"]
+				["62990", "1.80000000", "0", "1"],
+				["62980", "2.50000000", "0", "1"],
+				["62970", "3.30000000", "0", "1"]
 			],
-			"ts": "1800000002100"
+			"ts": "1800000002100",
+			"checksum": 0,
+			"seqId": 4429784580,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -476,16 +504,18 @@ var Ex8SequenceGap = Scenario{
 	"id": "92591a51-c76e-4e49-90cf-a742291a126a",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["63010", "0.90000000"]],
-			"bids": [["62990", "2.00000000"]],
-			"ts": "1800000002400"
+			"asks": [["63010", "0.90000000", "0", "1"]],
+			"bids": [["62990", "2.00000000", "0", "1"]],
+			"ts": "1800000002400",
+			"checksum": 0,
+			"seqId": 4429784585,
+			"prevSeqId": 4429784580
 		}
 	]
 }`,
@@ -602,24 +632,26 @@ var Ex8StaleDuplicate = Scenario{
 	"id": "ae06523b-8215-4b8d-a106-5df7ff57c5d7",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["63000", "2.00000000"],
-				["63010", "1.10000000"],
-				["63020", "0.75000000"]
+				["63000", "2.00000000", "0", "1"],
+				["63010", "1.10000000", "0", "1"],
+				["63020", "0.75000000", "0", "1"]
 			],
 			"bids": [
-				["62990", "1.80000000"],
-				["62980", "2.50000000"],
-				["62970", "3.30000000"]
+				["62990", "1.80000000", "0", "1"],
+				["62980", "2.50000000", "0", "1"],
+				["62970", "3.30000000", "0", "1"]
 			],
-			"ts": "1800000000300"
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -628,16 +660,18 @@ var Ex8StaleDuplicate = Scenario{
 	"id": "c9ad6f89-d645-407a-9bc3-579ca11e1a17",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["63000", "1.75000000"]],
-			"bids": [["62980", "2.70000000"]],
-			"ts": "1800000000600"
+			"asks": [["63000", "1.75000000", "0", "1"]],
+			"bids": [["62980", "2.70000000", "0", "1"]],
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784551,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -646,16 +680,18 @@ var Ex8StaleDuplicate = Scenario{
 	"id": "4be9bf5b-b95a-4c9f-a9ae-32ba1da73240",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
-			"asks": [["63000", "1.75000000"]],
-			"bids": [["62980", "2.70000000"]],
-			"ts": "1800000000600"
+			"asks": [["63000", "1.75000000", "0", "1"]],
+			"bids": [["62980", "2.70000000", "0", "1"]],
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784551,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -664,16 +700,18 @@ var Ex8StaleDuplicate = Scenario{
 	"id": "b0bb7997-4b6f-4660-adcc-681a01cc0fab",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
-			"asks": [["69999", "9.99999999"]],
-			"bids": [["10000", "9.99999999"]],
-			"ts": "1800000000150"
+			"asks": [["69999", "9.99999999", "0", "1"]],
+			"bids": [["10000", "9.99999999", "0", "1"]],
+			"ts": "1800000000150",
+			"checksum": 0,
+			"seqId": 4429784549,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -682,24 +720,26 @@ var Ex8StaleDuplicate = Scenario{
 	"id": "929746b5-0fe9-4096-987b-fb9f89b207fd",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["63005", "1.25000000"],
-				["63015", "2.40000000"],
-				["63025", "0.60000000"]
+				["63005", "1.25000000", "0", "1"],
+				["63015", "2.40000000", "0", "1"],
+				["63025", "0.60000000", "0", "1"]
 			],
 			"bids": [
-				["62995", "1.90000000"],
-				["62985", "2.20000000"],
-				["62975", "4.10000000"]
+				["62995", "1.90000000", "0", "1"],
+				["62985", "2.20000000", "0", "1"],
+				["62975", "4.10000000", "0", "1"]
 			],
-			"ts": "1800000000900"
+			"ts": "1800000000900",
+			"checksum": 0,
+			"seqId": 4429784560,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -779,30 +819,32 @@ var Ex8PrecisionDust = Scenario{
 	"id": "af83e9e8-c221-428b-aff5-0987e895280e",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["62900.1234", "3.1234567891"],
-				["62900.1289", "2.0000000099"],
-				["62901.55", "1.50000000"],
-				["62902.999", "4.00000000"],
-				["62905.10", "0.0000000090"],
-				["62906.1234", "0.0000000060"],
-				["62906.1299", "0.0000000060"]
+				["62900.1234", "3.1234567891", "0", "1"],
+				["62900.1289", "2.0000000099", "0", "1"],
+				["62901.55", "1.50000000", "0", "1"],
+				["62902.999", "4.00000000", "0", "1"],
+				["62905.10", "0.0000000090", "0", "1"],
+				["62906.1234", "0.0000000060", "0", "1"],
+				["62906.1299", "0.0000000060", "0", "1"]
 			],
 			"bids": [
-				["62899.0567", "5.9876543219"],
-				["62899.0512", "1.00000000"],
-				["62898.9999", "7.25000000"],
-				["62897.50", "2.10000000"],
-				["62895.4444", "9.00000000"]
+				["62899.0567", "5.9876543219", "0", "1"],
+				["62899.0512", "1.00000000", "0", "1"],
+				["62898.9999", "7.25000000", "0", "1"],
+				["62897.50", "2.10000000", "0", "1"],
+				["62895.4444", "9.00000000", "0", "1"]
 			],
-			"ts": "1800000000300"
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -811,20 +853,22 @@ var Ex8PrecisionDust = Scenario{
 	"id": "df2d7c59-c8ce-4eb8-bbf2-8272fcfa680c",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
 			"asks": [
-				["62901.55", "0.0000000041"],
-				["62910.25", "6.00000000"],
-				["62910.2599", "1.50000000"]
+				["62901.55", "0.0000000041", "0", "1"],
+				["62910.25", "6.00000000", "0", "1"],
+				["62910.2599", "1.50000000", "0", "1"]
 			],
-			"bids": [["62897.50", "0.0000000099"]],
-			"ts": "1800000000600"
+			"bids": [["62897.50", "0.0000000099", "0", "1"]],
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784551,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -892,9 +936,8 @@ var Ex8NoiseFrames = Scenario{
 	"simulation": 1,
 	"event": "subscribe",
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"connId": "a4d3ae55"
 }`,
@@ -912,24 +955,26 @@ var Ex8NoiseFrames = Scenario{
 	"id": "62446b18-a0eb-4024-861b-75a97faa89a8",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "snapshot",
 	"data": [
 		{
 			"asks": [
-				["62950", "1.20000000"],
-				["62955", "0.88000000"],
-				["62960", "2.40000000"]
+				["62950", "1.20000000", "0", "1"],
+				["62955", "0.88000000", "0", "1"],
+				["62960", "2.40000000", "0", "1"]
 			],
 			"bids": [
-				["62945", "1.50000000"],
-				["62940", "3.10000000"],
-				["62935", "0.90000000"]
+				["62945", "1.50000000", "0", "1"],
+				["62940", "3.10000000", "0", "1"],
+				["62935", "0.90000000", "0", "1"]
 			],
-			"ts": "1800000000300"
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": -1
 		}
 	]
 }`,
@@ -938,16 +983,18 @@ var Ex8NoiseFrames = Scenario{
 	"id": "76c8fa22-92ef-4b5e-a34e-ad8f56f54535",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "partial",
 	"data": [
 		{
-			"asks": [["62950", "9999.00000000"]],
-			"bids": [["62945", "9999.00000000"]],
-			"ts": "1800000000450"
+			"asks": [["62950", "9999.00000000", "0", "1"]],
+			"bids": [["62945", "9999.00000000", "0", "1"]],
+			"ts": "1800000000450",
+			"checksum": 0,
+			"seqId": 4429784550,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -972,19 +1019,21 @@ var Ex8NoiseFrames = Scenario{
 	"id": "72857752-b690-4f18-b050-9f12d2174bd3",
 	"simulation": 1,
 	"arg": {
-		"channel": "books-grouped",
-		"instId": "BTC-USDT",
-		"grouping": "1"
+		"channel": "books",
+		"instId": "BTC-USDT"
 	},
 	"action": "update",
 	"data": [
 		{
 			"asks": [
-				["62955", "0"],
-				["62970", "0.60000000"]
+				["62955", "0", "0", "0"],
+				["62970", "0.60000000", "0", "1"]
 			],
-			"bids": [["62945", "1.65000000"]],
-			"ts": "1800000000600"
+			"bids": [["62945", "1.65000000", "0", "1"]],
+			"ts": "1800000000600",
+			"checksum": 0,
+			"seqId": 4429784551,
+			"prevSeqId": 4429784547
 		}
 	]
 }`,
@@ -1058,17 +1107,20 @@ var Ex8NoiseFrames = Scenario{
 //     `data` being an object, ex6 on the book sitting under `result` — neither works here).
 //   - levels are FOUR-element arrays, `[price, qty, "0", orderCount]`, where the WS frame sends
 //     two. Only elements 0 and 1 are read.
-//   - the body carries a REAL sequence counter, `seqId`. Source 05's is 4428333610, a live value,
-//     and it MUST be ignored: the WS updates are sequenced by `ts` at order 1e12, so adopting a
-//     seqId at order 1e9 makes source 06 read as a ~1e12 forward jump — an instant false gap. A
-//     wrong implementation fails loudly here. (If the WS feed is ever re-sequenced on seqId, this
-//     scenario is the first thing that has to change — see todo.md.)
+//   - the body carries `seqId` but no `prevSeqId`, so it cannot be chained. Since the move to the
+//     `books` channel this is the SAME counter the WS frames use — source 05's 4428333610 is a real
+//     captured value — and it still must NOT seed lastSeq: a snapshot's seqId is not any later
+//     update's prevSeqId, because the counter advances between NiFi's fetch and the next WS frame.
+//     Adopting it would break source 06's chain check instead of repairing it.
 //
-// Null-seq is what makes it work, for the same reason as ex5: source 05's `ts` is 50 ms BEHIND
-// source 04's, because it comes off the REST endpoint's clock rather than the WS one. Job 2 orders
-// it by event time on the resync exemption, then `baselinePending` lets source 06 — deliberately
-// NOT `REST ts + 300` — adopt its own ts as the fresh baseline, so the two clocks never meet.
-// Source 07 then resumes ordinary +300 contiguity.
+// Null-seq is what makes it work. Job 2 orders the body by event time on the resync exemption —
+// source 05's `ts` is 50 ms BEHIND source 04's, coming off the REST endpoint's clock rather than
+// the WS one — and then `baselinePending` lets source 06 adopt its own `seqId` as the fresh
+// baseline unconditionally, so the REST body's counter is never compared against a WS one.
+// Source 07 then chains to 06 normally.
+//
+// A RESUBSCRIBE would avoid the baseline gap entirely (the WS snapshot re-seeds the counter
+// exactly); this scenario pins the REST fallback, which is the path that used to be a black hole.
 //
 // ONE reject episode and ONE control command is the whole assertion: a second command means the
 // reset → request → snapshot → gap loop is back.
@@ -1080,53 +1132,57 @@ var Ex8RestSnapshotResync = Scenario{
 		`{
 	"id": "3f7c1a90-5e28-4b6d-9a41-7c05e2d8b361",
 	"simulation": 1,
-	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"arg": { "channel": "books", "instId": "BTC-USDT" },
 	"action": "snapshot",
 	"data": [
 		{
-			"asks": [["62800", "1.50000000"], ["62801", "0.85000000"], ["62802", "2.20000000"]],
-			"bids": [["62799", "1.20000000"], ["62798", "0.60000000"], ["62795", "2.40000000"]],
-			"ts": "1800000000300"
+			"asks": [["62800", "1.50000000", "0", "1"], ["62801", "0.85000000", "0", "1"], ["62802", "2.20000000", "0", "1"]],
+			"bids": [["62799", "1.20000000", "0", "1"], ["62798", "0.60000000", "0", "1"], ["62795", "2.40000000", "0", "1"]],
+			"ts": "1800000000300",
+			"checksum": 0,
+			"seqId": 4429784547,
+			"prevSeqId": -1
 		}
 	]
 }`,
-		// 02 WS update at +300 — accepted, re-sizes 62801
+		// 02 WS update chaining to 01 (prevSeqId == the snapshot's seqId) — accepted, re-sizes 62801
 		`{
 	"id": "8b2d4e05-91af-4c73-8d16-2e6fb0a95c47",
 	"simulation": 1,
-	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"arg": { "channel": "books", "instId": "BTC-USDT" },
 	"action": "update",
 	"data": [
-		{ "asks": [["62801", "0.95000000"]], "bids": [["62795", "2.60000000"]], "ts": "1800000000600" }
+		{ "asks": [["62801", "0.95000000", "0", "1"]], "bids": [["62795", "2.60000000", "0", "1"]], "ts": "1800000000600", "checksum": 0, "seqId": 4429784551, "prevSeqId": 4429784547 }
 	]
 }`,
-		// 03 WS update at +900 — a gap: reset, dead-letter, and ask
+		// 03 WS update whose prevSeqId (…563) is NOT lastSeq (…551) — a gap: reset, dead-letter, ask
 		`{
 	"id": "d5091c76-2b84-4f30-a9e2-6108c3f7a5db",
 	"simulation": 1,
-	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"arg": { "channel": "books", "instId": "BTC-USDT" },
 	"action": "update",
 	"data": [
-		{ "asks": [["62802", "0"]], "bids": [["62790", "1.10000000"]], "ts": "1800000001500" }
+		{ "asks": [["62802", "0", "0", "0"]], "bids": [["62790", "1.10000000", "0", "1"]], "ts": "1800000001500", "checksum": 0, "seqId": 4429784567, "prevSeqId": 4429784563 }
 	]
 }`,
 		// 04 WS update while the request is outstanding — awaiting_snapshot, and NO second command
 		`{
 	"id": "6e83b501-c47d-4a29-b0f5-93da12c8e764",
 	"simulation": 1,
-	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"arg": { "channel": "books", "instId": "BTC-USDT" },
 	"action": "update",
 	"data": [
-		{ "asks": [["62807", "0.50000000"]], "bids": [["62785", "3.80000000"]], "ts": "1800000001800" }
+		{ "asks": [["62807", "0.50000000", "0", "1"]], "bids": [["62785", "3.80000000", "0", "1"]], "ts": "1800000001800", "checksum": 0, "seqId": 4429784572, "prevSeqId": 4429784567 }
 	]
 }`,
 		// 05 REST snapshot — the resync answer, in the OTHER wire shape. No `arg` at all; the
-		// market arrives as the injected `pair`, the levels are four-element arrays, and `seqId`
-		// is a real captured value that must be ignored rather than adopted as the sequence.
+		// market arrives as the injected `pair`, and there is no `prevSeqId` to chain with — so its
+		// `seqId`, though now on the same counter as the WS frames, must be ignored rather than
+		// adopted.
 		//
 		// Its `ts` is 50 ms BEHIND source 04 — the endpoint's clock, not the WS one. The parser
-		// leaves the sequence id null, so it is never compared against a WS ts and job 2 accepts
-		// it on the resync exemption.
+		// leaves the sequence id null, so it is never compared against a WS counter and job 2
+		// accepts it on the resync exemption.
 		`{
 	"id": "a304f0d3-8062-48ab-b971-fc638d9f3f79",
 	"simulation": 1,
@@ -1143,27 +1199,27 @@ var Ex8RestSnapshotResync = Scenario{
 	"pair": "BTC-USDT",
 	"action": "snapshot"
 }`,
-		// 06 WS update on the WS clock — deliberately NOT `REST ts + 300` (that would be
-		// ...002050). `baselinePending` adopts its ts as the fresh baseline unconditionally, so
-		// the two clocks never meet.
+		// 06 first WS update after the REST body. Its prevSeqId (…580) chains to nothing job 2 has
+		// seen — which is the point: `baselinePending` adopts its seqId as the fresh baseline
+		// unconditionally, so the REST body's counter and the WS one never meet.
 		`{
 	"id": "b71e5f28-0a4c-4d96-8e37-51c2094fab6d",
 	"simulation": 1,
-	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"arg": { "channel": "books", "instId": "BTC-USDT" },
 	"action": "update",
 	"data": [
-		{ "asks": [["63010", "0.90000000"]], "bids": [["62990", "2.00000000"]], "ts": "1800000002610" }
+		{ "asks": [["63010", "0.90000000", "0", "1"]], "bids": [["62990", "2.00000000", "0", "1"]], "ts": "1800000002610", "checksum": 0, "seqId": 4429784585, "prevSeqId": 4429784580 }
 	]
 }`,
-		// 07 WS update at +300 from 06 — ordinary contiguity has resumed from the WS clock, and
+		// 07 WS update chaining to 06 — ordinary contiguity has resumed on the WS counter, and
 		// the qty-"0" delete still removes a level.
 		`{
 	"id": "0c96a483-7d15-42be-9b38-4a71e5b026cd",
 	"simulation": 1,
-	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"arg": { "channel": "books", "instId": "BTC-USDT" },
 	"action": "update",
 	"data": [
-		{ "asks": [["63020", "0"]], "bids": [["62970", "3.50000000"]], "ts": "1800000002910" }
+		{ "asks": [["63020", "0", "0", "0"]], "bids": [["62970", "3.50000000", "0", "1"]], "ts": "1800000002910", "checksum": 0, "seqId": 4429784590, "prevSeqId": 4429784585 }
 	]
 }`,
 	},

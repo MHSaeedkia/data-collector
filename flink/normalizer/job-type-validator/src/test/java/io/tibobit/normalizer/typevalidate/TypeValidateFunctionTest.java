@@ -89,8 +89,9 @@ class TypeValidateFunctionTest {
     }
 
     /**
-     * Delta-feed message (snapshot or update) with a nonzero jump (ex6=1,
-     * ex8=300).
+     * Delta-feed message (snapshot or update) with a nonzero jump. Usually a per-exchange
+     * constant (ex6=1, ex5=650), but ex7 and ex8 stamp it PER MESSAGE — see
+     * {@link #dynamicJumpChainsEachMessageToItsNamedPredecessor()}.
      */
     private static RawOrderBookEvent delta(int ex, int pair, String type, long seq, long jump) {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
@@ -212,12 +213,52 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("delta feed (ex8, jump 300): update at last + 300 is accepted")
+    @DisplayName("delta feed (fixed jump 300): update at last + 300 is accepted")
     void contiguousUpdateAcceptedJump300() throws Exception {
         send(delta(8, 1, "snapshot", 1000L, 300L));
         send(delta(8, 1, "update", 1300L, 300L));
         assertThat(valid()).hasSize(2);
         assertThat(rejects()).isEmpty();
+    }
+
+    /**
+     * The DYNAMIC jump, which had no cover here at all until 2026-09-05 despite two exchanges
+     * resting on it: ex7/ompfinex ({@code u - U}) and, since the okx {@code books} switch,
+     * ex8 ({@code seqId - prevSeqId}). Those parsers stamp the jump PER MESSAGE from a frame that
+     * names its own predecessor, which makes this function's {@code seq == last + jump} reduce
+     * algebraically to <b>"the predecessor it names is the one we last accepted"</b>.
+     *
+     * <p>So the jump varies message to message and none of the values would pass as a constant —
+     * that is the point. Job 2 needs no knowledge of any of this; it is pinned here because the
+     * reduction is the whole correctness argument for both exchanges.
+     */
+    @Test
+    @DisplayName("delta feed (dynamic jump, ex7/ex8): each message chains to the predecessor it names")
+    void dynamicJumpChainsEachMessageToItsNamedPredecessor() throws Exception {
+        send(delta(8, 1, "snapshot", 4429784547L, 0L)); // snapshot: ordered, never jump-checked
+        send(delta(8, 1, "update", 4429784551L, 4L));   // prevSeqId 4429784547 == lastSeq
+        send(delta(8, 1, "update", 4429784558L, 7L));   // prevSeqId 4429784551 == lastSeq
+        send(delta(8, 1, "update", 4429784560L, 2L));   // prevSeqId 4429784558 == lastSeq
+        assertThat(valid()).hasSize(4);
+        assertThat(rejects()).isEmpty();
+    }
+
+    /**
+     * The other half of the same contract: a message naming a predecessor we never accepted is a
+     * gap, however small the jump. Here the counter really does advance by 4 — the value a healthy
+     * frame might carry — but it is measured from 4429784559, which we never saw, so the frame it
+     * chains to is missing and the book can no longer be trusted.
+     */
+    @Test
+    @DisplayName("delta feed (dynamic jump): naming an unseen predecessor is a gap, not a small jump")
+    void dynamicJumpRejectsAnUnseenPredecessor() throws Exception {
+        send(delta(8, 1, "snapshot", 4429784547L, 0L));
+        send(delta(8, 1, "update", 4429784551L, 4L)); // accepted, lastSeq = ...551
+        send(delta(8, 1, "update", 4429784563L, 4L)); // prevSeqId ...559 != lastSeq ...551
+        assertThat(valid()).hasSize(3); // the two good ones plus the RESET the gap emits
+        assertThat(valid().get(2).getType()).isEqualTo(TypeValidateFunction.RESET);
+        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
+                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
     }
 
     @Test
@@ -359,7 +400,7 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("snapshot after updates (ex8, jump 300): accepted even when it lands SHORT of last+jump")
+    @DisplayName("snapshot after updates (fixed jump 300): accepted even when it lands SHORT of last+jump")
     void snapshotShortOfTheJumpIsStillAccepted() throws Exception {
         send(delta(8, 1, "snapshot", 1000L, 300L));
         send(delta(8, 1, "update", 1300L, 300L));
@@ -1169,7 +1210,7 @@ class TypeValidateFunctionTest {
         send(delta(6, 1, "snapshot", 1000L, 1L));
         send(delta(8, 1, "snapshot", 1000L, 300L));
 
-        harness.setProcessingTime(60_000L); // 60s of silence: past ex6's 30, inside ex8's 300
+        harness.setProcessingTime(60_000L); // 60s of silence: past ex6's 30, inside the 300s threshold
 
         assertThat(controlCommands()).hasSize(1);
         assertThat(controlCommands().get(0).getExchangeId()).isEqualTo(6);
