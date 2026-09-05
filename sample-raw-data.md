@@ -861,6 +861,68 @@ Parsing notes (job 1):
 - The inner `ts` is the ONLY timestamp on the message (string epoch-millis) — it is both
   the event time and the sequence id.
 
+### The REST snapshot — ex8's SECOND stream (added 2026-09-05, captured from `ex8-raw`)
+
+Like ex5, `ex8-raw` carries **two** shapes. This is the body NiFi publishes when it answers a
+`snapshot_request` from the control plane, and job 1 had **no branch for it** until 2026-09-05 —
+see [[project_pair_extractor]] § ex8 for what that cost.
+
+```json
+{
+  "id": "a304f0d3-8062-48ab-b971-fc638d9f3f79",
+  "simulation": 0,
+  "code": "0",
+  "msg": "",
+  "data": [ {
+    "asks": [ ["1011.99", "0.2362", "0", "1"], ["1012", "0.03", "0", "1"] ],
+    "bids": [ ["1011.74", "0.26887", "0", "2"], ["1011.72", "1.04305", "0", "2"] ],
+    "ts": "1788605352151",
+    "seqId": 4428333610
+  } ],
+  "pair": "ZEC-USDT",
+  "action": "snapshot"
+}
+```
+
+- **NO `arg`.** This is the whole reason the frame used to be dropped: the WS branch reads the
+  market from `arg.instId`, which is absent here, so the parser discarded it and the resync answer
+  never reached job 2. NiFi stamps the market as a top-level **`pair`** instead (`ZEC-USDT`, dashed,
+  same spelling as `arg.instId`), exactly as it does for ex5.
+- **`arg` is the discriminator, NOT the shape of `data`.** ex5 can switch on `data` being an object
+  vs an array; here `data` is an **array on both streams** and `action` reads `"snapshot"` on both.
+  Absence of `arg` is the only reliable signal.
+- **Levels are FOUR-element string arrays** — `[price, qty, "0", orderCount]` — where the WS frame
+  sends two. `Levels.fromStringPairs` reads elements 0 and 1 and ignores the rest, so one helper
+  covers both. (The third element is okx's deprecated liquidated-order count, always `"0"`.)
+- **`pair` and `action` are at the END of the object**, after `data`. A capture truncated mid-book
+  looks like it has neither — that misread cost a round trip on 2026-09-05.
+- **`seqId` — SETTLED 2026-09-05: only the REST body has it, so it cannot be used.** The REST body
+  carries `seqId: 4428333610` alongside `ts`, which briefly looked like the right ordering field for
+  the whole exchange. **A live WS capture the same day settles it: `books-grouped` frames carry
+  `ts` and NOTHING else — no `seqId`, no `prevSeqId`, no counter of any kind**, confirming the
+  2026-07-14 reading. A sequence only one of the two streams carries cannot order the other, so
+  `ts` stays the sequence and the REST snapshot stays **null-seq** — `seqId` (order 1e9) against the
+  WS `ts` (order 1e12) are different number spaces, and seeding one against the other is an instant
+  false gap. **`seqId` must be IGNORED, not adopted.**
+
+### ⚠ `grouping` is NOT `"1"` on the live feed, and the two streams may not share a price grid
+
+The 2026-07-14 capture had `arg.grouping: "1"` and integer prices; the **2026-09-05 live capture has
+`"0.1"`** (`BTC-USDT`, prices like `79632.8`). Nothing parses `grouping` — it is channel identity
+only — so this breaks no code, but every "prices here are integers because of grouping" note above
+is describing one historical subscription, not a wire rule.
+
+**The open question it raises, which is NOT answered by any capture we have.** The WS channel is
+price-GROUPED; the REST depth endpoint is not. On `BTC-USDT` that is harmless because grouping `0.1`
+IS bitcoin's tick, so the grid is unchanged. But the REST `ZEC-USDT` body carries **2-decimal**
+prices (`1011.99`, `1012.06`). If ZEC is subscribed with a grouping COARSER than its tick, then after
+a resync the book holds REST prices the WS deltas can never address — a delete at `1011.9` will not
+remove `1011.99`, and the two grids accumulate side by side until the next snapshot.
+
+**To check: capture a WS frame for a market whose tick is finer than its grouping** and compare the
+price granularity against that market's REST body. We have BTC's WS and ZEC's REST — never both for
+one market, which is exactly the comparison needed.
+
 ## ex9-raw — lbank
 
 **Captured 2026-08-25** (four consecutive WebSocket frames, supplied by the user). `LBankParser`

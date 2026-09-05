@@ -547,3 +547,80 @@ capture/analysis was wrong; either way, don't re-trust the July "delta" classifi
 fresh capture. **How to apply:** if a THIRD capture ever contradicts this again, re-run the same
 audit (parser → job 2 → job 5 → e2e → control-plane → docs) before touching code — this file's
 own history is the cautionary tale.
+
+## ex8/okx — the REST snapshot branch (2026-09-05), and why its absence was a black hole
+
+**Found by the user on the live dev server, not by any test.** OKX subscribes, the first snapshot
+works, then "after a short time" every message dead-letters to `ex8-p{id}-rejected-flink` with
+`awaiting_snapshot`, nothing reaches `-type-validated-raw-flink`, and the web shows no book. The
+control plane keeps asking with `reason: sequence_gap` and NiFi keeps answering by REST.
+
+**Two bugs chained. The second is the one that made it permanent.**
+
+**1. The trigger — WHY the gap fires at all, and this is NOT settled.** `OkxParser` stamps
+`jump = 300` with `sequenceJumpTolerance` **0**, so job 2 requires each WS update's `ts` to be
+EXACTLY `previous + 300`. ex5/bitget shipped the same shape of assumption and a live measurement
+destroyed it (93.2% inside `600 ± 10`, a real second cluster at 725–775 ms, hence `650 ± 110`).
+
+⚠ **CORRECTING AN EARLIER READING IN THIS FILE.** It first said the ex8 window is "extrapolated from
+two frames" and therefore wrong. That was over-stated. A second capture on 2026-09-05 gives
+`1788606183009 → 1788606183309` — **exactly +300 again**, from a different day, a different market
+grouping and a different price level. Two independent captures, two exact 300 ms intervals. That is
+evidence FOR the cadence, not against it, and the honest position is: **unproven either way, on two
+data points.**
+
+**Which leaves a second, more likely explanation for the live gaps: dropped frames.** At a 300 ms
+cadence with tolerance 0, ONE lost WS frame anywhere — exchange, NiFi, Kafka — puts the next `ts` at
+`+600` and job 2 correctly calls it a gap. That is gap detection WORKING. If that is what is
+happening, bug 2 below was the entire fault, and no window change is needed at all. Distinguishing
+the two needs the interval distribution measured the way ex5's was — and only then a tolerance, if
+the numbers ask for one. **Do not widen the window on the strength of the ex5 analogy alone.**
+
+**2. The black hole — job 1 threw the resync answer away.** `ex8-raw` carries TWO shapes and the
+parser knew only one. The REST body has **no `arg`**, so `arg.instId` was null and the whole frame
+was discarded before job 2 ever saw it. Job 2 therefore never got a `type == "snapshot"` event, so
+`resyncPending` never cleared: reset → request → NiFi answers → answer binned → every later update
+rejected `awaiting_snapshot`, until the job restarts. This is exactly the invariant
+[[project_control_plane]] insists on — *"`snapshot_request` must always have SOME path back to an
+accepted snapshot"* — and ex8 had none.
+
+**The fix (this change): a `parseRestSnapshot` branch, the ex5 design applied to ex8.** Wire shape
+now documented in `sample-raw-data.md` § ex8. Three things differ from ex5 and each cost time:
+
+- **The discriminator is the ABSENCE of `arg`, not the shape of `data`.** ex5 switches on `data`
+  being an object vs an array; on ex8 `data` is an **array on both** streams and `action` reads
+  `"snapshot"` on both. Only the WS frame has an `arg`.
+- **Levels are FOUR-element string arrays** (`[price, qty, "0", orderCount]`) where the WS frame
+  sends two. `Levels.fromStringPairs` already reads only elements 0–1, so no new helper.
+- **`pair` and `action` sit at the END of the JSON, after `data`.** A capture truncated mid-book
+  looks like it carries neither — that misread cost a round trip on the day.
+
+**NULL-SEQ, and there are now TWO independent reasons rather than ex5's one:**
+
+- `ts` is the REST endpoint's clock, not the WS one — ex5's measurement (next update inside the
+  window only **9.9%** of the time, ~90% of resyncs re-gapping instantly) is the precedent.
+- **the body also carries `seqId` (order 1e9) while the WS updates are sequenced by `ts` (order
+  1e12)** — seeding one against the other makes the very next update read as a ~1e12 forward jump.
+
+**`seqId` — raised as the biggest finding, then CLOSED the same day.** The REST body carries
+`seqId: 4428333610`, which looked like okx's real book counter and therefore the right ordering
+field for the whole exchange, replacing `ts` and its window outright. **The live WS capture killed
+it: `books-grouped` frames carry `ts` and nothing else — no `seqId`, no `prevSeqId`, no counter.**
+A sequence only ONE of the two streams carries cannot order the other. So `ts` stays, the REST body
+stays null-seq, and `seqId` must be IGNORED rather than adopted — which is what the parser does and
+what `61-ex8-rest-snapshot-resync` pins by carrying the real value in its source. **Recorded so the
+next reader does not re-open it: the answer is no, and the reason is the WS side, not the REST
+side.**
+
+**Why no test caught it — and it is NOT that ex8 had no scenarios.** 38-43 have been registered
+in `scenarios.go` the whole time and passed throughout the outage. The gap is narrower and worse:
+**`40-ex8-sequence-gap` answers its own gap with a WS snapshot**, which is a frame NiFi never sends
+for a delta feed — so it tested a recovery path that does not exist in production. ex5 got
+`31-ex5-rest-snapshot-resync` and ex6 got `48-ex6-rest-snapshot-resync` for exactly this; ex8 was
+the one delta feed left without one. Now covered by `61-ex8-rest-snapshot-resync`. Every parser
+unit test fed it WS frames too, because the REST shape was missing from `sample-raw-data.md` — the
+doc gap and the code gap were one gap.
+
+**The lesson worth keeping: a resync scenario must answer with the shape the RESYNC SOURCE really
+sends.** For every delta feed that is NiFi's REST body, not another WS frame. Any future exchange
+gets that scenario the day its parser lands, not after an outage.

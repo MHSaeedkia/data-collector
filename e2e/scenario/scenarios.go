@@ -115,4 +115,13 @@ var Scenarios = []struct {
 	// now the platform's only live null-seq resync feeding a real delta stream. Appended
 	// as 60 rather than reusing 47, per the convention above. See data_control.go.
 	{"60-control-ex6-lagging-rest-resync", ControlEx6LaggingRestResync},
+
+	// OKX's SECOND stream, the REST depth snapshot (added 2026-09-05). Appended as 61 rather than
+	// slotted in after 38-43, for the same reason 48, 49 and 60 were. It is the regression test for
+	// the resync black hole found live: job 1 had no branch for this shape, so the frame NiFi sends
+	// to answer a `snapshot_request` was DROPPED and the market stayed dark. 40-ex8-sequence-gap
+	// passed throughout, because its resync answer is a WS snapshot — a frame production never sends
+	// for a delta feed. ex5 (31) and ex6 (48) already had this scenario; ex8 did not.
+	// See data_ex8.go.
+	{"61-ex8-rest-snapshot-resync", Ex8RestSnapshotResync},
 }
