@@ -67,6 +67,40 @@ topics, 10s timeout, every 15s) is the first thing to time out on a sick broker.
 - **The server runs `docker-compose.yml`, not `docker-compose.prod.yml`.** Assuming the prod file
   cost a wrong first answer here.
 
+## Merged to `main` 2026-09-05 (PR #15)
+
+Merged as `7dc3a50`, **+252/-0 — identical to the PR's own stat**, so the two conflicts cost nothing.
+Both were mechanical:
+
+- **`TypeValidatorJob.java`** — the branch forked at PR #12 and `main` has since taken PR #13
+  (staleness), which re-indented and restructured that whole file and added a **ninth**,
+  non-transactional `control-plane-sink`. Git produced one 95-line conflict out of what is a
+  two-line change. Resolved by taking `main`'s file whole and re-applying only the import plus the
+  two `setTransactionNamingStrategy` calls at `main`'s indentation — **never by hand-merging the
+  hunk**, which would have reverted PR #13's reformatting.
+- **`todo.md`** — parallel appends at EOF, both kept.
+
+`mvn -o clean test` on `flink/normalizer`: 8 modules SUCCESS, all tests green. Both compose files
+pass `docker compose config -q`. The JaCoCo `Unsupported class file major version 70` stack trace in
+that output is pre-existing noise (it tries to instrument JDK classes) and fails nothing.
+
+## Review notes on the fix itself
+
+- **The coverage is complete.** `grep -rn setDeliveryGuarantee flink --include='*.java'` returns
+  exactly 8 hits post-merge and all 8 now set POOLING. `flink/merger` and `flink/adjustment` have no
+  `EXACTLY_ONCE` sink at all, and PR #13's `control-plane-sink` is non-transactional — nothing is
+  missed, and the 8 will need re-checking only when a 9th transactional sink is added.
+- **The 1h `transactional.id.expiration.ms` does NOT shrink the tolerable downtime**, which is the
+  obvious worry. `transaction.timeout.ms` is already pinned to **10m** on every sink, and the broker
+  aborts a transaction that exceeds it regardless of the id expiration — so downtime past ~10m
+  already forfeits the in-flight transaction and did so before this change. The 1h figure is not the
+  binding constraint on anything.
+- **`-XX:+ExitOnOutOfMemoryError` is the missing half of "it needed a human every time."** The fix
+  makes the OOM unlikely; it does not make the container recover if one happens anyway, because a
+  heap OOM still exits **0** and `restart: on-failure` still will not fire. One JVM flag on
+  `KAFKA_OPTS` turns every future occurrence into an automatic restart. Deliberately NOT done here —
+  out of this PR's scope — see todo.
+
 ## Open
 
 - **Nothing is verified live.** No deploy, and the broker was still down at the time of writing.

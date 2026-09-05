@@ -755,6 +755,16 @@ stack** — see the same memory section for the run and what it did not cover.
       the broker held each for **7 days** on the **1 GB default heap**. Fixed by `POOLING` on all 8
       sinks, 1h transactional-id/producer-id expiration, and a heap floor in both compose files.
       Full note + traps in [[project_kafka_broker_memory]]
+- [x] **PR #15 merged to `main` 2026-09-05** as `7dc3a50`, +252/-0 (identical to the PR's stat).
+      Two conflicts, both mechanical: `TypeValidatorJob.java` (the branch predates PR #13, which
+      re-indented that file — resolved by taking `main`'s copy and re-applying the import + two
+      `setTransactionNamingStrategy` calls, NOT by hand-merging the hunk) and a parallel append in
+      this file. `mvn -o clean test` on `flink/normalizer` green, both compose files
+      `docker compose config -q` clean. **Still not deployed.** See [[project_kafka_broker_memory]]
+- [ ] **Consider `-XX:+ExitOnOutOfMemoryError` on the broker's `KAFKA_OPTS`.** PR #15 makes the OOM
+      unlikely but leaves the recovery hole it documented: a heap OOM exits **0**, so
+      `restart: on-failure` never fires and a human is still needed if it ever happens again. One
+      flag turns that into an automatic restart. Left out of #15 on scope
 - [ ] **Deploy and verify the broker fix.** Nothing below has been seen working:
       - [ ] `free -g` on the box first — `docker-compose.prod.yml` assumes 4G of broker heap is
             affordable, and the dev file's 2G is a guess sized for a small box, not a measurement
