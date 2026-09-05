@@ -567,6 +567,26 @@ User's call: put production in its own file and give the developers theirs back.
       `web/internal/kafka/consumer.go` and `e2e/consumer/consumer.go`. All four build clean.
       **Rule going forward: making a sink transactional is a change to every consumer of that topic,
       in every language.**
+- [ ] **⚠ ESCALATED 2026-09-02 by the user: "30 sec delay for an event in an ETL system is
+      catastrophic."** Full analysis in [[project_flink_production]] §11 and the published report.
+      `added_latency ≈ hops × interval ÷ 2` — 6 transactional hops × the 10 s default = ~30 s avg /
+      ~60 s worst, and it is NOT tunable (1 s avg would need a ~330 ms interval; `minPause` is
+      `interval/5` and `maxConcurrentCheckpoints` is 1). **Recommended: `AT_LEAST_ONCE` on the six
+      intermediate sinks, keep checkpointing — zero added latency, consumers need no change, and
+      duplicates are near-harmless because job 2 rejects them as `stale_or_duplicate` (not a resync
+      trigger). NOT yet decided.** Do this in order:
+    - [ ] **Measure first with `pipeline_timings`** (`book_build_out − event_time`) under
+          `EXACTLY_ONCE`. Nothing above is measured — it is arithmetic
+    - [ ] **Put a FLOOR under `staleness_threshold_seconds`.** Arrivals now step at the commit
+          cadence, so any threshold near the interval fires on healthy markets. The 2026-09-01 live
+          run used **20 s** — two commit cycles. No market below ~3 × the interval; a `CHECK`
+          constraint would make it hard to get wrong
+    - [ ] **A checkpoint-failure storm now looks exactly like a market-wide outage.** Tolerable 3 ×
+          timeout 120 s ⇒ minutes with no commits, every market downstream silent, and job 2 asks for
+          a snapshot for EVERY one. The cold-start burst, triggerable by a slow disk
+    - [ ] **Pin `CHECKPOINT_INTERVAL_MS` in compose** — set nowhere today, same gap as
+          `SNAPSHOT_RETRY_MS` and `REFRESH_INTERVAL_MS`
+    - [ ] **Raise the exporter's `output_threshold_seconds`** from 10 s, which is below ONE hop
 - [ ] **OPEN PRODUCT DECISION — EXACTLY_ONCE latency.** Records are invisible downstream until the
       producing job checkpoints, so 6 transactional hops add ~30s average / 60s worst case, against
       sub-second before. `lpa-staleness-exporter`'s `output_threshold_seconds: 10` is now below the
@@ -672,3 +692,149 @@ User's call: put production in its own file and give the developers theirs back.
       the entry above claiming gofmt clean. `gofmt -w`. Verified: `go build`/`go vet`/`gofmt -l`
       clean on `e2e/`, 189 Java tests still green. See [[project_control_plane]],
       [[project_e2e_harness]]
+
+
+## flink job 2 — staleness-triggered resync (branch `feat/flink-check-staleness`)
+
+Built 2026-08-31 (`d78d84d`), then **cut back**: the `no_data_received` half was removed and the
+`stale` half re-implemented on a per-key timer instead of a tick stream. Design, the reasoning for
+the cut, and the two vacuous-test lessons are in [[project_control_plane]] §"Silence closes the last
+gap". 66 job-2 tests, 282 across the normalizer. **Verified LIVE 2026-09-01 on the local docker
+stack** — see the same memory section for the run and what it did not cover.
+
+- [x] ~~Run it live~~ — done 2026-09-01. ex1/BTCUSDT, threshold 20s: snapshot accepted → 21s silence
+      → `RESET` (`source_ids: []`, `simulation: 1`, null book) + `snapshot_request` `reason: "stale"`.
+      Held at exactly 1 reset / 1 command through 4+ deadlines; recovery snapshot with an OLDER
+      `event_time` was ACCEPTED (0 rejects), then a NEW episode opened 21s later
+- [x] ~~Verify the postgres driver really loads on the cluster~~ — done: the job reached RUNNING with
+      both vertices up, which only happens if `RefreshingLookup.open()` read the watch list.
+      Confirmed `flink-connector-datagen` is NOT on the cluster classpath — bundling it would have
+      been necessary, which is one more reason the tick-stream design was the wrong one
+- [x] ~~An unwatched market is never judged silent~~ — done: pair 2 (`status='unsubscribe'`) held a
+      live key in job 2 state, went silent 2.5× the threshold, and produced nothing
+- [ ] **Test the threshold-edit / unsubscribe path live.** `RefreshingLookup` was only ever read at
+      `open()` in this run — the 60 s refresh was never exercised, so "edit the threshold in
+      Postgres and it lands without a resubmit" is still UNPROVEN live (it is unit-tested via
+      `resubscribedMarketIsWatchedAgain`)
+- [ ] **Confirm never-heard-from markets really are covered by the exporter.** The cut assumed a
+      subscribed market that has produced nothing already reads `stale=1` in
+      `lpa-staleness-exporter`. That was reasoned from [[project_staleness_exporter]], NOT verified
+      against `exporter.py` or a live dashboard. **If it turns out not to be covered, that is a gap
+      to close in the exporter — not by putting the roster back into job 2**
+- [ ] **Watch a cold start with a REAL watch list.** The live run had exactly ONE subscribed market.
+      Nothing has yet exercised many markets going stale at once, which is where the shared
+      suppression window and the per-key timers actually matter
+- [ ] **e2e coverage.** Silence is time-based, so it inherits the same "no e2e" gap as re-asking.
+      Decide whether a scenario with a tiny threshold is worth it, or whether the 16 unit tests plus
+      the live check are enough
+- [x] **Unsubscribe left a phantom book on every downstream topic** — found by the user in live
+      testing 2026-09-01, fixed the same day. `onTimer`'s unwatched branch was a bare `return`, so a
+      dropped market's book stood in job 5's MapState and job 6's union forever with nothing ever
+      watching that key again. It now emits a `RESET` and deliberately **no** `snapshot_request`.
+      ⚠ **this revises the "unwatched market judged nothing" result of the 2026-09-01 live run —
+      that was verified as correct and was in fact the bug.** A web-side age guard was considered and
+      **rejected by the user**: each stage goes to a different team, so a book with no feed behind it
+      must not be on the topic at all. Full note in [[project_control_plane]].
+      ⚠ **Verification owed — run it live: unsubscribe a fed market, confirm exactly ONE reset, ZERO
+      control commands, and the exchange leaving `p{id}-{side}`**
+- [ ] **NiFi must ignore `snapshot_request` for an unsubscribed market.** The user's fix, on the NiFi
+      side, not in this repo. Until it lands, losing the (now much narrower) refresh race still lets
+      the control plane reopen a feed the operator just closed
+- [ ] **`REFRESH_INTERVAL_MS` is set nowhere in `docker-compose.yml`** and takes its in-code default,
+      exactly like `SNAPSHOT_RETRY_MS` above. Same decision, same place to make it. ⚠ the default is
+      now **15 s**, and the constraint is that it stays well below the SMALLEST
+      `staleness_threshold_seconds` in `exchange_markets` — whatever is set in compose must respect
+      that, or unsubscribes start racing the silence timer again
+- [ ] Optional: re-register `control-command` so the registry carries the updated `reason` doc.
+      Doc-only, not a compatibility change — `stale` works without it (the live run proves it:
+      `reason: "stale"` serialised fine against the registered schema)
+- [x] **Kafka broker OOM'd roughly once a day (4x, 2026-09-02..04)** — root cause found and fixed on
+      `fix/kafka-broker-oom-producer-churn`, **NOT deployed, NOT observed live**. `EXACTLY_ONCE` +
+      10s checkpointing (PR #12, merged the day the OOMs started) + `KafkaSinkBuilder`'s
+      **INCREMENTING** default = a new transactional.id, and so a new producer id, every checkpoint;
+      the broker held each for **7 days** on the **1 GB default heap**. Fixed by `POOLING` on all 8
+      sinks, 1h transactional-id/producer-id expiration, and a heap floor in both compose files.
+      Full note + traps in [[project_kafka_broker_memory]]
+- [x] **PR #15 merged to `main` 2026-09-05** as `7dc3a50`, +252/-0 (identical to the PR's stat).
+      Two conflicts, both mechanical: `TypeValidatorJob.java` (the branch predates PR #13, which
+      re-indented that file — resolved by taking `main`'s copy and re-applying the import + two
+      `setTransactionNamingStrategy` calls, NOT by hand-merging the hunk) and a parallel append in
+      this file. `mvn -o clean test` on `flink/normalizer` green, both compose files
+      `docker compose config -q` clean. **Still not deployed.** See [[project_kafka_broker_memory]]
+- [ ] **Consider `-XX:+ExitOnOutOfMemoryError` on the broker's `KAFKA_OPTS`.** PR #15 makes the OOM
+      unlikely but leaves the recovery hole it documented: a heap OOM exits **0**, so
+      `restart: on-failure` never fires and a human is still needed if it ever happens again. One
+      flag turns that into an automatic restart. Left out of #15 on scope
+- [ ] **Deploy and verify the broker fix.** Nothing below has been seen working:
+      - [ ] `free -g` on the box first — `docker-compose.prod.yml` assumes 4G of broker heap is
+            affordable, and the dev file's 2G is a guess sized for a small box, not a measurement
+      - [ ] Bring the broker up (it has been DOWN since 2026-09-04 17:17) and **rebuild + resubmit
+            the 6 normalizer jobs** — the POOLING change is in the jars, not in config
+      - [ ] After an hour up, confirm the churn stopped: producer ids per partition should sit in
+            the single digits, like NiFi's `ex{id}-raw` (5-8), not ~1700. Read them off a broker
+            restart's `Wrote producer snapshot ... with N producer ids` lines, or
+            `docker logs taskmanager | grep -c 'ProducerId set to'` — **with the broker UP**, since
+            that check returns 0 for the trivial reason when nothing is producing
+      - [ ] Watch the first job restart after the switch: POOLING recovers by LISTING transactions
+            to abort, a different path from INCREMENTING, and it is a **one-way** switch
+- [ ] **No alert can catch the next broker OOM.** `kafka-exporter` exposes no JVM heap metric and
+      M9's rules are Flink-only — three days of heap growth were invisible. Needs a JMX exporter on
+      the broker and a heap rule, and the `kafka-topics --list` healthcheck (a JVM start plus ~3000
+      topics' metadata every 15s, with a 10s timeout) replaced with something cheap
+- [ ] **Decide on the 10s checkpoint interval.** Deliberately left untouched by the OOM fix. With
+      `EXACTLY_ONCE` + `read_committed` each of the 6 chained jobs only publishes on commit, so the
+      interval is a **per-hop latency floor**: ~6 x 10s end to end. That is a product decision about
+      how fresh the book must be, not a memory one
+
+## kafka broker OOM — POOLING regression (2026-09-05) — RESOLVED BY REVERT
+
+- [x] **P0 — pipeline was down on the dev server. Resolved 2026-09-05 by reverting the whole
+      checkpointing/EXACTLY_ONCE/POOLING round (user's call), not by fixing POOLING.**
+      All 6 normalizer jobs restart-loop every 60s on
+      `IllegalStateException: The record serializer does not expose a static list of target topics`.
+      `POOLING` -> `LISTING` abort strategy -> must enumerate target topics, and
+      `ExactlyOnceKafkaWriter.initialize()` aborts lingering transactions **unconditionally**, so it
+      fails on a clean submit. All 8 EXACTLY_ONCE sinks use a `setTopicSelector` lambda, which cannot
+      supply the identifier. Not a config problem — POOLING and dynamic topic routing are
+      incompatible as currently written. See [[project_kafka_broker_memory]]
+- [x] **Pick the fix — neither (a) nor (b): the feature was removed instead.** Kept here because
+      both remain the options if EXACTLY_ONCE ever comes back. (a) Named static class implementing `TopicSelector<T>` +
+      `KafkaDatasetIdentifierProvider` returning `DefaultKafkaDatasetIdentifier.ofPattern(...)` —
+      keeps POOLING and dynamic routing, 8 sinks to change, needs one narrow pattern per stage.
+      (b) Revert the 8 sinks to `INCREMENTING` — one-line each, and the broker-side 1h
+      `transactional.id`/`producer.id` expirations (the half that actually fixed the OOM) stay.
+      (b) restores service fastest; (a) is where it should end up.
+- [ ] **If EXACTLY_ONCE returns and (a) is chosen: measure it before trusting it.** `AdminUtils.getTopicsByPattern` does a full
+      `listTopics()` on **every writer `initialize()`** — per subtask, per restart — and LISTING then
+      lists transactions per matched topic. Never measured at this cluster's ~3000 partitions.
+- [ ] **Give the dev deploy targets a verify step.** `make prod-verify` counts RUNNING jobs and would
+      have failed this immediately, but the box runs `docker-compose.yml` and the deploy was
+      `make run-all-jobs`, which submits and stops. Consider making the check hold over an interval
+      rather than sampling once, so a restart-looping job cannot pass through a RUNNING window.
+- [ ] **No alert fired for a total pipeline stall.** M9's rules are Flink-side, yet ~50 min of every
+      normalizer job restart-looping and zero output on `p{id}-{side}` surfaced only on manual
+      inspection. Whatever the fix, this gap is the reason it went unnoticed.
+
+### Follow-ups left open by the revert (2026-09-05)
+
+- [ ] **⚠ P1 — `docker-compose.yml` has no `restart-strategy`, and checkpointing is now off.** Flink
+      defaults `restart-strategy.type` to `disable` when checkpointing is off, so a job that throws
+      once goes to FAILED and stays there. `docker-compose.prod.yml` is covered by M1's explicit
+      `exponential-delay` block; the dev file is not — **and the dev file is what the dev server
+      runs**. Copying M1's five keys across is ~5 lines. Raised with the user, deliberately NOT
+      applied as part of the revert. This is the single most likely way the pipeline dies quietly.
+- [ ] **Rebuild and redeploy `web` and `e2e`, not just the Flink jars.** Removing
+      `kgo.FetchIsolationLevel(kgo.ReadCommitted())` touched two separate Go deployables.
+- [ ] **First deploy after the revert may stall `read_committed` readers that still exist elsewhere.**
+      Any transaction left dangling by the failed POOLING deploy holds the LSO until the broker
+      aborts it — bounded by `transaction.timeout.ms` (10m), so it self-clears; worth knowing rather
+      than debugging live.
+- [ ] **The dev TaskManager's `2g` / `managed.fraction: 0.1` sizing comment is now stale** — it is
+      justified in `docker-compose.yml` by "6 jobs checkpointing every 10s". The sizing is still fine
+      and was left alone; the rationale no longer holds.
+- [ ] **`e2e` may have assertions that assume exactly-once record counts.** Not audited as part of
+      the revert. With `DeliveryGuarantee.NONE` duplicates are possible again, so any exact-count
+      scenario is now a potential flake.
+- [ ] **Local `mvn test` cannot run JaCoCo on this laptop** (JDK 26; "Unsupported class file major
+      version 70"). Tests were run with `-Djacoco.skip=true`. Pre-existing, unrelated to the revert,
+      but it means coverage gates do not run locally.

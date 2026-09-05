@@ -109,10 +109,6 @@ public class AdjustmentJob {
                 // created after the job starts is discovered late and whatever was produced in the
                 // gap is lost, which is why warmup.sh pre-creates the adjusted family.
                 .setStartingOffsets(OffsetsInitializer.latest())
-                // Job 6's sink writes transactionally (EXACTLY_ONCE); without this a
-                // read_uncommitted consumer would see records from transactions that
-                // later abort.
-                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new AggregatedOrderBookDeserializer(schemaRegistryUrl))
                 .build();
 

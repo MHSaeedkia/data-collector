@@ -52,10 +52,6 @@ public class MergerJob {
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
-                // Job 6's sink writes transactionally (EXACTLY_ONCE); without this a
-                // read_uncommitted consumer would see records from transactions that
-                // later abort.
-                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new AggregatedOrderBookDeserializer(schemaRegistryUrl))
                 .build();
 

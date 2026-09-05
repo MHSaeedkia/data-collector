@@ -1,6 +1,5 @@
 package io.tibobit.normalizer.bookbuild;
 
-import io.tibobit.normalizer.checkpointingConfigurer.CheckpointingConfigurer;
 import io.tibobit.normalizer.model.OrderBookSnapshot;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.serde.OrderBookSnapshotSerializer;
@@ -8,7 +7,6 @@ import io.tibobit.normalizer.serde.RawOrderBookEventDeserializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.functions.KeySelector;
-import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.sink.TopicSelector;
@@ -40,16 +38,12 @@ public class BookBuilderJob {
         String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        CheckpointingConfigurer.configure(env); 
+
         KafkaSource<RawOrderBookEvent> source = KafkaSource.<RawOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
-                // Job 4's sink writes transactionally (EXACTLY_ONCE); without this a
-                // read_uncommitted consumer would see records from transactions that
-                // later abort.
-                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new RawOrderBookEventDeserializer(schemaRegistryUrl))
                 .build();
 
@@ -59,16 +53,11 @@ public class BookBuilderJob {
                 .name("build-book")
                 .sinkTo(KafkaSink.<OrderBookSnapshot>builder()
                         .setBootstrapServers(bootstrapServers)
-                        // EXACTLY_ONCE below commits transactionally on checkpoint completion
-                        // (CheckpointingConfigurer). acks=all + idempotence are required for
-                        // transactional Kafka writes; unlimited retries absorb transient
-                        // broker hiccups without failing the transaction.
+                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
+                        // failure drops records silently. Idempotence is the load-bearing one:
+                        // plain retries can reorder writes, which corrupts the book downstream.
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
-                        // KafkaSink defaults transaction.timeout.ms to 1h, which exceeds
-                        // the broker's transaction.max.timeout.ms (15m default) and fails
-                        // InitProducerId. Keep this comfortably under that ceiling.
-                        .setProperty("transaction.timeout.ms", "600000")
                         .setProperty("retries", "2147483647")
                         .setProperty("delivery.timeout.ms", "120000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<OrderBookSnapshot>builder()
@@ -77,8 +66,6 @@ public class BookBuilderJob {
                                                 + "-orderbook-snapshot-flink")
                                 .setValueSerializationSchema(new OrderBookSnapshotSerializer(schemaRegistryUrl))
                                 .build())
-                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
-                        .setTransactionalIdPrefix("job5-orderbook-snapshot")
                         .build())
                 .name("orderbook-snapshot-sink");
 

@@ -85,12 +85,14 @@ services:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
 
-                # Explicit on purpose: Flink defaults restart-strategy.type to
-                # `disable` when checkpointing is off. Checkpointing is now enabled
-                # per-job (CheckpointingConfigurer) and deliberately does NOT set its
-                # own restart strategy, so every job still inherits this one — infinite
-                # retries with backoff, rather than giving up after a bounded number
-                # of attempts.
+                # Load-bearing, not belt-and-braces: Flink defaults
+                # restart-strategy.type to `disable` when checkpointing is off, and
+                # checkpointing was removed again on 2026-09-05. Without these keys a
+                # job that throws once goes to FAILED and stays there. Infinite retries
+                # with backoff, rather than giving up after a bounded number of
+                # attempts. NOTE docker-compose.yml (the dev stack, and what the
+                # dev server actually runs) has no equivalent and therefore does NOT
+                # restart a failed job at all.
                 restart-strategy.type: exponential-delay
                 restart-strategy.exponential-delay.initial-backoff: 10 s
                 restart-strategy.exponential-delay.max-backoff: 5 min
@@ -120,17 +122,10 @@ services:
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
-            # Jobs enable checkpointing themselves (CheckpointingConfigurer, default
-            # file:///opt/flink/checkpoints), and `filesystem` storage means the
-            # JobManager writes the metadata while the TaskManagers write the state
-            # files — so the directory has to be the SAME one in every container.
-            # Without this shared volume each container gets its own copy from the
-            # image and recovery reads an empty directory.
             #
             # ⚠ A local volume only shares across containers on ONE host. This is the
             # same single-host limitation the HA store has; a real distributed FS is
             # what both would need to survive losing the box.
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             - data-collector-flink-ha:/opt/flink/ha
             - data-collector-flink-archive:/opt/flink/archive
         networks:
@@ -195,7 +190,6 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-1-logs:/opt/flink/log
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -267,7 +261,6 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-2-logs:/opt/flink/log
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -339,7 +332,6 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-3-logs:/opt/flink/log
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -411,7 +403,6 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-4-logs:/opt/flink/log
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
             # The HA storage dir doubles as the blob store, which is how a
             # TaskManager fetches job jars when the JobManager is unreachable. In a
             # real cluster it is one shared filesystem visible to every node; a
@@ -509,6 +500,49 @@ services:
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
             KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
             KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+            # --- Broker memory. The 2026-09-02..04 daily OOM lived here. ---
+            #
+            # HISTORY, not current state: checkpointing and EXACTLY_ONCE were removed again
+            # on 2026-09-05, so nothing writes transactionally today and none of the churn
+            # described below is being generated. These three settings stay because they are
+            # cheap, and because they are the prerequisite if EXACTLY_ONCE ever returns.
+            #
+            # Kafka's default heap is 1 GB and nothing here used to override it. The
+            # broker died of `java.lang.OutOfMemoryError: Java heap space` roughly once a
+            # day from the moment EXACTLY_ONCE checkpointing landed (PR #12, 2026-09-02),
+            # and needed a MANUAL restart every time: the JVM exits 0, and Docker restarts
+            # a container for neither `exit 0` nor a failed healthcheck, so `on-failure`
+            # never fired. `docker inspect` showed `OOMKilled=false` — that flag is the
+            # KERNEL killer, which never ran because the container has no memory limit.
+            #
+            # Three settings, and the two expiration ones matter more than the heap:
+            #
+            # HEAP — 4G on the production box, which already commits 4 x 9g to TaskManagers.
+            # Xms == Xmx so the heap is reserved up front rather than growing into a
+            # surprise. CHECK `free -g` BEFORE DEPLOYING and lower it if the box is
+            # smaller than this file assumes. It is a safety margin, NOT the fix; the fix
+            # is that the two expirations below stop the heap filling in the first place.
+            #
+            # TRANSACTIONAL_ID_EXPIRATION_MS — the real fix, 7 DAYS by default. Every
+            # transactional.id the coordinator has ever seen is held in memory, with the
+            # set of partitions its transaction touched, for that whole window. Flink's
+            # default INCREMENTING naming strategy minted a brand-new id every checkpoint
+            # — 8 sinks x 6 checkpoints/min = ~70k dead ids/day, each carrying up to a few
+            # hundred TopicPartition objects. 1h is still 6x the sinks' own 10m
+            # transaction.timeout.ms and 4x the 15m transaction.max.timeout.ms ceiling, so
+            # no live transaction can be caught by it. The sinks were switched to
+            # POOLING in the same change, which stops the ids being minted at all; this is
+            # the belt to that braces, and it also drains the backlog already on disk.
+            #
+            # PRODUCER_ID_EXPIRATION_MS — 24h by default: how long each PARTITION remembers
+            # a producer id it has not heard from. The shutdown log showed ~1700 ids on
+            # every busy partition (NiFi's own `ex{id}-raw`: 5-8) across ~3000 partitions.
+            # 1h matches the 1h retention `warmup.sh` puts on the stage topics — there is no
+            # value in remembering a producer longer than the data it wrote.
+            KAFKA_HEAP_OPTS: "-Xmx4G -Xms4G"
+            KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
+            KAFKA_PRODUCER_ID_EXPIRATION_MS: 3600000
             CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg==
         volumes:
             - data-collector-kafka-data:/var/lib/kafka/data
@@ -887,7 +921,6 @@ volumes:
     data-collector-taskmanager-3-logs:
     data-collector-taskmanager-4-logs:
     data-collector-flink-ha:
-    data-collector-flink-checkpoints:
     data-collector-flink-archive:
     data-collector-zk-data:
     data-collector-zk-datalog:
