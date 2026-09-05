@@ -219,3 +219,31 @@ server actually runs.** So on that box a transient Kafka blip now kills a job pe
 silently. (`CheckpointingConfigurer`'s own comment claimed docker-compose.yml set a restart strategy;
 it never did — that was always prod-only.) Raised with the user, not applied: adding M1's five keys
 to the dev file is the fix and is ~5 lines. See todo.
+
+## 2026-09-05 (deploy) — the revert is live and the pipeline is healthy
+
+Deployed to `192.168.150.31` at commit `0c33566`. Sequence that worked, after repairing the
+root-owned-file mess described in [[server-build-env]]:
+
+1. `git reset --hard origin/main` (a plain pull had aborted half-applied — see that memory).
+2. `docker compose -f docker-compose.yml up -d --no-deps jobmanager taskmanager` — **`--no-deps` and
+   an explicit service list matter**: a bare `up -d` also wanted to recreate **NiFi**, which is the
+   raw ingest source and out of scope. `--dry-run` showed that before it happened; use it.
+   Confirmed afterwards that the JM/TM now mount only `/opt/flink/log` — the checkpoint volume is
+   gone from the running containers, not just from the file.
+3. `make run-all-jobs` (~4 min, builds 8 shaded jars). Jars are stamped with the commit —
+   `job-*-1.0-SNAPSHOT-0c33566.jar` — which is the quickest confirmation the cluster is running the
+   code you think it is.
+4. `docker compose up -d --build --no-deps web` — **`web` is a separate deployable and its consumer
+   changed** (`kgo.ReadCommitted()` removed). Rebuilding the Flink jars alone would have left it on
+   the old binary.
+
+Result: **8/8 RUNNING, 0 failed, 0 restarting, stable for 10+ minutes** (the POOLING build died
+every 60s, so anything past ~2 min is already decisive). Zero exceptions in the JobManager log since
+the deploy. Every stage advancing over a 30s sample — `ex1-raw` +1146, `ex1-p1-orderbook-snapshot-flink`
++14, `p1-asks`/`p1-bids` +157 each, `p1-asks-merged` +157, `p1-asks-adjusted` +158. `p1-asks` had been
+frozen at 680409 for the whole outage, so the aggregator hop is the one that proves the fix.
+
+Still true and still unaddressed: **`docker-compose.yml` sets no `restart-strategy`**, so with
+checkpointing off a job that throws once now stays FAILED with nothing restarting it. The cluster is
+healthy but has no automatic recovery. See todo.
