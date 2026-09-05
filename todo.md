@@ -823,12 +823,10 @@ stack** — see the same memory section for the run and what it did not cover.
       `exponential-delay` block; the dev file is not — **and the dev file is what the dev server
       runs**. Copying M1's five keys across is ~5 lines. Raised with the user, deliberately NOT
       applied as part of the revert. This is the single most likely way the pipeline dies quietly.
-- [ ] **Rebuild and redeploy `web` and `e2e`, not just the Flink jars.** Removing
-      `kgo.FetchIsolationLevel(kgo.ReadCommitted())` touched two separate Go deployables.
-- [ ] **First deploy after the revert may stall `read_committed` readers that still exist elsewhere.**
-      Any transaction left dangling by the failed POOLING deploy holds the LSO until the broker
-      aborts it — bounded by `transaction.timeout.ms` (10m), so it self-clears; worth knowing rather
-      than debugging live.
+- [x] **Rebuild and redeploy `web`** (done 2026-09-05, `up -d --build --no-deps web`). `e2e` is a
+      test harness, not a running service — its binary is rebuilt on next use.
+- [x] **Dangling-transaction stall did not materialise** — deploy 2026-09-05 came up clean, all
+      stages advancing within seconds.
 - [ ] **The dev TaskManager's `2g` / `managed.fraction: 0.1` sizing comment is now stale** — it is
       justified in `docker-compose.yml` by "6 jobs checkpointing every 10s". The sizing is still fine
       and was left alone; the rationale no longer holds.
@@ -838,3 +836,18 @@ stack** — see the same memory section for the run and what it did not cover.
 - [ ] **Local `mvn test` cannot run JaCoCo on this laptop** (JDK 26; "Unsupported class file major
       version 70"). Tests were run with `-Djacoco.skip=true`. Pre-existing, unrelated to the revert,
       but it means coverage gates do not run locally.
+
+### Deploy 2026-09-05 — done, and what it turned up
+
+- [x] **Revert deployed to `192.168.150.31` at `0c33566`. 8/8 jobs RUNNING, stable 10+ min, zero
+      exceptions, every stage advancing (`p1-asks` unfrozen).** See [[project_kafka_broker_memory]].
+- [ ] **⚠ STILL THE TOP RISK: `docker-compose.yml` has no `restart-strategy` and checkpointing is
+      now off**, so a job that throws once stays FAILED with nothing restarting it. The cluster is
+      healthy but has no automatic recovery. ~5 lines (copy M1's block from the prod file).
+- [ ] **Stop running anything on the dev server with `sudo`.** Past `sudo make` runs left 300
+      root-owned paths that broke `git pull` and then aborted a checkout half-applied. Repaired
+      2026-09-05; it will come straight back if the habit does. See [[server-build-env]].
+- [ ] **`make run-all-jobs` has no verify step** — `prod-verify` exists only on the `prod-*` targets,
+      and the dev stack is what this server runs. Today's deploy was verified by hand.
+- [ ] **A bare `docker compose up -d` on this box wants to recreate NiFi.** Use `--no-deps` with an
+      explicit service list, and `--dry-run` first. Worth understanding why NiFi shows as drifted.
