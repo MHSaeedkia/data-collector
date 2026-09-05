@@ -1036,3 +1036,243 @@ var Ex8NoiseFrames = Scenario{
 		},
 	},
 }
+
+// Ex8RestSnapshotResync — the SECOND stream on `ex8-raw` (added 2026-09-05): okx's REST depth
+// response, which NiFi tags `action: "snapshot"` and stamps with the market as a top-level `pair`.
+//
+// This is the regression test for the black hole found on the live dev server: job 1 had no branch
+// for this shape, so `arg.instId` read null and the WHOLE FRAME was discarded. Job 2 therefore
+// never saw a `type == "snapshot"`, `resyncPending` never cleared, and every later update
+// dead-lettered as `awaiting_snapshot` until the job restarted — a `snapshot_request` with no path
+// back to an accepted snapshot.
+//
+// 40-ex8-sequence-gap passed the whole time it was broken, because its resync answer is a WS
+// snapshot. On a delta feed NiFi answers by REST, so that scenario tested a frame production never
+// sends. That is the coverage gap this closes, and it is the same gap ex5 (31) and ex6 (48) had
+// already been given scenarios for.
+//
+// Three ways the REST shape differs from ex5's and ex6's, each of which the sources exercise:
+//
+//   - there is NO `arg`, and that absence is the discriminator. `data` is an ARRAY on both okx
+//     streams and `action` reads "snapshot" on both, so neither can separate them (ex5 splits on
+//     `data` being an object, ex6 on the book sitting under `result` — neither works here).
+//   - levels are FOUR-element arrays, `[price, qty, "0", orderCount]`, where the WS frame sends
+//     two. Only elements 0 and 1 are read.
+//   - the body carries a REAL sequence counter, `seqId`. Source 05's is 4428333610, a live value,
+//     and it MUST be ignored: the WS updates are sequenced by `ts` at order 1e12, so adopting a
+//     seqId at order 1e9 makes source 06 read as a ~1e12 forward jump — an instant false gap. A
+//     wrong implementation fails loudly here. (If the WS feed is ever re-sequenced on seqId, this
+//     scenario is the first thing that has to change — see todo.md.)
+//
+// Null-seq is what makes it work, for the same reason as ex5: source 05's `ts` is 50 ms BEHIND
+// source 04's, because it comes off the REST endpoint's clock rather than the WS one. Job 2 orders
+// it by event time on the resync exemption, then `baselinePending` lets source 06 — deliberately
+// NOT `REST ts + 300` — adopt its own ts as the fresh baseline, so the two clocks never meet.
+// Source 07 then resumes ordinary +300 contiguity.
+//
+// ONE reject episode and ONE control command is the whole assertion: a second command means the
+// reset → request → snapshot → gap loop is back.
+var Ex8RestSnapshotResync = Scenario{
+	ExchangeID: 8,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline
+		`{
+	"id": "3f7c1a90-5e28-4b6d-9a41-7c05e2d8b361",
+	"simulation": 1,
+	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"action": "snapshot",
+	"data": [
+		{
+			"asks": [["62800", "1.50000000"], ["62801", "0.85000000"], ["62802", "2.20000000"]],
+			"bids": [["62799", "1.20000000"], ["62798", "0.60000000"], ["62795", "2.40000000"]],
+			"ts": "1800000000300"
+		}
+	]
+}`,
+		// 02 WS update at +300 — accepted, re-sizes 62801
+		`{
+	"id": "8b2d4e05-91af-4c73-8d16-2e6fb0a95c47",
+	"simulation": 1,
+	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"action": "update",
+	"data": [
+		{ "asks": [["62801", "0.95000000"]], "bids": [["62795", "2.60000000"]], "ts": "1800000000600" }
+	]
+}`,
+		// 03 WS update at +900 — a gap: reset, dead-letter, and ask
+		`{
+	"id": "d5091c76-2b84-4f30-a9e2-6108c3f7a5db",
+	"simulation": 1,
+	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"action": "update",
+	"data": [
+		{ "asks": [["62802", "0"]], "bids": [["62790", "1.10000000"]], "ts": "1800000001500" }
+	]
+}`,
+		// 04 WS update while the request is outstanding — awaiting_snapshot, and NO second command
+		`{
+	"id": "6e83b501-c47d-4a29-b0f5-93da12c8e764",
+	"simulation": 1,
+	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"action": "update",
+	"data": [
+		{ "asks": [["62807", "0.50000000"]], "bids": [["62785", "3.80000000"]], "ts": "1800000001800" }
+	]
+}`,
+		// 05 REST snapshot — the resync answer, in the OTHER wire shape. No `arg` at all; the
+		// market arrives as the injected `pair`, the levels are four-element arrays, and `seqId`
+		// is a real captured value that must be ignored rather than adopted as the sequence.
+		//
+		// Its `ts` is 50 ms BEHIND source 04 — the endpoint's clock, not the WS one. The parser
+		// leaves the sequence id null, so it is never compared against a WS ts and job 2 accepts
+		// it on the resync exemption.
+		`{
+	"id": "a304f0d3-8062-48ab-b971-fc638d9f3f79",
+	"simulation": 1,
+	"code": "0",
+	"msg": "",
+	"data": [
+		{
+			"asks": [["63000", "2.00000000", "0", "3"], ["63010", "1.10000000", "0", "1"], ["63020", "0.75000000", "0", "2"]],
+			"bids": [["62990", "1.80000000", "0", "4"], ["62980", "2.50000000", "0", "1"], ["62970", "3.30000000", "0", "2"]],
+			"ts": "1800000001750",
+			"seqId": 4428333610
+		}
+	],
+	"pair": "BTC-USDT",
+	"action": "snapshot"
+}`,
+		// 06 WS update on the WS clock — deliberately NOT `REST ts + 300` (that would be
+		// ...002050). `baselinePending` adopts its ts as the fresh baseline unconditionally, so
+		// the two clocks never meet.
+		`{
+	"id": "b71e5f28-0a4c-4d96-8e37-51c2094fab6d",
+	"simulation": 1,
+	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"action": "update",
+	"data": [
+		{ "asks": [["63010", "0.90000000"]], "bids": [["62990", "2.00000000"]], "ts": "1800000002610" }
+	]
+}`,
+		// 07 WS update at +300 from 06 — ordinary contiguity has resumed from the WS clock, and
+		// the qty-"0" delete still removes a level.
+		`{
+	"id": "0c96a483-7d15-42be-9b38-4a71e5b026cd",
+	"simulation": 1,
+	"arg": { "channel": "books-grouped", "instId": "BTC-USDT", "grouping": "1" },
+	"action": "update",
+	"data": [
+		{ "asks": [["63020", "0"]], "bids": [["62970", "3.50000000"]], "ts": "1800000002910" }
+	]
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 8,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62800", Quantity: "1.5"},
+				{Price: "62801", Quantity: "0.85"},
+				{Price: "62802", Quantity: "2.2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62799", Quantity: "1.2"},
+				{Price: "62798", Quantity: "0.6"},
+				{Price: "62795", Quantity: "2.4"},
+			},
+		},
+		{ // after 02 — +300 accepted
+			ExchangeID: 8,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "62800", Quantity: "1.5"},
+				{Price: "62801", Quantity: "0.95"},
+				{Price: "62802", Quantity: "2.2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62799", Quantity: "1.2"},
+				{Price: "62798", Quantity: "0.6"},
+				{Price: "62795", Quantity: "2.6"},
+			},
+		},
+		{ // after 03 — the gap's reset empties the book
+			ExchangeID: 8,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:01Z",
+			Asks:       []events.PriceLevel{},
+			Bids:       []events.PriceLevel{},
+		},
+		{ // after 05 — the REST body restores it. This is the snapshot that never existed while
+			// the parser had no REST branch: the frame was dropped and nothing came out at all.
+			// The event time steps BACK to 08:00:01Z's earlier millis because it is the other clock.
+			ExchangeID: 8,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "63000", Quantity: "2"},
+				{Price: "63010", Quantity: "1.1"},
+				{Price: "63020", Quantity: "0.75"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62990", Quantity: "1.8"},
+				{Price: "62980", Quantity: "2.5"},
+				{Price: "62970", Quantity: "3.3"},
+			},
+		},
+		{ // after 06 — the baseline re-anchors on the WS clock
+			ExchangeID: 8,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "63000", Quantity: "2"},
+				{Price: "63010", Quantity: "0.9"},
+				{Price: "63020", Quantity: "0.75"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62990", Quantity: "2"},
+				{Price: "62980", Quantity: "2.5"},
+				{Price: "62970", Quantity: "3.3"},
+			},
+		},
+		{ // after 07 — +300 accepted, 63020 deleted
+			ExchangeID: 8,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "63000", Quantity: "2"},
+				{Price: "63010", Quantity: "0.9"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "62990", Quantity: "2"},
+				{Price: "62980", Quantity: "2.5"},
+				{Price: "62970", Quantity: "3.5"},
+			},
+		},
+	},
+	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
+	// One command for the episode, not one per rejected event. A SECOND command here would mean
+	// the resync answer was thrown away again, which is exactly the bug.
+	WantControlCommands: []events.ControlCommand{
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 8, PairID: 1, Simulation: 1},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 8, Simulation: 1, Price: "63000", Quantity: "2"},
+			{ExchangeID: 8, Simulation: 1, Price: "63010", Quantity: "0.9"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 8, Simulation: 1, Price: "62990", Quantity: "2"},
+			{ExchangeID: 8, Simulation: 1, Price: "62980", Quantity: "2.5"},
+			{ExchangeID: 8, Simulation: 1, Price: "62970", Quantity: "3.5"},
+		},
+	},
+}

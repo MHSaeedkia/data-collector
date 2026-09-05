@@ -851,3 +851,48 @@ stack** — see the same memory section for the run and what it did not cover.
       and the dev stack is what this server runs. Today's deploy was verified by hand.
 - [ ] **A bare `docker compose up -d` on this box wants to recreate NiFi.** Use `--no-deps` with an
       explicit service list, and `--dry-run` first. Worth understanding why NiFi shows as drifted.
+
+## ex8/okx resync black hole (2026-09-05) — half fixed
+
+- [x] **The REST snapshot was being dropped by job 1**, making every `sequence_gap` on ex8
+      terminal. `parseRestSnapshot` branch added, null-seq, with the wire shape documented in
+      `sample-raw-data.md` § ex8 and 2 new parser tests (107 pair-extractor tests green, all 8
+      normalizer modules BUILD SUCCESS). ⚠ **not deployed, not seen live.**
+- [x] **⚠ `seqId` — ASKED AND ANSWERED 2026-09-05. Do not re-open.** The REST body carries
+      `seqId: 4428333610`, which looked like it should replace `ts` as ex8's sequence and delete the
+      whole window question. **The live WS capture settles it: `books-grouped` frames carry `ts` and
+      nothing else — no `seqId`, no `prevSeqId`, no counter.** A sequence only one of the two streams
+      carries cannot order the other. `ts` stays; the REST body stays null-seq; `seqId` is IGNORED,
+      which the parser does and `61-ex8-rest-snapshot-resync` pins.
+- [ ] **Measure the ex8 `ts` interval distribution — and note this is now LESS urgent than it looked.**
+      ⚠ **Correcting an earlier entry in this file:** it claimed `jump 300, tolerance 0` was
+      extrapolated from two frames and therefore wrong. The 2026-09-05 capture gives
+      `1788606183009 → 1788606183309` — **exactly +300 again**, a different day and a different
+      market grouping. Two independent captures, two exact intervals: evidence FOR the cadence.
+      **Unproven either way on two data points.**
+      The likelier explanation for the live gaps is now **dropped frames**: at 300 ms with tolerance
+      0, ONE lost frame (exchange, NiFi or Kafka) puts the next `ts` at +600 and job 2 correctly
+      calls a gap. If that is it, the REST-branch fix was the whole fault and no window change is
+      needed. **Do not widen the window on the ex5 analogy alone** — measure first:
+      `docker exec kafka kafka-console-consumer --bootstrap-server kafka:29092 --topic ex8-raw \
+        --timeout-ms 300000 2>/dev/null | grep 'BTC-USDT' | grep -o '"ts":"[0-9]*"' \
+        | grep -o '[0-9]*' | awk 'p{print $1-p} {p=$1}' | sort -n | uniq -c | sort -rn | head`
+- [ ] **⚠ NEW, UNANSWERED — do the WS and REST books share a price grid?** The WS channel is
+      price-GROUPED (`arg.grouping`, live value **`"0.1"`**, not the `"1"` the docs still describe);
+      the REST depth endpoint is not grouped. On `BTC-USDT` this is harmless — `0.1` IS bitcoin's
+      tick. But the REST `ZEC-USDT` body carries **2-decimal** prices. **If any market is subscribed
+      with a grouping coarser than its tick, then after a resync the book holds REST levels the WS
+      deltas can never address** — a delete at `1011.9` will not remove `1011.99` — and the two grids
+      accumulate until the next snapshot. Needs one WS frame AND one REST body **for the same
+      market**; we have BTC's WS and ZEC's REST, never both for one. Nothing in the parser can fix
+      this if it is real: it is what `grouping` NiFi subscribes with per market.
+- [x] **e2e coverage for the ex8 resync: `61-ex8-rest-snapshot-resync` added** (`Ex8RestSnapshotResync`
+      in `data_ex8.go`, registered in `scenarios.go`; e2e build/vet/gofmt clean, `go test ./scenario/...`
+      ok). ⚠ **never run against a live stack.**
+      **Correcting an earlier claim in this file: ex8's scenarios were NOT commented out** — 38-43
+      have been registered the whole time, and they passed while production was broken. The real
+      gap is narrower and worse: **`40-ex8-sequence-gap` answers its own gap with a WS snapshot**,
+      a frame NiFi never sends for a delta feed. It tested a recovery path that does not exist in
+      production. ex5 (31) and ex6 (48) both already had a REST-resync scenario; ex8 did not.
+- [ ] **Audit the other delta feeds for the same hole.** ex6/bybit is the one to check: does its
+      resync answer parse? ex1/ex2/ex5 are known good (they have REST branches), ex8 was not.
