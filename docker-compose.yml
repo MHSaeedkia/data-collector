@@ -24,13 +24,6 @@ services:
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
-            # Jobs enable checkpointing themselves (CheckpointingConfigurer, default
-            # file:///opt/flink/checkpoints), and `filesystem` storage means the
-            # JobManager writes the metadata while the TaskManagers write the state
-            # files — so the directory has to be the SAME one in every container.
-            # Without this shared volume each container gets its own copy from the
-            # image and recovery reads an empty directory.
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         healthcheck:
@@ -80,7 +73,6 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-logs:/opt/flink/log
-            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
 
@@ -128,6 +120,11 @@ services:
             KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
             # --- Broker memory. The 2026-09-02..04 daily OOM lived here. ---
+            #
+            # HISTORY, not current state: checkpointing and EXACTLY_ONCE were removed again
+            # on 2026-09-05, so nothing writes transactionally today and none of the churn
+            # described below is being generated. These three settings stay because they are
+            # cheap, and because they are the prerequisite if EXACTLY_ONCE ever returns.
             #
             # Kafka's default heap is 1 GB and nothing here used to override it. The
             # broker died of `java.lang.OutOfMemoryError: Java heap space` roughly once a
@@ -433,7 +430,6 @@ volumes:
     data-collector-nifi-flowfile-repository:
     data-collector-jobmanager-logs:
     data-collector-taskmanager-logs:
-    data-collector-flink-checkpoints:
     data-collector-taskmanager-2-logs:
     data-collector-redis-data:
 

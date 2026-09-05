@@ -111,3 +111,111 @@ that output is pre-existing noise (it tries to instrument JDK classes) and fails
   interval is a **per-hop latency floor**: 6 hops x 10s. Worth a decision of its own.
 - Partition count grows linearly with subscribed markets; whatever heap is set has a market count
   at which it fails again. See [[project_kafka_topic_strategy]].
+
+## 2026-09-05 — POOLING deployed, and it broke all 8 transactional sinks
+
+First live deploy of the POOLING change (dev server `192.168.150.31`, `/opt/data-collector`, commit
+`8592241`). **It does not start.** Every one of the 6 normalizer jobs enters an endless restart loop;
+`orderbook-merger` and `orderbook-adjustment` stay RUNNING only because they have no EXACTLY_ONCE
+sink. Pipeline output is flat — `p1-asks` frozen while `ex1-raw` keeps growing ~34 rec/s.
+
+```
+java.lang.IllegalStateException: The record serializer does not expose a static list of target topics.
+  at ExactlyOnceKafkaWriter.lambda$getTopicNames$5(ExactlyOnceKafkaWriter.java:373)
+  at TransactionAbortStrategyContextImpl.getOpenTransactionsForTopics(...:83)
+  at ExactlyOnceKafkaWriter.abortLingeringTransactions(...:331)
+  at ExactlyOnceKafkaWriter.initialize(...:194)
+```
+
+**Mechanism, read off the 5.0.0-2.2 sources — this is structural, not a misconfiguration.**
+`TransactionNamingStrategy` binds each naming strategy to an abort strategy:
+`INCREMENTING -> PROBING`, `POOLING -> LISTING`. LISTING must enumerate the sink's target topics to
+find transactions to abort, so it calls `getTopicNames()`, which `orElseThrow`s unless the record
+serializer exposes a `KafkaDatasetIdentifier`. `initialize()` calls `abortLingeringTransactions()`
+**unconditionally**, so this fires on a clean first submit with no state — the job can never start.
+
+**Why every sink is hit: `setTopicSelector` never provides that identifier.** In
+`KafkaRecordSerializationSchemaBuilder`, `setTopic("x")` wraps a `ConstantTopicSelector` whose
+`getDatasetIdentifier()` returns `ofTopics([x])`; `setTopicSelector(...)` wraps a
+`CachingTopicSelector` that returns the identifier **only if the wrapped selector itself implements
+`KafkaDatasetIdentifierProvider`** — and a lambda cannot. All 8 EXACTLY_ONCE sinks route dynamically
+by pair/exchange id, so all 8 fail. The one `setTopic` sink (job 2's `control-plane`) is
+non-transactional and unaffected — coincidence, not design.
+
+**The fix that keeps dynamic routing:** replace each topic-selector lambda with a named static class
+implementing both `TopicSelector<T>` and `KafkaDatasetIdentifierProvider`, returning
+`DefaultKafkaDatasetIdentifier.ofPattern(...)` — `getTopicNames()` accepts a **pattern**, not just a
+fixed list, and resolves it via `AdminUtils.getTopicsByPattern`. Patterns are already implied by
+[[project_kafka_topic_strategy]] (`^p\d+-(asks|bids)$`, `^ex\d+-p\d+-<stage>-flink$`). No static
+enumeration of pairs, so no resubmit when a market is added. All three APIs are `@PublicEvolving`.
+
+Costs to weigh before committing to it: `getTopicsByPattern` does a **full `listTopics()` per writer
+`initialize()`**, i.e. per subtask per restart, and LISTING then lists transactions for every matched
+topic — unmeasured at this cluster's ~3000 partitions. Make the pattern as narrow as the stage.
+
+**Reverting POOLING -> INCREMENTING is the other option and is now cheaper than it was**, because the
+broker-side half of the OOM fix (`transactional.id.expiration.ms=1h`, `producer.id.expiration.ms=1h`)
+landed in the same change and is doing the real work — the 7-day default was the actual leak. The
+code comment "one-way switch: INCREMENTING -> POOLING is supported, the reverse is not" is about
+migrating *live* pooled state; it does not forbid reverting code that has never successfully run.
+
+**Process lesson, and the reason this reached a server:** the change was reasoned about entirely at
+the broker layer and shipped with "nothing is verified live" already written in this file. A sink
+naming strategy is not a broker setting — it changes the writer's startup path, which no amount of
+broker reasoning covers.
+
+**And no verify step ran, because the deploy was the dev target.** The live stack on this box is
+`docker-compose.yml`, not `docker-compose.prod.yml` (confirmed via the containers'
+`com.docker.compose.project.config_files` label, and by there being one `taskmanager` rather than
+`taskmanager-1..4`). So the deploy was `make run-all-jobs`, and **only the `prod-*` targets have a
+verify step** — `run-all-jobs` submits and stops. `make prod-verify` would have failed this loudly
+(it counts RUNNING jobs and would have seen 2 of 8). Worth deciding whether the dev targets should
+gain the same assertion, since the dev stack is what actually runs here.
+
+## 2026-09-05 (later) — reverted: checkpointing, EXACTLY_ONCE and POOLING all removed
+
+User's call, to buy time to study checkpointing properly rather than to fix the POOLING breakage
+under pressure. Everything the checkpointing round added on the job side is gone; the pipeline is
+back to the pre-`ec8d35c` shape. Verified `git diff ec8d35c^` on all 6 jobs is now **only** the M4
+producer block (see below) — no checkpointing residue.
+
+What went, and where:
+
+- `CheckpointingConfigurer` **deleted** (the whole `checkpointingConfigurer` package), and its
+  `configure(env)` call removed from all 6 normalizer jobs.
+- `setDeliveryGuarantee(EXACTLY_ONCE)`, `setTransactionalIdPrefix(...)` and
+  `setTransactionNamingStrategy(POOLING)` removed from all 8 sinks — sinks are back to the
+  `DeliveryGuarantee.NONE` default.
+- `transaction.timeout.ms=600000` removed (transaction-only setting; it existed solely to stay under
+  the broker's `transaction.max.timeout.ms`).
+- `isolation.level=read_committed` removed from **all 7 Java KafkaSources** (5 normalizer + merger +
+  adjustment) **and** `kgo.FetchIsolationLevel(kgo.ReadCommitted())` from the two Go consumers
+  (`web/internal/kafka/consumer.go`, `e2e/consumer/consumer.go`). Nothing writes transactionally any
+  more, so it was config asserting a guarantee that no longer exists. ⚠ **web and e2e are separate
+  deployables and need rebuilding**, not just the Flink jars.
+- Shared checkpoint volume + all 7 mounts removed from **both** compose files, the volume declaration
+  with them; `/opt/flink/checkpoints` dropped from the Dockerfile's mkdir/chown stanza (ha/archive
+  stay — they are M3/S4, not checkpointing).
+- Prometheus `flink-checkpoints` rule group (3 alerts) and the Alertmanager inhibit rule +
+  alertname matchers that referenced them removed. `promtool check rules` → 10 rules,
+  `amtool check-config` → SUCCESS, both green.
+
+**KEPT deliberately — do not assume these went with it:**
+
+- **M4's `acks=all` + `enable.idempotence=true` + `retries` + `delivery.timeout.ms` on every sink.**
+  These post-date `ec8d35c^`, which is why the jobs do not diff clean against it. The idempotent
+  producer is **independent of transactions** — it needs `acks=all`, `retries>0` and
+  `max.in.flight<=5`, all still true — and it is the setting that stops retries reordering writes
+  and corrupting the book. Removing it was never part of "disable exactly-once".
+- **The broker-side OOM fix** (`KAFKA_HEAP_OPTS`, `transactional.id.expiration.ms=1h`,
+  `producer.id.expiration.ms=1h`). Moot now that nothing is transactional, but harmless, and it is
+  the thing that must stay if EXACTLY_ONCE ever returns.
+
+**⚠ THE ONE REAL REGRESSION THIS CREATES — job restarts.** Flink defaults `restart-strategy.type` to
+`disable` **when checkpointing is off**, so with checkpointing gone a job that throws once goes to
+FAILED and stays there. `docker-compose.prod.yml` sets an explicit `exponential-delay` strategy (M1)
+and is fine. **`docker-compose.yml` sets NO restart strategy — and the dev compose is what the dev
+server actually runs.** So on that box a transient Kafka blip now kills a job permanently and
+silently. (`CheckpointingConfigurer`'s own comment claimed docker-compose.yml set a restart strategy;
+it never did — that was always prod-only.) Raised with the user, not applied: adding M1's five keys
+to the dev file is the fix and is ~5 lines. See todo.

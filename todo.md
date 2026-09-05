@@ -785,3 +785,56 @@ stack** — see the same memory section for the run and what it did not cover.
       `EXACTLY_ONCE` + `read_committed` each of the 6 chained jobs only publishes on commit, so the
       interval is a **per-hop latency floor**: ~6 x 10s end to end. That is a product decision about
       how fresh the book must be, not a memory one
+
+## kafka broker OOM — POOLING regression (2026-09-05) — RESOLVED BY REVERT
+
+- [x] **P0 — pipeline was down on the dev server. Resolved 2026-09-05 by reverting the whole
+      checkpointing/EXACTLY_ONCE/POOLING round (user's call), not by fixing POOLING.**
+      All 6 normalizer jobs restart-loop every 60s on
+      `IllegalStateException: The record serializer does not expose a static list of target topics`.
+      `POOLING` -> `LISTING` abort strategy -> must enumerate target topics, and
+      `ExactlyOnceKafkaWriter.initialize()` aborts lingering transactions **unconditionally**, so it
+      fails on a clean submit. All 8 EXACTLY_ONCE sinks use a `setTopicSelector` lambda, which cannot
+      supply the identifier. Not a config problem — POOLING and dynamic topic routing are
+      incompatible as currently written. See [[project_kafka_broker_memory]]
+- [x] **Pick the fix — neither (a) nor (b): the feature was removed instead.** Kept here because
+      both remain the options if EXACTLY_ONCE ever comes back. (a) Named static class implementing `TopicSelector<T>` +
+      `KafkaDatasetIdentifierProvider` returning `DefaultKafkaDatasetIdentifier.ofPattern(...)` —
+      keeps POOLING and dynamic routing, 8 sinks to change, needs one narrow pattern per stage.
+      (b) Revert the 8 sinks to `INCREMENTING` — one-line each, and the broker-side 1h
+      `transactional.id`/`producer.id` expirations (the half that actually fixed the OOM) stay.
+      (b) restores service fastest; (a) is where it should end up.
+- [ ] **If EXACTLY_ONCE returns and (a) is chosen: measure it before trusting it.** `AdminUtils.getTopicsByPattern` does a full
+      `listTopics()` on **every writer `initialize()`** — per subtask, per restart — and LISTING then
+      lists transactions per matched topic. Never measured at this cluster's ~3000 partitions.
+- [ ] **Give the dev deploy targets a verify step.** `make prod-verify` counts RUNNING jobs and would
+      have failed this immediately, but the box runs `docker-compose.yml` and the deploy was
+      `make run-all-jobs`, which submits and stops. Consider making the check hold over an interval
+      rather than sampling once, so a restart-looping job cannot pass through a RUNNING window.
+- [ ] **No alert fired for a total pipeline stall.** M9's rules are Flink-side, yet ~50 min of every
+      normalizer job restart-looping and zero output on `p{id}-{side}` surfaced only on manual
+      inspection. Whatever the fix, this gap is the reason it went unnoticed.
+
+### Follow-ups left open by the revert (2026-09-05)
+
+- [ ] **⚠ P1 — `docker-compose.yml` has no `restart-strategy`, and checkpointing is now off.** Flink
+      defaults `restart-strategy.type` to `disable` when checkpointing is off, so a job that throws
+      once goes to FAILED and stays there. `docker-compose.prod.yml` is covered by M1's explicit
+      `exponential-delay` block; the dev file is not — **and the dev file is what the dev server
+      runs**. Copying M1's five keys across is ~5 lines. Raised with the user, deliberately NOT
+      applied as part of the revert. This is the single most likely way the pipeline dies quietly.
+- [ ] **Rebuild and redeploy `web` and `e2e`, not just the Flink jars.** Removing
+      `kgo.FetchIsolationLevel(kgo.ReadCommitted())` touched two separate Go deployables.
+- [ ] **First deploy after the revert may stall `read_committed` readers that still exist elsewhere.**
+      Any transaction left dangling by the failed POOLING deploy holds the LSO until the broker
+      aborts it — bounded by `transaction.timeout.ms` (10m), so it self-clears; worth knowing rather
+      than debugging live.
+- [ ] **The dev TaskManager's `2g` / `managed.fraction: 0.1` sizing comment is now stale** — it is
+      justified in `docker-compose.yml` by "6 jobs checkpointing every 10s". The sizing is still fine
+      and was left alone; the rationale no longer holds.
+- [ ] **`e2e` may have assertions that assume exactly-once record counts.** Not audited as part of
+      the revert. With `DeliveryGuarantee.NONE` duplicates are possible again, so any exact-count
+      scenario is now a potential flake.
+- [ ] **Local `mvn test` cannot run JaCoCo on this laptop** (JDK 26; "Unsupported class file major
+      version 70"). Tests were run with `-Djacoco.skip=true`. Pre-existing, unrelated to the revert,
+      but it means coverage gates do not run locally.

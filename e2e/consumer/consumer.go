@@ -117,11 +117,6 @@ func readRecords(ctx context.Context, broker, topic string, wait time.Duration) 
 		kgo.SeedBrokers(strings.Split(broker, ",")...),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-		// The pipeline's sinks write transactionally (EXACTLY_ONCE). Reading
-		// uncommitted would count records from transactions that later abort,
-		// which shows up here as a flaky record-count assertion rather than as
-		// a visible bug.
-		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 	)
 	if err != nil {
 		return nil, err
