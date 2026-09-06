@@ -1213,3 +1213,63 @@ outputs so each team still gets its stage.
 count. `pipeline_timings` is on every record (`book_build_out − event_time`) and is the instrument to
 settle it — take the real number under `EXACTLY_ONCE` before and after. Full report published as an
 artifact 2026-09-02.
+
+## 2026-09-06 — the merger's direct-buffer OOM, and the restart gap that made it fatal
+
+**Two separate faults in one crash.** `orderbook-merger` died repeatedly over a few hours.
+
+### Fault 1 — `Recovery is suppressed by NoRestartBackoffTimeStrategy`
+
+Flink defaults `restart-strategy.type` to **`disable` when checkpointing is off**, which this stack
+has been since the 2026-09-05 revert (see [[project_kafka_broker_memory]]). `docker-compose.prod.yml`
+has carried M1's five explicit keys since the hardening round; **`docker-compose.yml` never did — and
+the dev file is what the dev server runs.** So one exception killed a job permanently with nothing
+restarting it. This was written in todo.md as "the single most likely way the pipeline dies quietly"
+the day the revert landed, and it is exactly what happened. **M1's block is now in the dev file too.**
+
+### Fault 2 — `OutOfMemoryError: Direct buffer memory`
+
+`Cannot reserve 48462602 bytes (allocated: 252210260, limit: 300647712)`, thrown inside
+`KafkaPartitionSplitReader.fetch` → `NetworkReceive.readFrom`. **Not a leak — sizing, and the
+arithmetic is exact.** Flink derives `MaxDirectMemorySize` from the TaskManager sizing, and at
+`process.size: 2g`:
+
+| | |
+| --- | --- |
+| process | 2048m |
+| − jvm-metaspace | 256m |
+| − jvm-overhead (10%) | 204.8m |
+| = total flink memory | 1587.2m |
+| network (10%) | 158.72m |
+| framework.off-heap | 128m |
+| task.off-heap | **0** |
+| **MaxDirectMemorySize** | **286.72m = 300,647,712 B** ← the logged limit, to the byte |
+
+Flink's own network memory has first claim on 158.7m of that, leaving ~128m of direct memory for
+every Kafka consumer in the JVM — **and the dev stack runs ONE TaskManager with 8 slots, so all 8
+jobs share it.**
+
+Against that, three jobs subscribe **by pattern** with untouched consumer defaults
+(`fetch.max.bytes` 50 MB, `max.partition.fetch.bytes` 1 MB), so the broker will fill one response to
+~50 MB of direct buffers: `AggregatorJob` (`ex{id}-p{id}-orderbook-snapshot-flink`, one per
+subscribed exchange+pair — the widest fan-in), `MergerJob` and `AdjustmentJob` (`p{id}-{side}`).
+Capped to **8 MB per response / 512 KB per partition** on all three. Records are order books of a few
+tens of KB, so the cost is round trips, not throughput, and KIP-74 still returns an oversized record
+whole rather than stalling the consumer.
+
+**The merger was probably the victim, not the cause.** The aggregator reads ~4x more partitions into
+the same shared budget; capping only the job that happened to throw would likely have moved the
+crash rather than removed it. That is why all three were changed.
+
+### Traps
+
+- **`MaxDirectMemorySize` is NOT `taskmanager.memory.task.off-heap.size`.** It is
+  framework.off-heap + task.off-heap + network, and `task.off-heap` defaults to **0** — so the whole
+  user-code direct budget is really the framework's 128m slice minus whatever else is live.
+- **Raising `task.off-heap.size` costs task heap**, because it comes out of Total Flink Memory. On a
+  2g TM that is affordable (~1013m task heap today) but it is a trade, not free. Prefer capping the
+  fetches; raise the sizing only if a measurement says the fetches became too small.
+- **`process.size: 2g` in the dev file is deliberate** — that file runs on 5+ dev boxes and must stay
+  host-agnostic. Do not "fix" this by growing the TaskManager there.
+- Nothing here is verified live: **not deployed.** Fault 2's fix needs a jar rebuild
+  (`make run-all-jobs`), fault 1's needs the JobManager recreated.
