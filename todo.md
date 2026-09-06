@@ -901,3 +901,29 @@ stack** — see the same memory section for the run and what it did not cover.
       production. ex5 (31) and ex6 (48) both already had a REST-resync scenario; ex8 did not.
 - [ ] **Audit the other delta feeds for the same hole.** ex6/bybit is the one to check: does its
       resync answer parse? ex1/ex2/ex5 are known good (they have REST branches), ex8 was not.
+
+## Flink direct-buffer OOM + no restart strategy (2026-09-06)
+
+- [x] **`docker-compose.yml` now sets M1's `restart-strategy`.** This was the standing P1 from the
+      2026-09-05 revert — "the single most likely way the pipeline dies quietly" — and it is what
+      killed `orderbook-merger` (`Recovery is suppressed by NoRestartBackoffTimeStrategy`). Five keys
+      copied verbatim from the prod file, not re-derived.
+- [x] **Capped Kafka consumer fetch memory on all three PATTERN-subscribing sources** — aggregator,
+      merger, adjustment — to `fetch.max.bytes` 8 MB / `max.partition.fetch.bytes` 512 KB, against a
+      direct-memory budget of 286.7 MB shared by all 8 jobs in the single dev TaskManager. All three,
+      not just the one that threw: the aggregator reads ~4x more partitions, so the merger was
+      probably the victim. See [[project_flink_production]] for the arithmetic.
+- [ ] **⚠ NOT DEPLOYED, NOT OBSERVED.** Needs `make run-all-jobs` (the fetch caps are in the jars)
+      AND the JobManager recreated (the restart strategy is cluster config). Recreating the JM alone
+      would fix the symptom of staying dead while leaving the crash in place.
+- [ ] **Confirm the fetch caps did not starve throughput.** The trade is round trips for peak
+      memory. Watch consumer lag on `p{id}-{side}` and `ex{id}-p{id}-orderbook-snapshot-flink` after
+      the deploy; if the jobs fall behind, raise `taskmanager.memory.task.off-heap.size` (which costs
+      task heap, ~1013m today) rather than putting the 50 MB defaults back.
+- [ ] **Why did this start now?** The sizing has been wrong since the dev TaskManager was set to 2g,
+      so something changed on the demand side — more subscribed markets widening the patterns, or a
+      volume spike. Worth knowing, because the same budget will run out again as markets are added.
+- [ ] **The single dev TaskManager is the structural issue.** 8 jobs in one JVM share one 286.7 MB
+      direct budget and one heap; prod runs 4 TaskManagers precisely to bound this blast radius. The
+      dev file cannot simply grow (it runs on 5+ boxes and must stay host-agnostic), so the dev
+      server may want a `docker-compose.override.yml` of its own.
