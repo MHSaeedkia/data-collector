@@ -17,9 +17,14 @@ package hub
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 	"reflect"
+	"sort"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -74,7 +79,10 @@ type conn interface {
 // loses intermediate frames, never correctness, and is never dropped for
 // being slow.
 type client struct {
-	c        conn
+	c    conn
+	id   int64
+	addr string
+
 	sel      domain.Selection
 	selected bool
 
@@ -83,21 +91,47 @@ type client struct {
 	wake    chan struct{} // capacity 1: a coalescing wakeup, never blocks
 	done    chan struct{}
 	once    sync.Once
+
+	// skipped counts frames this client never saw because a newer one
+	// replaced them in the queue. It is the one number that says "this
+	// browser is not keeping up" — nothing else distinguishes a slow
+	// client from a quiet pair, and that ambiguity is what made the
+	// original freeze so hard to see.
+	skipped atomic.Int64
 }
 
-func newClient(c conn) *client {
+// clientIDs numbers connections so a log line about one browser can be
+// followed from connect to disconnect. An address alone is not enough:
+// the same browser reconnects from the same address every 2s.
+var clientIDs atomic.Int64
+
+func newClient(c conn, addr string) *client {
 	return &client{
 		c:    c,
+		id:   clientIDs.Add(1),
+		addr: addr,
 		wake: make(chan struct{}, 1),
 		done: make(chan struct{}),
 	}
+}
+
+// String is what every log line about this client uses, so the format is
+// defined once.
+func (cl *client) String() string {
+	return "client #" + strconv.FormatInt(cl.id, 10) + " (" + cl.addr + ")"
 }
 
 // enqueue queues one message and nudges the writer. It never blocks, so
 // callers may hold h.mu.
 func (cl *client) enqueue(msg any) {
 	cl.mu.Lock()
+	before := len(cl.pending)
 	cl.pending = coalesce(cl.pending, msg)
+	// Anything the queue did not grow by is a frame this browser will
+	// never see, because a newer one took its place.
+	if dropped := before + 1 - len(cl.pending); dropped > 0 {
+		cl.skipped.Add(int64(dropped))
+	}
 	cl.mu.Unlock()
 	select {
 	case cl.wake <- struct{}{}:
@@ -164,6 +198,12 @@ type Hub struct {
 	clients map[*client]bool
 	latest  map[domain.Selection]domain.Book
 	catalog domain.Catalog
+
+	// published counts books that have reached the hub, so the heartbeat
+	// can report a RATE. A count that stops moving is the signature of a
+	// stalled consumer, and it is invisible in a snapshot of state alone.
+	published  atomic.Int64
+	lastLogged int64
 }
 
 func New() *Hub {
@@ -194,6 +234,13 @@ func (h *Hub) SetCatalog(c domain.Catalog) {
 func (h *Hub) Publish(b domain.Book) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if _, seen := h.latest[b.Key()]; !seen {
+		// Once per book, so it is cheap, and it answers the first question
+		// anyone asks: is this pair/exchange/side reaching the UI at all?
+		log.Printf("hub: first book for pair %d, exchange %d, %s (%d level(s))",
+			b.PairID, b.ExchangeID(), b.Side, len(b.Levels))
+	}
+	h.published.Add(1)
 	h.latest[b.Key()] = b
 	msg := domain.WSUpdate{Type: "update", Book: b}
 	for cl := range h.clients {
@@ -205,22 +252,36 @@ func (h *Hub) Publish(b domain.Book) {
 
 // add registers a client, starts its writer, and queues the catalog,
 // which is all it can use before it has told us what to show.
-func (h *Hub) add(c conn) *client {
-	cl := newClient(c)
+func (h *Hub) add(c conn, addr string) *client {
+	cl := newClient(c, addr)
 
 	h.mu.Lock()
 	h.clients[cl] = true
 	cl.enqueue(domain.WSCatalog{Type: "catalog", Catalog: h.catalog})
+	total, books := len(h.clients), len(h.latest)
 	h.mu.Unlock()
 
+	log.Printf("ws connect: %s — %d client(s) now, %d book(s) held", cl, total, books)
 	go h.writeLoop(cl)
 	return cl
 }
 
-func (h *Hub) remove(cl *client) {
+// remove unregisters a client. reason says which of the three ways out it
+// took (the browser closed, a write failed, a ping went unanswered) —
+// telling those apart is the difference between "a user closed a tab" and
+// "we are dropping clients we should be keeping".
+func (h *Hub) remove(cl *client, reason string) {
 	h.mu.Lock()
+	_, present := h.clients[cl]
 	delete(h.clients, cl)
+	total := len(h.clients)
 	h.mu.Unlock()
+
+	// remove is reached from both loops; only the first one through says so.
+	if present {
+		log.Printf("ws disconnect: %s — %s (%d client(s) left, %d frame(s) skipped while connected)",
+			cl, reason, total, cl.skipped.Load())
+	}
 	cl.stop()
 }
 
@@ -240,6 +301,55 @@ func (h *Hub) selectBooks(cl *client, sel domain.Selection) {
 		}
 	}
 	cl.enqueue(domain.WSSnapshot{Type: "snapshot", Books: books})
+
+	// An empty snapshot is the single most useful line in this file when
+	// someone reports "the page shows nothing": it says the request
+	// arrived and was answered, and that the hub simply holds no book for
+	// what was asked — so the question is upstream, not here.
+	if len(books) == 0 {
+		log.Printf("ws select: %s wants pair %d, exchange %d — NOTHING HELD for it yet (%d book(s) held in total)",
+			cl, sel.PairID, sel.ExchangeID, len(h.latest))
+		return
+	}
+	log.Printf("ws select: %s wants pair %d, exchange %d — answered with %d book(s)",
+		cl, sel.PairID, sel.ExchangeID, len(books))
+}
+
+// LogStats prints one heartbeat line: enough to tell a healthy idle
+// server (books held, rate zero because the market is quiet) from a stuck
+// one (clients connected, books held, rate zero because nothing is being
+// consumed) without attaching a debugger. Called on a ticker from main.
+//
+// Clients that are falling behind get a line of their own, because that
+// is the early warning the original freeze never gave: back then a slow
+// browser silently took the whole server with it.
+func (h *Hub) LogStats(every time.Duration) {
+	published := h.published.Load()
+	rate := float64(published-h.lastLogged) / every.Seconds()
+	h.lastLogged = published
+
+	h.mu.Lock()
+	clients, books := len(h.clients), len(h.latest)
+	behind := make([]*client, 0, len(h.clients))
+	for cl := range h.clients {
+		if cl.skipped.Load() > 0 {
+			behind = append(behind, cl)
+		}
+	}
+	h.mu.Unlock()
+
+	log.Printf("hub: %d client(s), %d book(s) held, %.1f book(s)/s in (%d total)",
+		clients, books, rate, published)
+
+	sort.Slice(behind, func(i, j int) bool { return behind[i].id < behind[j].id })
+	for _, cl := range behind {
+		cl.mu.Lock()
+		queued := len(cl.pending)
+		cl.mu.Unlock()
+		log.Printf("hub: %s is behind — %d frame(s) skipped so far, %d queued. "+
+			"It sees fewer updates but stays correct; it is not blocking anyone else.",
+			cl, cl.skipped.Load(), queued)
+	}
 }
 
 // writeLoop owns every write to one client's socket. Running one per
@@ -256,13 +366,13 @@ func (h *Hub) writeLoop(cl *client) {
 		case <-cl.wake:
 			for _, msg := range cl.take() {
 				if err := cl.write(msg); err != nil {
-					h.remove(cl)
+					h.remove(cl, "write failed: "+err.Error())
 					return
 				}
 			}
 		case <-ping.C:
 			if err := cl.c.WriteControl(websocket.PingMessage, nil, time.Now().Add(writeWait)); err != nil {
-				h.remove(cl)
+				h.remove(cl, "ping failed: "+err.Error())
 				return
 			}
 		}
@@ -289,6 +399,9 @@ var upgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	c, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		// The browser never gets a usable socket, so if this fires the page
+		// looks dead and nothing else in this file will ever say why.
+		log.Printf("ws upgrade failed for %s: %v", r.RemoteAddr, err)
 		return
 	}
 	c.SetReadLimit(readLimit)
@@ -297,17 +410,38 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return c.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
-	cl := h.add(c)
+	cl := h.add(c, r.RemoteAddr)
+	var readErr error
 	for {
 		_, data, err := c.ReadMessage()
 		if err != nil {
+			readErr = err
 			break
 		}
 		var sel domain.WSSelect
 		if err := json.Unmarshal(data, &sel); err != nil || sel.Type != "select" {
-			continue // ignore anything we don't understand rather than dropping the client
+			// Not fatal, but worth saying: a browser talking a shape we do
+			// not understand is silently getting nothing back.
+			log.Printf("ws: ignoring unrecognised message from %s: %.120q", cl, data)
+			continue
 		}
 		h.selectBooks(cl, domain.Selection{PairID: sel.PairID, ExchangeID: sel.ExchangeID})
 	}
-	h.remove(cl)
+	h.remove(cl, readReason(readErr))
+}
+
+// readReason turns the read loop's exit into something a person can act
+// on. A normal tab close and a read deadline that expired because the
+// browser stopped answering pings mean very different things.
+func readReason(err error) string {
+	switch {
+	case err == nil:
+		return "read loop ended"
+	case websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway):
+		return "browser closed the connection"
+	case os.IsTimeout(err):
+		return "no pong within " + pongWait.String() + " — connection was half-open"
+	default:
+		return "read failed: " + err.Error()
+	}
 }

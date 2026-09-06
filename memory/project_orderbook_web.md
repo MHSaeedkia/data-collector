@@ -360,3 +360,43 @@ the bug are `TestPublish_DoesNotBlockOnAStalledClient` and `TestAdd_DoesNotBlock
 Assertions on `h.clients` must go through `clientCount(h)` — writer goroutines mutate that map,
 so a bare `len()` is a race in the test even when the code is correct. All green under `-race`,
 `-count=3`.
+
+### Logging (same day, user follow-up: "add more log")
+
+The app was nearly silent, which is most of why the freeze above took so long to find. The
+logging added is deliberately **low-volume and state-changing** — never per record, which at
+these rates would be thousands of lines a second and would bury the useful ones.
+
+- **Lifecycle, one line each**: `ws connect` / `ws select` / `ws disconnect`. Every client gets a
+  sequential id (`client #7 (addr)`) via `client.String()`, because the address alone does not
+  identify a session — the browser reconnects from the same address every 2s. Disconnects carry
+  a **reason** (`readReason`): browser closed, no pong within 60s (half-open), write failed, ping
+  failed. Telling those apart is the difference between "a user closed a tab" and "we are
+  dropping clients we should be keeping".
+- **`ws select` says when the answer was EMPTY.** That single line is the fastest answer to "the
+  page shows nothing": it proves the request arrived and was answered, and that the hub simply
+  holds no book for what was asked — so the question is upstream, not in the web app.
+- **Heartbeat every 30s** (`Hub.LogStats`, ticked from `main.go`): clients, books held, and the
+  arrival RATE. The rate is the point — a stalled consumer and a quiet market look identical in
+  any snapshot of state, and that ambiguity is exactly what cost time last outage. Clients whose
+  `skipped` counter is non-zero get a line naming them, which is the early warning the old design
+  could never give.
+- **`client.skipped`** counts frames dropped by the outbox's coalescing (computed in `enqueue`
+  from how much `pending` did NOT grow). It is the only signal separating "this browser is slow"
+  from "this pair is quiet".
+- **Consumers** (`kafka[agg]` / `kafka[ex]`) log their pattern, offset and group at startup, the
+  **first record from each topic** (the answer to "is my regex matching anything?" — a
+  subscription that matches nothing is otherwise totally silent), and a 30s rate line that says
+  **`NO records in the last 30s`** explicitly. Silence in a log is ambiguous; an explicit line is
+  not.
+- **Decoder** logs each schema id the first time it is fetched, with its Avro full name — once per
+  id for the life of the process, since the cache never invalidates. Proves the registry is
+  reachable and names which record shapes are actually flowing.
+- **Registry** logs count changes, and reports going stale / recovering **on the transition
+  only** (`adopt` + `logErr`). This matters: Refresh runs every 10s, and postgres being down used
+  to mean a repeated multi-line pgx error every tick forever. Repeating identical errors is worse
+  than not logging them — it buries everything else. **Keep new log lines on this discipline.**
+
+Verified by running the binary with Kafka, postgres and the registry all unreachable and driving
+a real websocket at it (connect → select → junk message → disconnect): every line above appears
+once, in order, with no per-tick repetition.

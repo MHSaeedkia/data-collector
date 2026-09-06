@@ -183,7 +183,7 @@ func TestAdd_SendsCatalog(t *testing.T) {
 	h.SetCatalog(domain.Catalog{Markets: []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}}})
 	c := newFakeConn()
 
-	h.add(c)
+	h.add(c, "test")
 
 	sent := waitSent(t, c, 1)
 	cat, ok := sent[0].(domain.WSCatalog)
@@ -204,7 +204,7 @@ func TestSelect_AnswersWithHeldBooksForThatSelectionOnly(t *testing.T) {
 		h.latest[b.Key()] = b
 	}
 	c := newFakeConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 
 	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
 
@@ -229,7 +229,7 @@ func TestSelect_ExchangeSelectionExcludesTheAggregatedBook(t *testing.T) {
 		h.latest[b.Key()] = b
 	}
 	c := newFakeConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 
 	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: 8})
 
@@ -241,9 +241,9 @@ func TestSelect_ExchangeSelectionExcludesTheAggregatedBook(t *testing.T) {
 func TestPublish_ReachesOnlyClientsWatchingThatBook(t *testing.T) {
 	h := New()
 	watching, other, unselected := newFakeConn(), newFakeConn(), newFakeConn()
-	h.selectBooks(h.add(watching), domain.Selection{PairID: 1, ExchangeID: 8})
-	h.selectBooks(h.add(other), domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
-	h.add(unselected) // connected but has not chosen yet
+	h.selectBooks(h.add(watching, "test"), domain.Selection{PairID: 1, ExchangeID: 8})
+	h.selectBooks(h.add(other, "test"), domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
+	h.add(unselected, "test") // connected but has not chosen yet
 
 	b := exchangeBook(1, 8, "asks")
 	h.Publish(b)
@@ -291,7 +291,7 @@ func TestSelect_MergedSelectionExcludesTheAggregatedBook(t *testing.T) {
 		h.latest[b.Key()] = b
 	}
 	c := newFakeConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 
 	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.MergedExchangeID})
 
@@ -305,8 +305,8 @@ func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
 	bad, good := newFakeConn(), newFakeConn()
 	bad.failAfter = 2 // catalog and snapshot land; the update breaks the pipe
 	sel := domain.Selection{PairID: 1}
-	h.selectBooks(h.add(bad), sel)
-	h.selectBooks(h.add(good), sel)
+	h.selectBooks(h.add(bad, "test"), sel)
+	h.selectBooks(h.add(good, "test"), sel)
 	waitSent(t, bad, 2)
 
 	h.Publish(aggregatedBook(1, "asks"))
@@ -321,7 +321,7 @@ func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
 func TestSetCatalog_BroadcastsOnlyWhenItChanged(t *testing.T) {
 	h := New()
 	c := newFakeConn()
-	h.add(c)
+	h.add(c, "test")
 	waitSent(t, c, 1) // the catalog sent on add
 
 	h.SetCatalog(domain.Catalog{Exchanges: []domain.Exchange{{ID: 1, Name: "nobitex"}}})
@@ -335,9 +335,9 @@ func TestSetCatalog_BroadcastsOnlyWhenItChanged(t *testing.T) {
 func TestRemove_ClosesAndUnregistersConn(t *testing.T) {
 	h := New()
 	c := newFakeConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 
-	h.remove(cl)
+	h.remove(cl, "test")
 
 	assert.True(t, c.isClosed())
 	assert.Zero(t, clientCount(h))
@@ -347,11 +347,11 @@ func TestRemove_ClosesAndUnregistersConn(t *testing.T) {
 // to survive being called twice — closing a channel twice would panic.
 func TestRemove_IsIdempotent(t *testing.T) {
 	h := New()
-	cl := h.add(newFakeConn())
+	cl := h.add(newFakeConn(), "test")
 
 	assert.NotPanics(t, func() {
-		h.remove(cl)
-		h.remove(cl)
+		h.remove(cl, "test")
+		h.remove(cl, "test")
 	})
 }
 
@@ -364,9 +364,9 @@ func TestPublish_DoesNotBlockOnAStalledClient(t *testing.T) {
 	stalled := newStalledConn() // never resumed: this socket never drains
 	healthy := newFakeConn()
 	sel := domain.Selection{PairID: 1}
-	h.selectBooks(h.add(stalled), sel)
+	h.selectBooks(h.add(stalled, "test"), sel)
 	waitParked(t, stalled)
-	h.selectBooks(h.add(healthy), sel)
+	h.selectBooks(h.add(healthy, "test"), sel)
 
 	done := make(chan struct{})
 	go func() {
@@ -391,14 +391,14 @@ func TestPublish_DoesNotBlockOnAStalledClient(t *testing.T) {
 func TestAdd_DoesNotBlockOnAStalledClient(t *testing.T) {
 	h := New()
 	stalled := newStalledConn()
-	h.selectBooks(h.add(stalled), domain.Selection{PairID: 1})
+	h.selectBooks(h.add(stalled, "test"), domain.Selection{PairID: 1})
 	waitParked(t, stalled)
 
 	arriving := newFakeConn()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h.add(arriving)
+		h.add(arriving, "test")
 	}()
 
 	select {
@@ -415,7 +415,7 @@ func TestAdd_DoesNotBlockOnAStalledClient(t *testing.T) {
 func TestOutbox_CoalescesUpdatesForTheSameBook(t *testing.T) {
 	h := New()
 	c := newStalledConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 	waitParked(t, c) // the writer is stuck on the catalog; everything below queues
 	h.selectBooks(cl, domain.Selection{PairID: 1})
 
@@ -441,7 +441,7 @@ func TestOutbox_CoalescesUpdatesForTheSameBook(t *testing.T) {
 func TestOutbox_KeepsBothSidesOfTheBook(t *testing.T) {
 	h := New()
 	c := newStalledConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 	waitParked(t, c)
 	h.selectBooks(cl, domain.Selection{PairID: 1})
 
@@ -463,7 +463,7 @@ func TestOutbox_KeepsBothSidesOfTheBook(t *testing.T) {
 func TestOutbox_SnapshotSupersedesQueuedUpdates(t *testing.T) {
 	h := New()
 	c := newStalledConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 	waitParked(t, c)
 	h.selectBooks(cl, domain.Selection{PairID: 1})
 	h.Publish(aggregatedBook(1, "asks"))
@@ -480,11 +480,57 @@ func TestOutbox_SnapshotSupersedesQueuedUpdates(t *testing.T) {
 	assert.Equal(t, "snapshot", snap.Type)
 }
 
+// The skipped counter is what the heartbeat reports, and it is the only
+// signal that separates "this browser is slow" from "this pair is quiet".
+func TestOutbox_CountsTheFramesASlowClientNeverSaw(t *testing.T) {
+	h := New()
+	c := newStalledConn()
+	cl := h.add(c, "test")
+	waitParked(t, c)
+	h.selectBooks(cl, domain.Selection{PairID: 1})
+
+	for i := 0; i < 10; i++ {
+		h.Publish(aggregatedBook(1, "asks"))
+	}
+
+	// The first update queues; the nine after it each replace their
+	// predecessor, and every replacement is a frame this browser lost.
+	assert.Equal(t, int64(9), cl.skipped.Load())
+
+	c.resume()
+	waitSent(t, c, 3)
+}
+
+// The heartbeat runs on a ticker in production, so it must be safe to
+// call while writers are removing clients underneath it.
+func TestLogStats_IsSafeWhileClientsComeAndGo(t *testing.T) {
+	h := New()
+	slow := newStalledConn()
+	cl := h.add(slow, "test")
+	waitParked(t, slow)
+	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.Publish(aggregatedBook(1, "asks"))
+	h.Publish(aggregatedBook(1, "asks"))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			h.LogStats(time.Second)
+		}
+	}()
+	for i := 0; i < 20; i++ {
+		h.remove(h.add(newFakeConn(), "churn"), "test")
+	}
+	<-done
+	assert.NotZero(t, cl.skipped.Load(), "the slow client is the one the heartbeat should name")
+}
+
 // A write with no deadline is what let a stalled socket park forever.
 func TestWrite_SetsADeadlineBeforeEveryWrite(t *testing.T) {
 	h := New()
 	c := newFakeConn()
-	cl := h.add(c)
+	cl := h.add(c, "test")
 	h.selectBooks(cl, domain.Selection{PairID: 1})
 	h.Publish(aggregatedBook(1, "asks"))
 
@@ -507,7 +553,7 @@ func TestWriteLoop_PingsIdleClients(t *testing.T) {
 
 	h := New()
 	c := newFakeConn()
-	h.add(c)
+	h.add(c, "test")
 
 	require.Eventually(t, func() bool { return c.pingCount() >= 3 }, 2*time.Second, time.Millisecond,
 		"an idle client should still be pinged")
@@ -522,7 +568,7 @@ func TestWriteLoop_DropsClientWhosePingFails(t *testing.T) {
 	h := New()
 	c := newFakeConn()
 	c.failAfter = 1 // the catalog lands, then everything fails
-	h.add(c)
+	h.add(c, "test")
 	waitSent(t, c, 1)
 
 	require.Eventually(t, func() bool { return c.isClosed() }, 2*time.Second, time.Millisecond,
