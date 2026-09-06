@@ -281,3 +281,82 @@ All Go tests green (5 new: 2 decoder, 2 registry, 2 hub), `go vet` + `gofmt` cle
 on the extracted inline script, and a local run confirming the page serves with the third option. **NOT verified against live Kafka** — docker was
 down, so no merged record has ever actually been decoded by this app, and neither had the merger
 been run live when it was written. The first real test is a stack with the merger job submitted.
+
+---
+
+## 2026-09-06 — the freeze: one stalled browser stopped the whole server
+
+Reported symptoms: the aggregated view sometimes showed **one exchange** while `p1-asks`
+clearly held records from all of them; sometimes it showed **nothing at all**, with the
+browser's network inspector showing the websocket connected but **no frames arriving**; a
+container restart fixed it once and then stopped helping. All three were the same defect.
+
+### The mechanism (read this before touching `internal/hub`)
+
+`hub.send` wrote to the socket **while `h.mu` was held**, and nothing anywhere set a write
+deadline. gorilla's `WriteJSON` blocks indefinitely once the peer stops draining, so one slow
+browser parked a goroutine inside the shared mutex forever. Everything else then queued behind
+it:
+
+- `Publish` blocked → the Kafka poll loop blocked, because `Consumer.Run` calls `onRecord`
+  **synchronously** inside `EachRecord`. Both consumers, since they share one hub.
+- `add` blocked → a NEW browser got the 101 handshake (the upgrade happens before `add`) and
+  then **never a single frame**. That is the "ws shows nothing" symptom exactly.
+- The browser was left rendering whatever book it received last — often a **historical** one
+  from mid-replay, which is why the aggregated view sat on a single exchange while the topic
+  had newer, complete records.
+
+What made the browser stall in the first place was the aggregated consumer's `AtStart()`:
+`warmup.sh` puts **6h retention** on `p{id}-{side}` and `-merged`, so every restart replayed six
+hours of full order books at fetch speed and pushed each one at a page that re-renders the whole
+table per message. That is why restarting stopped helping — the restart *caused* the flood, and
+the backlog only grew.
+
+Nothing here was a Flink or Kafka fault. Both were doing their job.
+
+### What the fix is
+
+- **No socket write ever happens under `h.mu` again.** Each client has its own `writeLoop`
+  goroutine plus a `pending` queue, woken by a capacity-1 `wake` channel. Being the sole writer
+  for that conn is what now satisfies gorilla's no-concurrent-writes rule — the hub mutex used
+  to be what did that, and that is the trap to avoid re-introducing.
+- **The queue coalesces, it does not grow.** Every message carries a COMPLETE book or catalog,
+  so a newer one replaces the older for the same slot (`coalesce`): catalog replaces catalog,
+  update replaces update with the same `Book.Key()`, and a snapshot **drops every queued book
+  message** because it answers the client's whole selection. That bounds `pending` at ~4 entries
+  no matter how far behind the browser is — a slow client loses intermediate frames, never
+  correctness, and is never disconnected merely for being slow. **Do not "fix" this into an
+  unbounded buffered channel; the bound is the point.**
+- **Deadlines and ping/pong.** `writeWait` 10s per write; `pingPeriod` 25s / `pongWait` 60s, with
+  the read deadline and pong handler set on the concrete `*websocket.Conn` in `ServeWS` (which is
+  why they are deliberately NOT on the `conn` interface). Without the ping, a client watching a
+  quiet pair is never written to, so a half-open socket is never discovered. `pingPeriod` is a
+  `var` only so tests can drive that path.
+- `remove` is reached from both the read loop and the write loop, so `client.stop` is a
+  `sync.Once`. Closing `done` twice would panic.
+- **Consumers read from `AtEnd()` only — the user's explicit call (2026-09-06): "I need to read
+  only real time messages and not history messages."** The book no longer paints from replay on
+  a cold start; it fills from the next live record, and the `snapshot` reply covers whatever
+  arrived since the process started. The per-start consumer group name is now load-bearing: a
+  stable name would resume from committed offsets and bring the replay straight back.
+
+### Deliberately NOT done
+
+`hub.Publish` still overwrites `latest[key]` with no ordering guard. Adding an `EventTime`
+monotonicity check was considered and **rejected**: job 6 unions across exchanges, so its
+`event_time` is not monotonic per topic, and such a guard would drop good records and *cause*
+the stale-book symptom it looks like it prevents. The topics are 1 partition (`warmup.sh`), so a
+single consumer already sees them in order. If anyone ever raises the partition count, the fix
+belongs in the producer's partition key, not here.
+
+### Tests
+
+`internal/hub` has two test files on purpose: `hub_test.go` drives the hub through a fake conn
+(including one that *stalls* — `newStalledConn`/`waitParked`/`resume` make the stall
+deterministic rather than timing-dependent), and `hub_ws_test.go` drives it through a **real**
+websocket over `httptest`, which is the only way to cover the read deadline, the pong handler,
+and the fact that `*websocket.Conn` really satisfies `conn`. The two regression tests that name
+the bug are `TestPublish_DoesNotBlockOnAStalledClient` and `TestAdd_DoesNotBlockOnAStalledClient`.
+Assertions on `h.clients` must go through `clientCount(h)` — writer goroutines mutate that map,
+so a bare `len()` is a race in the test even when the code is correct. All green under `-race`,
+`-count=3`.

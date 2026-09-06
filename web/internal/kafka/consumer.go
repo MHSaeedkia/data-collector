@@ -33,24 +33,36 @@ type Consumer struct {
 }
 
 // NewAggregatedConsumer reads the aggregator's and the merger's output
-// from the earliest offset, so the current book renders on page load
-// (dev only — it replays the retention window each restart).
+// from the LATEST offset: live records only, no history.
+//
+// It used to start at the earliest offset so the book painted on page
+// load. That was a dev convenience and it became the app's worst failure
+// mode in production: warmup.sh keeps 6 hours on these topics, so every
+// restart replayed six hours of full order books at fetch speed and
+// pushed each one at the browser, which cannot render that fast. The
+// socket backed up and the whole server froze (see internal/hub). The
+// trade for reading live only is that a quiet pair shows nothing until
+// its next record; the hub's snapshot answer covers everything that has
+// arrived since the process started.
 func NewAggregatedConsumer(broker string) (*Consumer, error) {
-	return newConsumer(broker, "agg", aggregatedPattern, kgo.NewOffset().AtStart())
+	return newConsumer(broker, "agg", aggregatedPattern, kgo.NewOffset().AtEnd())
 }
 
-// NewSnapshotConsumer reads job 5's per-exchange books from the LATEST
-// offset, unlike the aggregated one. These topics carry a full book on
-// every event, one per exchange × pair, so replaying their retention
-// window at startup would cost far more than it is worth; the trade is
-// that an idle exchange shows nothing until its next event.
+// NewSnapshotConsumer reads job 5's per-exchange books, also from the
+// latest offset. These topics carry a full book on every event, one per
+// exchange × pair, so replaying their retention window at startup would
+// cost far more than it is worth.
 func NewSnapshotConsumer(broker string) (*Consumer, error) {
 	return newConsumer(broker, "ex", snapshotPattern, kgo.NewOffset().AtEnd())
 }
 
 // newConsumer connects with a fresh consumer group at the given offset.
-// The two families need separate clients because the reset offset is a
-// client-wide setting.
+// Both families now read from the end, so separate clients are no longer
+// forced by the client-wide reset offset — they stay apart only because
+// they are two independent subscriptions. The group name carries a
+// timestamp so every start is a new group: a stable name would resume
+// from committed offsets and reintroduce the backlog replay that reading
+// from the end exists to avoid.
 func newConsumer(broker, group, pattern string, offset kgo.Offset) (*Consumer, error) {
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(broker),
