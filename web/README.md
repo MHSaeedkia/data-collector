@@ -68,19 +68,31 @@ module proxy; run `go mod vendor` after changing dependencies.
   `AggregatedOrderBookEvent` yields one book, an `OrderBookSnapshot` yields two (one per side)
   with its record-level `exchange_id`/`simulation` copied onto every level, so everything past
   the decoder sees a single shape. Malformed/undecodable records are logged and skipped.
-- **Two Kafka consumers, with different offsets** (the reset offset is a client-wide setting,
-  so they can't share one client). The aggregated consumer subscribes `^p\d+-(asks|bids)$` from
-  the **earliest** offset, so the book shows on load. The per-exchange consumer subscribes
-  `^ex\d+-p\d+-orderbook-snapshot-flink$` from the **latest** offset: those topics carry a full
-  book on every event, one per exchange × pair, so replaying their retention window at startup
-  would cost far more than it is worth. The trade-off is that an idle exchange shows nothing
-  until its next event. Both use a fresh consumer group each start (dev only).
+- **Two Kafka consumers, both from the LATEST offset — live records only, never history.**
+  The aggregated consumer subscribes `^p\d+-(asks|bids)(-merged)?$`, the per-exchange one
+  `^ex\d+-p\d+-orderbook-snapshot-flink$`. These topics carry a full book on every event, so
+  replaying their retention window at startup costs far more than it is worth: the aggregated
+  consumer used to start at the earliest offset (so the book painted on load) and with the 6h
+  retention `warmup.sh` sets, every restart replayed six hours of order books straight at the
+  browser — which is what used to freeze the server (see the websocket note below). The
+  trade-off is that a quiet pair or exchange shows nothing until its next event; the `snapshot`
+  reply covers everything that has arrived since the process started. Both use a fresh consumer
+  group each start, which is what makes "latest" mean latest — a stable group would resume from
+  committed offsets and replay the backlog again.
 - **The server pushes each browser only the pair+exchange it selected.** The browser sends
   `{"type":"select","pair_id":N,"exchange_id":N}` (exchange `0` = aggregated) on connect and on
   every dropdown change; the server answers with a `snapshot` of what it holds and then
   `update`s as records arrive. Both dropdowns are filled from a `catalog` message (every market
   and exchange in postgres, re-sent only when it changes) — with server-side filtering the
   client can no longer infer the lists from the data it receives.
+- **Websocket writes never happen under the hub's lock.** Each client has its own writer
+  goroutine and a small outbound queue that *coalesces* — every message carries a complete book
+  or a complete catalog, so a newer one replaces the older one for the same slot instead of
+  queueing behind it. A browser that falls behind therefore skips frames and stays correct,
+  rather than backing the socket up. Writes carry a deadline and idle clients are pinged, so a
+  peer that has silently gone away is dropped instead of being written to forever. Before this,
+  one stalled socket blocked `Publish` under the shared mutex and froze the whole server: no
+  updates for anyone, and new browsers got the websocket handshake followed by silence.
 - New pairs created after the server starts are picked up on restart (the regex is matched
   against topics that exist at subscribe time).
 - The UI starts and serves immediately even if Kafka or postgres is unreachable; it logs and

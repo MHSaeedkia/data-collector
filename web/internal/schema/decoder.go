@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -265,5 +266,14 @@ func (d *Decoder) schemaByID(id uint32) (avro.Schema, error) {
 	d.mu.Lock()
 	d.schemas[id] = sch
 	d.mu.Unlock()
+	// Once per schema id for the life of the process (ids are immutable,
+	// so this cache never invalidates). It proves the registry is
+	// reachable and names which record shapes are actually flowing —
+	// the two things a "the page is empty" report cannot tell you.
+	name := "(unnamed schema)"
+	if named, ok := sch.(avro.NamedSchema); ok {
+		name = named.FullName()
+	}
+	log.Printf("schema: fetched id %d from the registry: %s", id, name)
 	return sch, nil
 }

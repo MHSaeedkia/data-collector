@@ -43,6 +43,29 @@ public class AggregatorJob {
         KafkaSource<OrderBookSnapshot> source = KafkaSource.<OrderBookSnapshot>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
+                // Direct-memory guard, added 2026-09-06 after orderbook-merger died of
+                // `OutOfMemoryError: Direct buffer memory` (48 MB requested, 252 MB already
+                // allocated, 287 MB limit). Nothing here is a leak — it is sizing. This source
+                // subscribes by PATTERN across every `ex{id}-p{id}-orderbook-snapshot-flink`
+                // topic — one per subscribed (exchange, pair), the widest fan-in on the
+                // platform — and the consumer defaults are fetch.max.bytes 50 MB with
+                // max.partition.fetch.bytes 1 MB, so the broker will fill a single response to
+                // ~50 MB of DIRECT buffers.
+                //
+                // The budget it has to fit in is small and SHARED. Flink derives
+                // MaxDirectMemorySize from the TaskManager sizing: at docker-compose.yml's
+                // `process.size: 2g` that is framework.off-heap 128m + task.off-heap 0 + network
+                // 158.7m = 286.7m — exactly the limit in the crash — and Flink's own network
+                // memory has first claim on 158.7m of it. The dev stack runs ONE TaskManager
+                // with 8 slots, so all 8 jobs share what is left. One 50 MB fetch does not fit.
+                //
+                // 8 MB per response, 512 KB per partition. Records here are order books of a few
+                // tens of KB, so this costs round trips, not throughput, and a record larger than
+                // the per-partition cap is still returned whole (KIP-74) rather than stalling the
+                // consumer. Raise `taskmanager.memory.task.off-heap.size` instead of these only
+                // if a measurement says the fetches are genuinely too small.
+                .setProperty("fetch.max.bytes", "8388608")
+                .setProperty("max.partition.fetch.bytes", "524288")
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
                 .setValueOnlyDeserializer(new OrderBookSnapshotDeserializer(schemaRegistryUrl))

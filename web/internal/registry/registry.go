@@ -21,6 +21,14 @@ type Registry struct {
 	mu        sync.RWMutex
 	markets   map[int]domain.Market
 	exchanges map[int]domain.Exchange
+	// stale records that a load last came back empty, so the "serving
+	// old data" warning is printed on the TRANSITION rather than on every
+	// tick. Refresh runs every 10s; a line per tick per map would bury the
+	// websocket and consumer lines this log exists to make readable.
+	stale map[string]bool
+	// lastErr is the previous failure per load, so a repeating error is
+	// reported once rather than on every tick.
+	lastErr map[string]string
 }
 
 func New(repo ports.MarketRepository) *Registry {
@@ -28,6 +36,8 @@ func New(repo ports.MarketRepository) *Registry {
 		repo:      repo,
 		markets:   map[int]domain.Market{},
 		exchanges: map[int]domain.Exchange{},
+		stale:     map[string]bool{},
+		lastErr:   map[string]string{},
 	}
 }
 
@@ -35,24 +45,56 @@ func New(repo ports.MarketRepository) *Registry {
 // its load returned something, so a transient repository error doesn't
 // blank out display data already held.
 func (r *Registry) Refresh(ctx context.Context) {
-	markets, err := r.repo.LoadMarkets(ctx)
-	if err != nil {
-		log.Printf("markets query error: %v", err)
-	}
-
-	exchanges, err := r.repo.LoadExchanges(ctx)
-	if err != nil {
-		log.Printf("exchanges query error: %v", err)
-	}
+	markets, marketsErr := r.repo.LoadMarkets(ctx)
+	exchanges, exchangesErr := r.repo.LoadExchanges(ctx)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(markets) > 0 {
-		r.markets = markets
+	r.logErr("markets", marketsErr)
+	r.logErr("exchanges", exchangesErr)
+	r.markets = adopt(r, "markets", markets, r.markets)
+	r.exchanges = adopt(r, "exchanges", exchanges, r.exchanges)
+}
+
+// logErr prints a query failure once per run of identical failures, not
+// once per 10s tick. A postgres outage otherwise repeats the same
+// multi-line pgx error every tick for as long as it lasts, which drowns
+// the websocket and consumer lines that this log exists to surface.
+// Callers hold the write lock.
+func (r *Registry) logErr(what string, err error) {
+	if err == nil {
+		if prev := r.lastErr[what]; prev != "" {
+			r.lastErr[what] = ""
+			log.Printf("registry: %s query is working again", what)
+		}
+		return
 	}
-	if len(exchanges) > 0 {
-		r.exchanges = exchanges
+	if msg := err.Error(); msg != r.lastErr[what] {
+		r.lastErr[what] = msg
+		log.Printf("registry: %s query error: %v", what, err)
 	}
+}
+
+// adopt takes the freshly loaded map if the load returned anything, and
+// otherwise keeps what is already held. Keeping the old map is the right
+// behaviour but an invisible one: without a word in the log, a registry
+// that has been serving hours-old names looks exactly like a healthy one.
+// The word is said once when it goes stale and once when it recovers.
+func adopt[T any](r *Registry, what string, loaded, held map[int]T) map[int]T {
+	if len(loaded) == 0 {
+		if !r.stale[what] {
+			r.stale[what] = true
+			log.Printf("registry: %s load returned nothing — SERVING THE PREVIOUS %d until it recovers", what, len(held))
+		}
+		return held
+	}
+	if r.stale[what] {
+		r.stale[what] = false
+		log.Printf("registry: %s load recovered — %d now", what, len(loaded))
+	} else if len(loaded) != len(held) {
+		log.Printf("registry: %d %s (was %d)", len(loaded), what, len(held))
+	}
+	return loaded
 }
 
 // Catalog is the full id -> display listing the browser needs to build
