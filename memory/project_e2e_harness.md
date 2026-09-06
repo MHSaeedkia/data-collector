@@ -827,3 +827,37 @@ exactly: 8 main-stream records (6 books + 2 resets), rejects `sequence_gap`/`awa
 snapshot-replaces / delta-merges rules and were never observed** — jobs 1/3/4/5/6 are unproven here.
 Same standing caveat as 48. A hand-computed scenario's failure mode is passing for the wrong reason,
 so run it before trusting it.
+
+## ex8 scenarios converted to the okx `books` channel (2026-09-05, `feat/ex8-okx-books-channel`)
+
+All **7** ex8 scenarios in `data_ex8.go` (`Ex8UpdateBeforeSnapshot`, `Ex8HappyPath`,
+`Ex8SequenceGap`, `Ex8StaleDuplicate`, `Ex8PrecisionDust`, `Ex8NoiseFrames`,
+`Ex8RestSnapshotResync`) were rewritten for the new wire shape. **Every expected outcome —
+`WantSnapshots`, `WantRejects`, `WantControlCommands`, `WantAggregated` — is UNCHANGED.** Only the
+sources changed, because only the sequencing mechanism changed; each scenario's intent is preserved
+under `prevSeqId` chaining instead of `ts + 300`.
+
+What changed in each source: `arg.channel` `books-grouped` → `books` and `arg.grouping` dropped;
+levels 2-element → 4-element `[price, qty, "0", orderCount]` (a qty-"0" delete carries count "0",
+matching the wire); and each WS book gains `checksum`/`seqId`/`prevSeqId`. **`ts` values were left
+exactly as they were** — they are the event time and the `EventTime` assertions depend on them,
+which is also why the ts values still step by 300 while the seqId steps deliberately do not.
+
+**The chains were hand-assigned per scenario, not generated** — that is the part a script cannot do,
+since each scenario's meaning lives in whether the chain holds:
+
+- `Ex8HappyPath` uses jumps **0/4/7/2** — three different jumps, so no constant would pass. That is
+  the scenario that would catch a regression to a fixed jump.
+- `Ex8SequenceGap` and `Ex8RestSnapshotResync` break the chain by naming a `prevSeqId` never
+  accepted (…559 and …563 against a lastSeq of …551), rather than by a large ts step.
+- `Ex8StaleDuplicate`'s source 03 is a verbatim replay of 02 (same `seqId` AND `prevSeqId`), and its
+  source 04 is a snapshot whose `seqId` is BELOW lastSeq — both still `stale_or_duplicate`.
+- `Ex8RestSnapshotResync` source 05 (the REST body) keeps its real captured `seqId` 4428333610 and
+  gains nothing: it has no `prevSeqId`, cannot be chained, and must stay null-seq. Its doc comment
+  was rewritten — the old "1e9 vs 1e12 different number spaces" reason is GONE and wrong; the
+  reason now is that a snapshot's seqId is not any later update's prevSeqId.
+
+⚠ **NOT RUN LIVE.** `go build`/`go vet`/`gofmt`/`go test ./scenario/...` all clean, but NiFi is
+still implementing its side, so `ex8-raw` on the dev server still carries `books-grouped` and all
+7 would fail against it today. Run them once NiFi's change lands — that is the real verification,
+and `Ex8RestSnapshotResync`'s one-reject/one-command count is the assertion most worth watching.

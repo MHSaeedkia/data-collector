@@ -739,91 +739,88 @@ for the pipeline's arithmetic, **not captures** — do not cite them as wire evi
 
 ## ex8-raw — okx
 
-**Captured 2026-07-14** (supplied by team — which also settles the earlier "no `ex8-raw`
-topic yet" caveat: the feed is live). Regime **re-confirmed: snapshot/update** — "okx has
-both" (user statement). The SECOND exchange in scope with true delta semantics (after
-ex6/bybit); the discriminator is `action: "snapshot" | "update"`.
+**Channel CHANGED 2026-09-05: `books-grouped` → `books`, on the PUBLIC endpoint.** The feed now
+comes from `wss://ws.okx.com:8443/ws/v5/public`, channel `books`, replacing the grouped book on
+okx's undocumented `wss://wspri.okx.com:8443/ws/v5/ipublic`. Everything below describes the new
+shape; the old one is summarised at the end of this section so old captures stay readable.
 
-**Sequence rule (user-confirmed 2026-07-14): the sequence id is `ts`, and the expected jump
-is 300** — the epoch-millis timestamp inside the data object doubles as the sequence
-(`"1784028204900"` → `"1784028205200"`, exactly +300 in the samples below; i.e. a fixed
-300 ms publish cadence). Note it is a **string** on the wire — parse to long for the gap
-math. There is no `u`/`seq`-style counter field at all.
+**Why the switch (measured, see [[project_pair_extractor]] § ex8):** `books-grouped` carried NO
+counter at all and had to be sequenced by its `ts`, which advances in exact multiples of 300 ms but
+SKIPS steps — only 79.5% of live transitions were `+300`, so ~20% of updates dead-lettered as false
+`sequence_gap`s and `ex8-p1` was accepting **3.8%** of its traffic. No tolerance could fix it (every
+window from `±0` to `±299` scored the identical 79.52%). `books` carries a real chained counter, so
+contiguity becomes exact instead of inferred.
 
-Snapshot sample (pretty-printed; level arrays trimmed — the real message carried
-**150 levels per side** (both sides exactly 150 here — likely a fixed depth, unverified)):
+**Sequence rule: `seqId`, with a DYNAMIC jump of `seqId - prevSeqId`.** Every frame names its own
+predecessor — `prevSeqId` is the `seqId` of the message before it. Stamping the jump per message
+makes job 2's `seq == lastSeq + jump` reduce algebraically to **`prevSeqId == lastSeq`**, okx's own
+documented rule, enforced exactly with no window and no tolerance. This is the ex7/ompfinex pattern
+(`u - U`), the platform's second dynamic jump. Measured over **6,516 consecutive live transitions on
+5 markets: 6,516 chained, 0 broken**, while the raw `seqId` step took 90–172 DISTINCT values per
+market (3 … 960) — so no fixed jump could ever have worked here.
+
+Snapshot sample (captured live 2026-09-05, `ZEC-USDT`; level arrays trimmed from the real
+**400 per side** — every remaining value verbatim). This is also the fixture
+`ex8-snapshot.json`:
 
 ```json
 {
-  "id": "a47f0b25-3c9e-4681-9d40-7b2c5e83f16d",
-  "simulation": 1,
+  "id": "a304f0d3-8062-48ab-b971-fc638d9f3f79",
+  "simulation": 0,
   "arg": {
-    "channel": "books-grouped",
-    "instId": "BTC-USDT",
-    "grouping": "1"
+    "channel": "books",
+    "instId": "ZEC-USDT"
   },
   "action": "snapshot",
   "data": [
     {
       "asks": [
-        ["62770", "2.21924167"],
-        ["62771", "0.17447383"],
-        ["62772", "0.19067482"]
+        ["1012.6", "0.07818", "0", "1"],
+        ["1012.62", "0.07406", "0", "1"],
+        ["1012.63", "0.8", "0", "1"]
       ],
       "bids": [
-        ["62769", "0.50795335"],
-        ["62768", "0.02744953"],
-        ["62767", "0.20630833"]
+        ["1012.51", "0.0322", "0", "1"],
+        ["1012.5", "0.10706", "0", "2"],
+        ["1012.4", "0.14797", "0", "2"]
       ],
-      "ts": "1784028204900"
+      "ts": "1788613464301",
+      "checksum": 0,
+      "prevSeqId": -1,
+      "seqId": 4429784547
     }
   ]
 }
 ```
 
-Update sample (verbatim, complete — updates carry ONLY the changed levels; note the
-qty-`"0"` delete at ask `62773` and the brand-new ask level `62931`):
+Update sample (verbatim and complete — **the frame that immediately followed the snapshot above on
+the live socket**, which is why its `prevSeqId` is that snapshot's `seqId`). Fixture
+`ex8-update.json`:
 
 ```json
 {
   "id": "5c1d8e30-6b74-42af-8e95-0a3f7d21b4c6",
-  "simulation": 1,
+  "simulation": 0,
   "arg": {
-    "channel": "books-grouped",
-    "instId": "BTC-USDT",
-    "grouping": "1"
+    "channel": "books",
+    "instId": "ZEC-USDT"
   },
   "action": "update",
   "data": [
     {
       "asks": [
-        ["62771", "0.29045069"],
-        ["62772", "0.12"],
-        ["62773", "0"],
-        ["62777", "0.35307699"],
-        ["62779", "1.33057882"],
-        ["62780", "0.33476925"],
-        ["62784", "0.8498818"],
-        ["62789", "0.01864785"],
-        ["62797", "2.14864649"],
-        ["62802", "1.17385946"],
-        ["62809", "0.51130367"],
-        ["62814", "0.02415278"],
-        ["62822", "0.56817495"],
-        ["62827", "0.19123979"],
-        ["62931", "0.10148108"]
+        ["1013.67", "0", "0", "0"],
+        ["1013.68", "6.6016", "0", "1"]
       ],
       "bids": [
-        ["62769", "0.55175335"],
-        ["62767", "0.28491215"],
-        ["62765", "0.15675841"],
-        ["62762", "1.30193303"],
-        ["62758", "0.09900068"],
-        ["62757", "0.00001599"],
-        ["62750", "1.31062803"],
-        ["62678", "0.0092566"]
+        ["1011.53", "6.64926", "0", "2"],
+        ["1011.45", "0", "0", "0"],
+        ["973.84", "0.05859", "0", "1"]
       ],
-      "ts": "1784028205200"
+      "ts": "1788613464401",
+      "checksum": 0,
+      "seqId": 4429784551,
+      "prevSeqId": 4429784547
     }
   ]
 }
@@ -831,35 +828,66 @@ qty-`"0"` delete at ask `62773` and the brand-new ask level `62931`):
 
 Parsing notes (job 1):
 
-- **NOT Centrifugo — same envelope family as bitget (ex5)**: `arg` / `action` / `data`-ARRAY.
-  Differences from bitget: no top-level `ts`, no `instType`, and the price-grouping bucket is
-  spelled `grouping` rather than `params.scale`. Not a new envelope shape — a variant of ex5's.
-  Since ex5's 2026-08-22 revision the two are closer still: both are `snapshot`/`update` delta
-  feeds keyed on a string `ts`. The one rule that differs is the cadence — okx's 300 ms is
-  exact, while bitget's is a variable wall clock needing a `650 ± 110` window.
-- **Market key**: `arg.instId` (`BTC-USDT` → `exchange_markets.market`) — note the DASH,
-  unlike every other exchange's `BTCUSDT`. Channel identity is `arg.channel`
-  (`books-grouped`) + `arg.grouping` (`"1"`): a price-GROUPED book with bucket size 1 —
-  which is why every price in the sample is a bare integer.
-- **`action` is the regime discriminator**: `"snapshot"` (full book) or `"update"` (only
-  changed levels — may include deletes and brand-new prices). This is what job 2's
-  snapshot/update classification reads. (Third exchange with an explicit discriminator,
-  after bitget's `action` and bybit's `type` — and since 2026-08-22 bitget's `action` carries
-  both values too, so this is no longer the only `action`-based delta feed.)
-- **`data` is an ARRAY** wrapping a single book object (like bitget) — parser must unwrap.
-  Whether >1 element can occur is unverified.
-- **Sides are `asks` / `bids`**, `[price, qty]` **string** pairs ✅ (no JSON-number
-  hazard). Asks price-ascending, bids price-descending — best-first both sides, on snapshot
-  AND update. Prices here are integers because of grouping `"1"`, not a wire rule.
-- **Delete = qty `"0"` CONFIRMED on the wire** (ask `62773` in the update) — the first
-  captured delete frame in the whole sample set. Job 5 must remove that level; the update
-  also inserts levels absent from the snapshot (`62931`).
-- **Sequence**: `ts` with jump 300 (see rule above) — a time-based sequence, unlike bybit's
-  counter. Second exchange where job 2's `sequence_id`/`sequence_jump` gap rules apply for
-  real; per-exchange config must support both a counter (`u`, jump 1) and a millis
-  timestamp (`ts`, jump 300).
-- The inner `ts` is the ONLY timestamp on the message (string epoch-millis) — it is both
-  the event time and the sequence id.
+- **Envelope unchanged** — still the bitget-family `arg` / `action` / `data`-ARRAY, so the
+  discriminator against the REST body (absence of `arg`) is untouched. What changed inside is the
+  `arg` (no `grouping` any more) and the per-book object (three new fields).
+- **Market key**: `arg.instId` (`ZEC-USDT` → `exchange_markets.market`) — note the DASH, unlike
+  every other exchange's `BTCUSDT`. `arg` now has exactly **two** keys, `channel` and `instId`;
+  `grouping` is gone with the grouped channel.
+- **`action` is the regime discriminator**: `"snapshot"` or `"update"`. **A snapshot arrives on
+  every fresh subscribe** and carries `prevSeqId: -1` — a sentinel, not a sequence. Verified on
+  5/5 markets: one snapshot each, at index 0, then updates only.
+- **Levels are FOUR-element string arrays on BOTH streams now** — `[price, qty, "0", orderCount]`.
+  The WS frame used to send two; it now matches the REST body exactly, so `Levels.fromStringPairs`
+  (reads elements 0–1, ignores the rest) covers both with no special-casing. Observed 54,101 levels,
+  **100% four-element**.
+- **Delete = qty `"0"`** — present on both sides in the update sample (ask `1013.67`, bid
+  `1011.45`). 13,480 deletes in the capture. Job 5 must remove those levels.
+- **Both `asks` and `bids` are ALWAYS present**, but either may be an empty array `[]` when that
+  side did not change (3,413 frames changed both sides, 1,900 asks-only, 1,208 bids-only; **zero**
+  frames omitted a key). This differs from the old grouped channel, which sent `null` for an absent
+  side. The parser's `has()` checks still hold: present-but-empty → empty list, missing → null.
+- **Depth**: snapshot is exactly **400 levels per side** on all 5 captured markets. Updates carry
+  only changed levels (up to 124 asks / 109 bids observed).
+- **Sequence = `seqId`** (JSON **integer**, order 1e10 — not a string, unlike `ts`), jump
+  `seqId - prevSeqId`. `prevSeqId` is likewise an integer. A frame missing either is dropped whole:
+  without both, the chain cannot be expressed and job 2 would silently mis-validate.
+- **`ts` is the event time only** (string epoch-millis, as before) — it is no longer the sequence.
+  It is strictly monotonic per market on the capture (0 backwards, 0 equal across 6,516
+  transitions), so it remains a sound event-time clock.
+- **`checksum`** is okx's CRC32 book-integrity value. **Ignored** — job 5 builds the book and
+  nothing in the platform verifies a checksum (same treatment as ex5's). Observed `0` on all 6,521
+  captured frames, so do not rely on it being populated.
+- **Two okx-documented edge cases need no special-casing.** A no-change keepalive repeats the
+  counter (`seqId == prevSeqId`) → jump 0 → job 2 accepts `seq == lastSeq` and the book is left
+  alone, which is what a no-op means. A counter RESET (okx may restart `seqId` lower after
+  maintenance) breaks the chain → `sequence_gap` → book emptied → control plane asks, which is the
+  correct response to a reset. Neither was observed in the 3-minute capture; both are pinned by
+  unit tests.
+
+**⚠ For the NiFi team — the resync answer.** Prefer a **RESUBSCRIBE** over the REST body when
+answering a `snapshot_request`: a fresh subscribe returns `action: "snapshot"` with 400 levels **on
+the feed's own counter**, so job 2 re-seeds `lastSeq` exactly and the next update chains straight to
+it. The REST body cannot do that (see the `seqId` note in the REST section below) and costs a
+baseline gap every time. The REST branch is kept as a working fallback, not as the preferred path.
+
+<details>
+<summary>The previous <code>books-grouped</code> shape (retired 2026-09-05) — for reading old captures</summary>
+
+Captured 2026-07-14 and 2026-09-05 from `wss://wspri.okx.com:8443/ws/v5/ipublic`, channel
+`books-grouped`, with `arg.grouping` (`"1"` in the 2026-07-14 capture, `"0.1"` live in September —
+it is channel identity, never parsed). Levels were **two**-element string pairs, up to 150 per side,
+and the per-book object carried **only** `asks`/`bids`/`ts` — no counter of any kind. The sequence
+was `ts` itself with a fixed jump of 300. An absent side was `null`, not `[]`.
+
+That channel does not exist on okx's public API (`60018 … doesn't exist` on both `/ws/v5/public`
+and `/ws/v5/business`); it was only ever served by the `ipublic` endpoint.
+
+The 2026-09-05 measurement that retired it, and the "do the WS and REST books share a price grid?"
+question it raised — **answered: yes, they matched on all 23 subscribed markets** — are written up
+in [[project_pair_extractor]] § ex8. The grid question is moot for `books`, which is not grouped.
+
+</details>
 
 ### The REST snapshot — ex8's SECOND stream (added 2026-09-05, captured from `ex8-raw`)
 
@@ -896,32 +924,36 @@ see [[project_pair_extractor]] § ex8 for what that cost.
   covers both. (The third element is okx's deprecated liquidated-order count, always `"0"`.)
 - **`pair` and `action` are at the END of the object**, after `data`. A capture truncated mid-book
   looks like it has neither — that misread cost a round trip on 2026-09-05.
-- **`seqId` — SETTLED 2026-09-05: only the REST body has it, so it cannot be used.** The REST body
-  carries `seqId: 4428333610` alongside `ts`, which briefly looked like the right ordering field for
-  the whole exchange. **A live WS capture the same day settles it: `books-grouped` frames carry
-  `ts` and NOTHING else — no `seqId`, no `prevSeqId`, no counter of any kind**, confirming the
-  2026-07-14 reading. A sequence only one of the two streams carries cannot order the other, so
-  `ts` stays the sequence and the REST snapshot stays **null-seq** — `seqId` (order 1e9) against the
-  WS `ts` (order 1e12) are different number spaces, and seeding one against the other is an instant
-  false gap. **`seqId` must be IGNORED, not adopted.**
+- **`seqId` — the body still stays NULL-SEQ, but the REASON changed with the `books` channel
+  (2026-09-05, second revision).** It is no longer that only one stream has a counter: the WS side
+  is now sequenced by `seqId` too, and it is the **same counter** — the REST `ZEC-USDT` body read
+  `4428333610` where a WS `ZEC-USDT` frame the same day read `4429784547`, the same space, later
+  and larger. The reason it still cannot seed `lastSeq` is subtler and permanent: **a snapshot's
+  `seqId` is not any later update's `prevSeqId`.** The counter advances between NiFi's fetch and the
+  next WS frame, so seeding it would break the very next chain check rather than repair it. Null
+  hands job 2 the `baselinePending` bootstrap instead — order this body by EVENT TIME, then let the
+  first WS update after it adopt its own `seqId` as the baseline.
+  **This is exactly why a RESUBSCRIBE is the better resync answer** (see the WS section above): the
+  WS snapshot re-seeds the counter exactly and costs no baseline gap at all.
 
-### ⚠ `grouping` is NOT `"1"` on the live feed, and the two streams may not share a price grid
+### ✅ CLOSED — the price-grid question, answered then made moot
 
-The 2026-07-14 capture had `arg.grouping: "1"` and integer prices; the **2026-09-05 live capture has
-`"0.1"`** (`BTC-USDT`, prices like `79632.8`). Nothing parses `grouping` — it is channel identity
-only — so this breaks no code, but every "prices here are integers because of grouping" note above
-is describing one historical subscription, not a wire rule.
+**Answered 2026-09-05 (measured), then retired the same day (channel switch).** The old worry was
+that the WS channel was price-GROUPED while the REST depth endpoint is not, so after a resync the
+book could hold REST prices the WS deltas could never address (a delete at `1011.9` not removing
+`1011.99`). The comparison needed a WS frame and a REST body **for the same market**, which no
+capture had.
 
-**The open question it raises, which is NOT answered by any capture we have.** The WS channel is
-price-GROUPED; the REST depth endpoint is not. On `BTC-USDT` that is harmless because grouping `0.1`
-IS bitcoin's tick, so the grid is unchanged. But the REST `ZEC-USDT` body carries **2-decimal**
-prices (`1011.99`, `1012.06`). If ZEC is subscribed with a grouping COARSER than its tick, then after
-a resync the book holds REST prices the WS deltas can never address — a delete at `1011.9` will not
-remove `1011.99`, and the two grids accumulate side by side until the next snapshot.
+It was measured over all 23 subscribed markets, both streams each: **every market's `arg.grouping`
+equalled the tick its REST body quotes at** — BTC/BNB `0.1`, ETH/SOL/AAVE/OKB/**ZEC** `0.01`,
+AVAX/GRAM/HYPE/LINK/NEAR/UNI `0.001`, ADA/DOT/SUI/WLD/XRP `0.0001`, DOGE/TRX/XLM `0.00001`,
+PEPE/SHIB `1e-9`. No mismatch anywhere; the ZEC worry was unfounded, since ZEC's grouping IS two
+decimals. *(Method caveat: the grid was inferred from the decimal places of quoted top-of-book
+prices, so it is a lower bound on coarseness — it agreed with `grouping` on all 23, which is what
+makes it convincing.)*
 
-**To check: capture a WS frame for a market whose tick is finer than its grouping** and compare the
-price granularity against that market's REST body. We have BTC's WS and ZEC's REST — never both for
-one market, which is exactly the comparison needed.
+**And it is now moot regardless: `books` is not a grouped channel**, so there is no second grid and
+no `grouping` field. Kept here only so the question is not re-opened from an old capture.
 
 ## ex9-raw — lbank
 

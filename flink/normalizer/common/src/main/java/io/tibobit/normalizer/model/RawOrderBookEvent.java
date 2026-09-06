@@ -12,8 +12,12 @@ import java.util.List;
  *       Never conflate the two.</li>
  *   <li>{@code sequenceId} nullable: null = the feed has no ordering field at all (ex3 only) —
  *       the type validator passes such events through unchecked.</li>
- *   <li>{@code sequenceJump}: &gt;0 = delta feed, gap rule {@code seq == last + jump}
- *       (ex6=1, ex8=300, ex5=600); 0 = snapshot feed — out-of-order check only.</li>
+ *   <li>{@code sequenceJump}: &gt;0 = delta feed, gap rule {@code seq == last + jump}. Usually a
+ *       constant from the exchange's cadence (ex6=1, ex5=650), but it may be stamped PER MESSAGE
+ *       from a frame that names its own predecessor — ex7 ({@code u - U}) and ex8/okx
+ *       ({@code seqId - prevSeqId}), where the rule reduces to "the predecessor it names is the
+ *       last one we accepted". 0 = snapshot feed, or a snapshot on a delta feed — out-of-order
+ *       check only.</li>
  *   <li>{@code sequenceJumpTolerance}: half-width of the accepted window around
  *       {@code sequenceJump}, so the rule is really
  *       {@code last + jump - tol <= seq <= last + jump + tol}. 0 everywhere except ex5/bitget,

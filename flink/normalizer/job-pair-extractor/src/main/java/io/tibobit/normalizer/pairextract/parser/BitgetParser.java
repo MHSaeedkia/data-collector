@@ -31,9 +31,11 @@ import java.util.List;
  * NOT monotonic and NOT usable as a sequence.
  *
  * <p>So the sequence id of a WS UPDATE is the inner {@code ts} — the STRING epoch millis that is
- * also the event time, as on ex8/okx. Unlike okx's exact 300 ms cadence bitget's is a wall clock
- * on a variable cadence, so the event carries a wide {@code sequenceJumpTolerance} and job 2
- * checks a window rather than an equality. See {@link #JUMP_MS}.
+ * also the event time. bitget's is a wall clock on a variable cadence, so the event carries a wide
+ * {@code sequenceJumpTolerance} and job 2 checks a window rather than an equality. See
+ * {@link #JUMP_MS}. <b>ex5 is now the ONLY exchange sequenced by a timestamp</b> — ex8/okx used to
+ * be the other one, until 2026-09-05 moved it to the {@code books} channel's real chained counter
+ * (see {@link OkxParser}); a timestamp is a last resort, not a pattern to copy.
  *
  * <p><b>REVISED 2026-08-23 (2) — measured against the live dev feed, and both numbers were
  * wrong.</b> 4569 consecutive {@code ex5-raw} frames over 34 minutes, BTCUSDT only:
