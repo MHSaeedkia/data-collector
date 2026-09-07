@@ -7,7 +7,7 @@ import java.util.List;
 
 /**
  * ex6 bybit — TWO raw streams share the {@code ex6-raw} topic (sample-raw-data.md § ex6), the
- * same REST+WS split ex1, ex2 and ex5 have:
+ * same REST+WS split ex1, ex2 and ex8 have (ex5 had it too until 2026-09-07):
  *
  * <ul>
  *   <li><b>WebSocket feed</b>: bybit's own {@code topic}/{@code ts}/{@code type}/{@code data}/
@@ -20,8 +20,9 @@ import java.util.List;
  *       below.</li>
  * </ul>
  *
- * <p><b>The discriminator is clean here</b>, unlike ex5 (where {@code action} reads "snapshot" on
- * both streams and only the shape of {@code data} separates them): the REST body carries the book
+ * <p><b>The discriminator is clean here</b>, unlike ex5 as it then was (where {@code action} read
+ * "snapshot" on both streams and only the shape of {@code data} separated them): the REST body
+ * carries the book
  * under {@code result} and the WS frame under {@code data}, and the WS frame has no {@code action}
  * field at all. An error body is discarded by the same shape whitelist — bybit returns
  * {@code "result": {}}, which has no {@code a}/{@code b} arrays, so {@code retCode}/{@code retMsg}
@@ -44,10 +45,10 @@ import java.util.List;
  *
  * <p>Event time is {@code result.cts} — the matching-engine time, the same field the WS branch
  * reads, so both ex6 streams are on one event-time clock. The sibling {@code result.ts} (gateway)
- * and the top-level {@code time} (API round trip, ex5's ignored {@code requestTime}) are metadata.
+ * and the top-level {@code time} (API round trip) are metadata.
  *
  * <p><b>Levels are string pairs on BOTH streams</b> — no JSON-number hazard anywhere on ex6,
- * unlike ex5 whose REST body switched to numeric literals.
+ * unlike ex4, whose levels are numeric literals.
  */
 public class BybitParser implements RawExchangeParser {
 
@@ -66,7 +67,7 @@ public class BybitParser implements RawExchangeParser {
      * The REST depth response. Both sides are required: this is a full book, never a per-side
      * snapshot, so a body missing either side is dropped rather than half-applied. The market key
      * is {@code result.s} — bybit's own symbol, which keeps the key derivation identical to the WS
-     * branch; NiFi's injected {@code pair} is redundant here (ex1/ex2/ex5 need theirs because
+     * branch; NiFi's injected {@code pair} is redundant here (ex1/ex2/ex8 need theirs because
      * those REST bodies carry no symbol at all).
      */
     private List<ParsedBookEvent> parseRestSnapshot(JsonNode root) {

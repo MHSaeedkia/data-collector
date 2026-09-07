@@ -1029,3 +1029,58 @@ stack** — see the same memory section for the run and what it did not cover.
       direct budget and one heap; prod runs 4 TaskManagers precisely to bound this blast radius. The
       dev file cannot simply grow (it runs on 5+ boxes and must stay host-agnostic), so the dev
       server may want a `docker-compose.override.yml` of its own.
+
+## ex5/bitget back to `books50` — snapshot-only, one stream (2026-09-07)
+
+Branch `feat/ex5-bitget-books50-snapshot-only`. The collector moved off the `depth` channel and
+the REST depth poller was switched off, so the 2026-08-22 and 2026-08-23 reworks are undone. See
+the dated § in `memory/project_pair_extractor.md`.
+
+- [x] **`BitgetParser` rewritten to the snapshot-only `books50` shape** — `seq` (integral) as the
+      sequence id at jump 0, event time = inner STRING `ts`, BOTH sides required, `pseq` ignored.
+      Effectively the parser from `git show b1bbf96^`, with a javadoc that says what changed.
+- [x] **REST branch DELETED** (not left as dead code, user decision). `ex5-rest-snapshot.json` and
+      `ex5-update.json` fixtures removed; `BitgetParserTest` rewritten (4 tests) with explicit
+      cases proving `action:"update"`, a half book and the retired REST body are all dropped.
+- [x] **Job 2 unchanged in behaviour** — only comments. The snapshot branch already handled this.
+- [x] **`sequence_jump_tolerance` kept as a no-op** across the schema, `RawOrderBookEvent` and
+      `TypeValidateFunction`; every claim that ex5 uses it was corrected. `TypeValidateFunctionTest`'s
+      `bitget(...)` helper is now `tolerantJump(...)` on synthetic exchange id 99, same assertions.
+- [x] **e2e: 26/27/31 deleted (numbers retired), 25 renamed to `Ex5SnapshotStream`, 28/29/30 rewired,
+      `62-ex5-stale-seq` appended.** Every ex5 scenario asserts an empty control stream.
+- [x] **`sample-raw-data.md` § ex5 rewritten**, with the retired `depth`+REST shape kept at the end
+      of the section as history (it is why ex6/ex8 REST snapshots are null-seq).
+- [x] **292 normalizer tests green; e2e build/vet/gofmt/`go test ./...` clean.** Use
+      `JAVA_HOME=$(/usr/libexec/java_home -v 21)` — the repo's jacoco cannot instrument JDK 25.
+
+- [ ] **⚠ NOT RUN LIVE.** Docker was down, so no e2e scenario was executed and no mutation check was
+      done. Run the ex5 block (25, 28, 29, 30, 62) against a provisioned stack before merging, and
+      check `ex5-raw` on the dev server actually carries `books50` frames with `seq` — the whole
+      change rests on one sample plus the user's word.
+- [ ] **⚠ NiFi must stop polling bitget's REST depth endpoint, if it has not already.** Job 1 has no
+      branch for that shape now and will drop every such body silently (`dropped-no-parser` does not
+      even fire — the parser returns empty). Same for answering an ex5 `snapshot_request` with REST:
+      the only valid ex5 resync is a resubscribe on `books50`.
+- [x] **`seq` monotonicity CONFIRMED on 5 consecutive live frames** (BTCUSDT, 2026-09-07), run
+      through the built parser: strictly increasing, all five accepted by job 2 as forward
+      snapshots. The step is **2816–11122** between frames only **97–351 ms** apart, which settles
+      the design — `seq` is a fast underlying counter these snapshots are SAMPLED from, so jump 0
+      is the only possibility and no jump rule could ever fit. Silent deletes confirmed too (no
+      qty-"0" marker anywhere), so wholesale replacement is mandatory.
+- [x] **CORRECTED from the captures: `pseq` is NOT a predecessor pointer** — it reads 0 on every
+      frame. The first draft of this branch documented it as ex8/okx-style `prevSeqId` chaining.
+      Fixed in the parser javadoc, `sample-raw-data.md`, `BitgetParserTest` and every e2e source.
+      **Never build a chain rule on it.**
+- [ ] **Still worth a longer run:** 5 frames covers ~750 ms of one market. Watch `seq` across a
+      reconnect and across several markets before treating per-market monotonicity as proven.
+- [ ] **Two ex5 capabilities are supported but UNOBSERVED** and marked defensive in the tests: the
+      multi-element `data` fan-out (all 5 frames carry exactly 1 element) and a qty-"0" level (0 in
+      500 captured levels). Drop the tests only with evidence, not on a hunch.
+- [ ] **`sequence_jump_tolerance` now has NO test coverage in e2e** (27 was the only scenario) and no
+      production user. Decide whether that is acceptable or whether the job-2 unit tests are enough;
+      removing the field entirely is the alternative, and costs a re-registration of both subjects.
+- [ ] **Register the `.avsc` doc fix** whenever the next real schema change goes out. Doc-only, Avro
+      compatible, no version bump needed on its own — the serializers read the registry, never the
+      bundled copy.
+- [ ] **Re-answer the open question above** ("Audit the other delta feeds for the same hole") — ex5
+      is no longer one of the "known good" delta feeds it lists, because it is not a delta feed.

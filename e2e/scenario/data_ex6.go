@@ -751,8 +751,8 @@ var Ex6PrecisionDust = Scenario{
 // Ex6RestSnapshotResync — the SECOND stream on `ex6-raw` (added 2026-08-24): bybit's REST
 // `/v5/market/orderbook` response, which NiFi tags `action: "snapshot"` and stamps with the market
 // as a top-level `pair`. Same exchange, different envelope: the book sits under `result` rather
-// than `data`, which is all the parser needs to tell the two apart (unlike ex5, where `action`
-// reads "snapshot" on both streams and only the shape of `data` separates them).
+// than `data`, which is all the parser needs to tell the two apart (unlike ex5 as it then was,
+// where `action` read "snapshot" on both streams and only the shape of `data` separated them).
 //
 // The scenario runs it where it actually appears — a WS gap empties the book and asks the control
 // plane for a snapshot, and the REST body is what answers.

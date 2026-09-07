@@ -386,3 +386,36 @@ value, but measured from a predecessor never accepted → `sequence_gap` + RESET
 ex8's sequence is `seqId`, its jump is dynamic, and only ex5 is still sequenced by a timestamp.
 Test labels that said "(ex8, jump 300)" were relabelled "(fixed jump 300)": those tests still pin
 real generic behaviour, they were just mis-attributed after the switch.
+
+---
+
+## 2026-09-07 — ex5 leaves the delta group; `sequence_jump_tolerance` loses its only user
+
+ex5/bitget went back to the `books50` channel: snapshot-only, real `seq` counter, jump 0. See
+[[project_pair_extractor]] for the wire. **Zero behavioural change in job 2** — the snapshot branch
+already handled exactly this shape (it is ex4's, and was ex5's own before 2026-08-22).
+
+**What this changes about job 2's own state:**
+
+- The delta group is now **ex6, ex7, ex8** only. ex1/ex2 left it 2026-09-02, ex5 leaves it now.
+- **`sequence_jump_tolerance` is 0 on every exchange.** ex5 was the only feed that ever stamped a
+  nonzero one (600 ± 10, then 650 ± 110), because its sequence was then a millisecond clock that
+  never landed on an exact multiple. At 0 the window collapses to the exact `seq == last + jump`
+  check, so the feature is now inert in production.
+- **The window code and the schema field STAY** (user decision). Removing them would mean
+  re-registering `raw-order-book-event` AND `rejected-order-book-event` and resubmitting every
+  job, for no behaviour change, and the next timestamp-sequenced feed would just have to re-add
+  them. What was removed instead is the *claim* that ex5 uses it — the comments in
+  `TypeValidateFunction`, `RawOrderBookEvent` and the `.avsc` `doc` all said so.
+- `TypeValidateFunctionTest`'s `bitget(...)` helper is now **`tolerantJump(...)` on a SYNTHETIC
+  exchange id (`TOLERANT_EX = 99`)**, and four display names lost their "(ex5)" tag. The test
+  bodies are byte-identical — they still exercise the window, they just no longer assert something
+  false about a live exchange. `bitgetRestResyncDoesNotSeedTheWindow` →
+  `restResyncDoesNotSeedTheWindow`, reframed as the regression test for the PATTERN (which
+  ex6/ex8 still have at tolerance 0), not for the exchange.
+
+⚠ **The "ex5 resync loop" stays in the notes and in the comments as history, and it must.** It is
+the reason ex6's and ex8's REST snapshots are null-seq. Do not delete those references just
+because ex5 no longer has a REST stream.
+
+**71 job-2 tests green, unchanged in count.**

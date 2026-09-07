@@ -841,3 +841,93 @@ validation → 1 errors).
 NiFi is still implementing its side, so `ex8-raw` on the dev server carries the OLD `books-grouped`
 shape and every ex8 scenario would fail against it. The e2e scenarios' expected books were preserved
 from the old ones (only the sequencing changed), so they are reasoned rather than observed.
+
+---
+
+## 2026-09-07 — ex5/bitget back to `books50`: snapshot-only, one stream, `seq` restored
+
+**The 2026-08-22 and 2026-08-23 revisions are UNDONE, not amended.** The collector moved off the
+price-grouped `depth` channel and back onto `books50`, and the REST depth poller was switched off.
+`ex5-raw` carries ONE stream again. User-confirmed before implementation ("this channel only sends
+me snapshot … we only have snapshot retrieved by ws"), against one fresh wire sample.
+
+The new wire is byte-for-byte the ORIGINAL ex5 shape (`git show b1bbf96^` for the parser it had),
+so `BitgetParser` went back to it rather than being rewritten:
+
+- `action: "snapshot"` and nothing else. Not a delta feed — no qty-`"0"` delete, no cold start.
+- `data` an ARRAY of book objects, market = `arg.instId`, sides `asks`/`bids` as string pairs,
+  **both required** (a half-frame on a snapshot feed would wipe a live side).
+- **`seq` and `pseq` are back on the wire, and `checksum` is gone.** Sequence id = `data[i].seq`
+  (integral JSON number), jump 0. `pseq` is read by nobody — it only matters for chaining a delta
+  stream, and a snapshot re-anchors instead of continuing.
+- Event time = inner `ts`, a STRING of epoch millis. Outer `ts` is a number 1 ms later, ignored.
+- `instType` went `"sp"` → `"SPOT"` and `arg.params.scale` is gone.
+
+**Three platform-level consequences, each bigger than the parser diff:**
+
+1. **ex5 can no longer emit ANY control command.** Job 2's snapshot branch is the only branch it
+   can reach, so `no_baseline`, `awaiting_snapshot` and `sequence_gap` are all unreachable for
+   this exchange and it can reach exactly one reject reason, `stale_or_duplicate`. ex5 joins ex3,
+   ex4 and ex9 in that group. [[project_control_plane]]
+2. **`sequence_jump_tolerance` now has NO user anywhere on the platform.** ex5 was the only
+   exchange that ever stamped a nonzero one. **Kept, not removed** (user decision) — the field
+   defaults to 0, which collapses job 2's window back to the exact check, so it is a no-op for
+   every feed and removing it would mean re-registering both Avro subjects and resubmitting every
+   job for zero behaviour change. See [[project_type_validator]].
+3. **`Levels.fromNumericArrays` has one caller left, ex4/ramzinex.** ex5's REST body was the other.
+
+⚠ **The REST branch was DELETED, not left as dead code.** If the poller is ever switched back on,
+job 1 will silently drop every body it publishes — the shape has no branch. `BitgetParserTest`
+pins that with an explicit test (`discardsTheRetiredRestBody`) so it fails loudly here rather than
+going dark in production, and the retired shape is documented at the end of `sample-raw-data.md`
+§ ex5 for whoever revives it.
+
+**MEASURED against 5 CONSECUTIVE live frames (BTCUSDT, same day) — the sequencing is evidence,
+not a guess.** All five parse and are accepted by job 2 as forward snapshots (verified by running
+them through the built parser):
+
+| what | measured |
+| ---- | -------- |
+| `seq` | strictly increasing, 787944892031 → …903153 → …905969 → …911411 → …916487 |
+| `seq` step | **2816 / 5076 / 5442 / 11122** |
+| inner `ts` step | **97 / 150 / 150 / 351 ms** |
+| levels | exactly **50 + 50** on all 5, both sides always present, sorted, never crossed |
+| `pseq` | **0 on every frame** |
+| qty `"0"` | **0 occurrences in 500 levels** |
+| `data` array | length **1** on all 5 |
+
+**Two things this settled that a single sample could not:**
+
+1. **`seq` steps by THOUSANDS between snapshots ~100–350 ms apart**, so it is a fast underlying
+   book counter and these frames are **sampled** from it — consecutive snapshots are never
+   adjacent in `seq`. `sequence_jump = 0` is therefore the ONLY possibility, not a default, and
+   no jump rule (fixed, dynamic or windowed) could ever have fitted. The same numbers show the old
+   `depth` channel's timestamp-as-sequence could not have been re-fitted either.
+2. ⚠ **`pseq` is NOT a predecessor pointer** — it reads 0 on every frame. The first draft of this
+   work documented it as "names the frame's predecessor, like ex8/okx's `prevSeqId`", which the
+   captures disproved. **A chain rule built on it would reject everything.** Corrected in the
+   parser javadoc, `sample-raw-data.md` and every e2e source (all now carry `"pseq": 0`).
+
+**Silent deletes CONFIRMED** — levels vanish between consecutive frames with no qty-`"0"` marker
+(frame 1 → 2 dropped ask 79429.65 and bid 79425.21; frame 4 → 5 dropped 11 asks and 4 bids).
+Wholesale replacement is mandatory; merging would leave dead levels in the book forever.
+
+The remaining `seq` risk is now small and its failure mode is benign: if it were per-connection
+rather than per-book, a reconnect would dead-letter `stale_or_duplicate` — never a resync loop,
+because a snapshot feed cannot gap. The null-seq alternative was considered and rejected: it would
+lose duplicate detection for nothing.
+
+⚠ Two capabilities are supported but UNOBSERVED, and are marked as defensive in the tests: the
+multi-element `data` fan-out (all 5 frames carry one element) and a qty-`"0"` level (none in 500).
+
+**What changed.** `BitgetParser` (rewritten to the original + a new javadoc), `ex5-snapshot.json`
+(new capture), `ex5-update.json` and `ex5-rest-snapshot.json` DELETED, `BitgetParserTest` (6 → 4
+tests, two of them proving the removed capabilities are gone), the ex5 rows dropped from
+`RecordIdTest`/`SimulationFlagTest`, `Levels` javadoc, and stale cross-references in
+`BybitParser`/`OkxParser` javadoc. Job 2 changed only in comments. See [[project_e2e_harness]] for
+the scenario churn and [[project_avro_schema]] for the `doc` string.
+
+**Verification: 292 normalizer tests green (JDK 21 — the repo's jacoco cannot instrument JDK 25,
+use `JAVA_HOME=$(/usr/libexec/java_home -v 21)`), e2e build/vet/gofmt/test clean. NOT RUN LIVE** —
+the docker stack was down, so the e2e books are reasoned from the old ex5 scenarios (only prices
+and sequencing changed), not observed.

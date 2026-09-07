@@ -131,3 +131,22 @@ sequenced by `ts` and no longer stamps `sequence_jump = 300`. On the `books` cha
 is NOT always a per-exchange constant — ex7 and ex8 both vary it message to message, and nothing in
 the schema needed to change for that (it was always a plain long). `ts`-as-sequence now means ex5
 alone. See [[project_pair_extractor]] § ex8.
+
+---
+
+## 2026-09-07 — `sequence_jump_tolerance` is now inert (doc-only change)
+
+ex5/bitget moved back to a snapshot-only `books50` feed with a real `seq` counter, so **no
+exchange stamps a nonzero `sequence_jump_tolerance` any more** (see [[project_pair_extractor]]).
+
+- **The field stays in both `raw_order_book_event.avsc` and `rejected_order_book_event.avsc`**,
+  `long`, `default: 0`. User decision: it is a no-op at 0, and removing it would mean
+  re-registering both subjects and resubmitting every job for zero behaviour change.
+- Only the **`doc` string** on `raw_order_book_event.avsc` changed — it claimed "every exchange
+  but ex5 … ex5/bitget stamps 600 +/- 10", which is now false twice over (the value had already
+  moved to 650 ± 110 on 2026-08-23 without the doc following).
+- **No re-registration is required for this.** The serializers fetch the write schema from the
+  registry at first use and never read the bundled copy (`AvroSchemaLoader.loadLatest`), so the
+  `.avsc` in `schemas/` is the human-facing source of truth that a person registers by hand. A
+  doc-only edit is Avro-compatible and does not need a version bump; register it whenever the next
+  real schema change goes out.

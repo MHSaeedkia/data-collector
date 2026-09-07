@@ -53,14 +53,15 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * interval since the last update is the collector's choice, not the exchange's
  * cadence. Contiguity therefore has exactly two sites, both in the update
  * branch below — snapshot → next update, and update → update.</li>
- * <li><b>Update</b> ({@code type == "update"}, delta feeds ex5/ex6/ex8 —
- * ex1/ex2 REVISED 2026-09-02 out of this group, see above): needs a baseline
- * and a contiguous sequence. No baseline yet → {@code no_baseline}; still
- * waiting to re-sync after a gap → {@code awaiting_snapshot};
- * {@code sequence_id} within {@code sequence_jump_tolerance} of
- * {@code lastSeq + sequence_jump} → valid (the tolerance is 0 for every
- * exchange but ex5/bitget, whose sequence is a millisecond clock — see the
- * window comment in {@code processElement});
+ * <li><b>Update</b> ({@code type == "update"}, delta feeds ex6/ex7/ex8 —
+ * ex1/ex2 REVISED 2026-09-02 out of this group and ex5 REVISED 2026-09-07 out
+ * of it, see above): needs a baseline and a contiguous sequence. No baseline
+ * yet → {@code no_baseline}; still waiting to re-sync after a gap →
+ * {@code awaiting_snapshot}; {@code sequence_id} within
+ * {@code sequence_jump_tolerance} of {@code lastSeq + sequence_jump} → valid
+ * (the tolerance is 0 on every exchange now that ex5/bitget, the only feed that
+ * ever stamped one, is snapshot-only again — see the window comment in
+ * {@code processElement});
  * {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
  * forward jump is a gap → {@code sequence_gap}, and the stream is marked
  * untrusted (every update rejected until the next snapshot re-syncs).</li>
@@ -371,10 +372,12 @@ public class TypeValidateFunction
         }
         // Contiguity, as a WINDOW rather than an equality: the expected next sequence is
         // last + jump, and sequence_jump_tolerance is how far either side of it still counts as
-        // contiguous. Every exchange but ex5 stamps tolerance 0, which collapses this back to the
-        // exact `seq == last + jump` check it has always been (ex6 jump 1, ex8 jump 300 — real
-        // counters and a real fixed cadence). ex5/bitget stamps 600 +/- 10 because its sequence
-        // is a millisecond clock, not a counter, so it never lands on an exact multiple.
+        // contiguous. EVERY exchange stamps tolerance 0 since 2026-09-07, which collapses this
+        // back to the exact `seq == last + jump` check it has always been (ex6 jump 1, ex8 jump
+        // 300 — real counters and a real fixed cadence). ex5/bitget was the only feed that ever
+        // stamped one, because its sequence was then a millisecond clock and never landed on an
+        // exact multiple; it is back on a real `seq` counter and snapshot-only. The window is
+        // kept for the next timestamp-sequenced feed, not because anything needs it today.
         long expected = last + event.getSequenceJump();
         long tolerance = event.getSequenceJumpTolerance();
         if (seq >= expected - tolerance && seq <= expected + tolerance) {

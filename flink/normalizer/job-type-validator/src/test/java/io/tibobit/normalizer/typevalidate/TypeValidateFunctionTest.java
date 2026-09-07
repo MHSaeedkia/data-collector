@@ -90,23 +90,32 @@ class TypeValidateFunctionTest {
 
     /**
      * Delta-feed message (snapshot or update) with a nonzero jump. Usually a per-exchange
-     * constant (ex6=1, ex5=650), but ex7 and ex8 stamp it PER MESSAGE — see
+     * constant (ex6=1), but ex7 and ex8 stamp it PER MESSAGE — see
      * {@link #dynamicJumpChainsEachMessageToItsNamedPredecessor()}.
      */
     private static RawOrderBookEvent delta(int ex, int pair, String type, long seq, long jump) {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
     }
 
+    /** Not a seeded exchange — see {@link #tolerantJump(int, String, long)}. */
+    private static final int TOLERANT_EX = 99;
+
     /**
-     * ex5/bitget WS message: the sequence is a millisecond CLOCK on a VARIABLE
-     * cadence, so the event carries a wide jump tolerance and job 2 checks a
-     * window instead of an equality. The 650 ± 110 band is fitted to the live
-     * feed (see BitgetParser); ex5's REST snapshot is null-seq and uses
-     * {@link #nullSeqSnapshot} instead.
+     * A delta message whose sequence is a millisecond CLOCK rather than a
+     * counter, so it carries a wide jump tolerance and job 2 checks a window
+     * instead of an equality. The 650 ± 110 band is the one ex5/bitget used
+     * while it sat on the {@code depth} channel.
+     *
+     * <p><b>No live exchange stamps a nonzero tolerance since 2026-09-07</b>,
+     * when ex5 went back to the {@code books50} channel — snapshot-only, with a
+     * real {@code seq} counter and jump 0 (see BitgetParser). The window code
+     * stays in job 2 and the field stays in the schema (both are a no-op at
+     * tolerance 0), so these tests keep exercising it against the SYNTHETIC
+     * exchange id above rather than making a claim about any live feed.
      */
-    private static RawOrderBookEvent bitget(int pair, String type, long ts) {
+    private static RawOrderBookEvent tolerantJump(int pair, String type, long ts) {
         RawOrderBookEvent event
-                = new RawOrderBookEvent(5, pair, type, ts, 650L, ts, List.of(), List.of());
+                = new RawOrderBookEvent(TOLERANT_EX, pair, type, ts, 650L, ts, List.of(), List.of());
         event.setSequenceJumpTolerance(110L);
         return event;
     }
@@ -275,13 +284,13 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("tolerant jump (ex5): both edges of the last+jump±tolerance window are contiguous")
+    @DisplayName("tolerant jump: both edges of the last+jump±tolerance window are contiguous")
     void toleranceWindowEdgesAccepted() throws Exception {
         long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 540)); // low edge  -> ok
-        send(bitget(1, "update", t0 + 540 + 760)); // high edge -> ok
-        send(bitget(1, "update", t0 + 540 + 760 + 650)); // dead centre -> ok
+        send(tolerantJump(1, "snapshot", t0));
+        send(tolerantJump(1, "update", t0 + 540)); // low edge  -> ok
+        send(tolerantJump(1, "update", t0 + 540 + 760)); // high edge -> ok
+        send(tolerantJump(1, "update", t0 + 540 + 760 + 650)); // dead centre -> ok
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(t0, t0 + 540, t0 + 1300, t0 + 1950);
@@ -289,11 +298,11 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("tolerant jump (ex5): one millisecond outside the window is still a gap")
+    @DisplayName("tolerant jump: one millisecond outside the window is still a gap")
     void toleranceWindowIsNotUnbounded() throws Exception {
         long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 761)); // 1 ms past the high edge -> gap
+        send(tolerantJump(1, "snapshot", t0));
+        send(tolerantJump(1, "update", t0 + 761)); // 1 ms past the high edge -> gap
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(t0);
@@ -303,24 +312,27 @@ class TypeValidateFunctionTest {
 
     /**
      * The live resync loop, reproduced and shown fixed (dev server,
-     * 2026-08-23). ex5's WS feed sends NO snapshots — the REST endpoint is its
-     * only baseline — and the REST {@code ts} runs on a different clock, BEHIND
-     * the last WS update 57% of the time. When that body was sequenced by its
-     * own {@code ts} it seeded the update window from the wrong clock, so the
-     * next update gapped ~90% of the time: accept → gap → empty the book →
-     * request another snapshot → repeat, 22 times a minute. Null-seq breaks the
-     * cycle by never comparing the two clocks: the REST body is ordered by
-     * event time, and the next update re-anchors the baseline.
+     * 2026-08-23, on ex5 as it then was). A delta feed whose only baseline is a
+     * REST snapshot on a DIFFERENT clock — behind the last update 57% of the
+     * time — gapped ~90% of its resyncs when that body was sequenced by its own
+     * {@code ts}: accept → gap → empty the book → request another snapshot →
+     * repeat, 22 times a minute. Null-seq breaks the cycle by never comparing
+     * the two clocks: the REST body is ordered by event time, and the next
+     * update re-anchors the baseline.
+     *
+     * <p>ex5 no longer has that shape (snapshot-only since 2026-09-07), but
+     * ex6/bybit and ex8/okx do — at tolerance 0 — so this stays the regression
+     * test for the pattern, not for the exchange.
      */
     @Test
-    @DisplayName("ex5 resync: a REST snapshot on the other clock no longer gaps the next update")
-    void bitgetRestResyncDoesNotSeedTheWindow() throws Exception {
+    @DisplayName("resync: a REST snapshot on the other clock no longer gaps the next update")
+    void restResyncDoesNotSeedTheWindow() throws Exception {
         long t0 = 1787404282000L;
-        send(bitget(1, "update", t0)); // cold start -> no_baseline, asks for a snapshot
-        send(nullSeqSnapshot(5, 1, t0 - 40)); // the REST answer, ts BEHIND the update it follows
-        send(bitget(1, "update", t0 + 600)); // baselinePending adopts this unconditionally
-        send(bitget(1, "update", t0 + 1200)); // +600 -> inside the window
-        send(bitget(1, "update", t0 + 1950)); // +750 -> the live cluster the old window rejected
+        send(tolerantJump(1, "update", t0)); // cold start -> no_baseline, asks for a snapshot
+        send(nullSeqSnapshot(TOLERANT_EX, 1, t0 - 40)); // the REST answer, ts BEHIND the update it follows
+        send(tolerantJump(1, "update", t0 + 600)); // baselinePending adopts this unconditionally
+        send(tolerantJump(1, "update", t0 + 1200)); // +600 -> inside the window
+        send(tolerantJump(1, "update", t0 + 1950)); // +750 -> the live cluster the old window rejected
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(null, t0 + 600, t0 + 1200, t0 + 1950);
@@ -332,15 +344,15 @@ class TypeValidateFunctionTest {
     /**
      * The band is widened, not removed: a genuinely missed tick is ~2x the
      * cadence and still lands outside [540, 760]. Without this the widening
-     * would have quietly disabled ex5 gap detection.
+     * would have quietly disabled gap detection altogether.
      */
     @Test
-    @DisplayName("tolerant jump (ex5): a missed tick (~1200 ms) is still a gap")
-    void bitgetStillDetectsAMissedTick() throws Exception {
+    @DisplayName("tolerant jump: a missed tick (~1200 ms) is still a gap")
+    void toleranceWindowStillDetectsAMissedTick() throws Exception {
         long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 750)); // the upper live cluster -> accepted
-        send(bitget(1, "update", t0 + 750 + 1200)); // one tick lost -> gap
+        send(tolerantJump(1, "snapshot", t0));
+        send(tolerantJump(1, "update", t0 + 750)); // the upper live cluster -> accepted
+        send(tolerantJump(1, "update", t0 + 750 + 1200)); // one tick lost -> gap
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(t0, t0 + 750);
@@ -349,13 +361,13 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("tolerant jump (ex5): a backwards ts is stale_or_duplicate, not a gap")
+    @DisplayName("tolerant jump: a backwards ts is stale_or_duplicate, not a gap")
     void toleranceWindowStillRejectsStale() throws Exception {
         long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 600)); // ok
-        send(bitget(1, "update", t0 + 600)); // duplicate ts
-        send(bitget(1, "update", t0 + 100)); // older
+        send(tolerantJump(1, "snapshot", t0));
+        send(tolerantJump(1, "update", t0 + 600)); // ok
+        send(tolerantJump(1, "update", t0 + 600)); // duplicate ts
+        send(tolerantJump(1, "update", t0 + 100)); // older
 
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
@@ -413,15 +425,15 @@ class TypeValidateFunctionTest {
     }
 
     @Test
-    @DisplayName("snapshot after updates (ex5): a resync ts off the 600 ms grid re-anchors the window")
-    void bitgetResyncSnapshotIsNotWindowChecked() throws Exception {
-        // Shape of ex5's REST depth resync, which carries the same jump/tolerance as the WS
-        // snapshot (see BitgetParser) and arrives whenever the collector answered, not on a tick.
+    @DisplayName("snapshot after updates: a resync ts off the cadence grid re-anchors the window")
+    void resyncSnapshotIsNotWindowChecked() throws Exception {
+        // A sequenced resync snapshot carrying the same jump/tolerance as the updates around it,
+        // arriving whenever the collector answered rather than on a tick.
         long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 650));
-        send(bitget(1, "snapshot", t0 + 1500)); // 190 ms past the window end -> still accepted
-        send(bitget(1, "update", t0 + 2150)); // 650 after the SNAPSHOT, not after t0 + 650
+        send(tolerantJump(1, "snapshot", t0));
+        send(tolerantJump(1, "update", t0 + 650));
+        send(tolerantJump(1, "snapshot", t0 + 1500)); // 190 ms past the window end -> still accepted
+        send(tolerantJump(1, "update", t0 + 2150)); // 650 after the SNAPSHOT, not after t0 + 650
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(t0, t0 + 650, t0 + 1500, t0 + 2150);

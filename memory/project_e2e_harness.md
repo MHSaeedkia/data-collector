@@ -861,3 +861,48 @@ since each scenario's meaning lives in whether the chain holds:
 still implementing its side, so `ex8-raw` on the dev server still carries `books-grouped` and all
 7 would fail against it today. Run them once NiFi's change lands — that is the real verification,
 and `Ex8RestSnapshotResync`'s one-reject/one-command count is the assertion most worth watching.
+
+---
+
+## 2026-09-07 — the ex5 block shrinks 7 → 5, and 62 is appended
+
+ex5/bitget went snapshot-only on `books50` (see [[project_pair_extractor]]), which deletes three
+scenarios outright and rewrites the wire of every survivor.
+
+**Numbers RETIRED, not reused or renumbered** (the standing convention — grep the Go identifiers,
+never the numbers):
+
+| # | identifier | why it is gone |
+| - | ---------- | -------------- |
+| 26 | `Ex5UpdateBeforeSnapshot` | ex5 sends no updates, so it has no cold start and can reach `no_baseline` never |
+| 27 | `Ex5JumpTolerance` | ex5 stamps tolerance 0 now, and it was the ONLY scenario in the suite exercising `sequence_jump_tolerance` — **that feature now has NO e2e coverage at all**, by design, because no exchange stamps it |
+| 31 | `Ex5RestSnapshotResync` | `ex5-raw` has one stream again; the REST poller is off |
+
+**Current ex5 block: 25, 28, 29, 30, and 62.**
+
+- `25-ex5-snapshot-stream` (was `25-ex5-snapshot-then-updates`, `Ex5SnapshotThenUpdates` →
+  `Ex5SnapshotStream`) — wholesale replacement, and a qty-`"0"` level that rests nowhere. On this
+  channel `"0"` is an empty level, NOT a delete marker.
+- `28`/`29`/`30` keep their identifiers; only the wire shape and the prices changed.
+- `29-ex5-noise-frames` grew to 10 sources and is where the revision is made testable: source 02
+  is `action: "update"` (first-class before, noise now), source 05 is the **retired REST depth
+  body** (recognised before, unrecognised now), source 09 is a **half book** (a legal one-sided
+  delta before, dropped now because it would wipe a live side on a snapshot feed).
+- `62-ex5-stale-seq` (`Ex5StaleSeq`) — **appended, not slotted in.** Restored from the
+  pre-2026-08-22 suite. With ex5 snapshot-only this is the whole of its job-2 coverage: a repeated
+  or older `seq` is `stale_or_duplicate`, a forward one is accepted however far it jumps. Sources
+  02 and 03 deliberately carry LATER event times than 01 and are still rejected — with a non-null
+  sequence id, `seq` is the whole ordering test and `ts` is not consulted.
+
+**Every ex5 scenario now asserts an EMPTY control stream** (nil `WantControlCommands`, which the
+harness treats as "assert nothing was requested"). ex5 cannot reach a branch that asks for a
+snapshot, so a command appearing there is a real bug, not a flake.
+
+⚠ **NOT RUN LIVE.** Docker was down. `go build` / `go vet` / `gofmt` / `go test ./...` are clean
+and the expected books are reasoned from the scenarios they replace (only prices and sequencing
+changed), but nothing was observed and no mutation check was done.
+
+⚠ Stale cross-references fixed while here: `data_ex6.go` and `data_ex8.go` both described ex5's
+two-stream discriminator in the present tense, `data_ex9.go` claimed ex5 and ex8 are
+timestamp-sequenced (neither is any more), and `lineage.go` listed ex5 among the JSON-NUMBER
+payloads that must not round-trip through float64 — that is ex3 and ex4 now.
