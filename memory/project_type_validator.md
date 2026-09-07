@@ -544,6 +544,15 @@ update rather than a snapshot. **Mutation-checked**: flipping `baselinePending.u
 `zeroToleranceIsTheExactCheck` → `exactJumpCheckRejectsAnOvershoot` (the name described a concept
 that no longer exists; the assertions are unchanged).
 
+**VERIFIED LIVE 2026-09-07 — the full 58-scenario e2e suite passes on the dev server** against a
+freshly provisioned stack (`82f7dd4`). Every delta feed the equality actually governs came back
+green: ex6 (`34-ex6-sequence-gap`), ex8's dynamic jump (`40-ex8-sequence-gap`,
+`41-ex8-stale-duplicate`), ex7 (`50-ex7-sequence-gap`), the control-plane pair 44/46, and
+`48-ex6-rest-snapshot-resync` — which is the e2e twin of the unit test PORTED to ex6 rather than
+deleted, so the port is confirmed at both levels. Two scenarios failed on a taskmanager restart
+(`NoResourceAvailableException`) and re-ran green; see [[project_e2e_harness]] for how to
+recognise that flake. Full artefacts: `/opt/data-collector/e2e-runs/20260907-174815/`.
+
 **Verified: 284 normalizer tests green across all 6 modules, e2e Go build/vet/gofmt/test clean.**
 The only test-count change anywhere in the tree is −5 in `TypeValidateFunctionTest` (73 → 68),
 confirmed by diffing `@Test` counts per file against `main`. Two mutations confirm the surviving

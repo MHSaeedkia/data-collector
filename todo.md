@@ -1121,6 +1121,11 @@ the dated § in `memory/project_pair_extractor.md`.
       `TypeValidateFunction`, `TypeValidateFunctionTest`, the `isZero()` assertions in the bitget /
       okx / lbank parser tests, and the `BitgetParser` / `data_ex5.go` comments.
       **284 normalizer tests green, e2e Go build/vet/gofmt/test clean; 3 mutations bite.**
+      **RUN LIVE 2026-09-07 on the dev server: 58/58 e2e scenarios PASS** (fresh stack, `82f7dd4`).
+      2 failed on a taskmanager restart (`NoResourceAvailableException`, an infra flake — see
+      [[project_e2e_harness]]) and re-ran green. Report kept at
+      `/opt/data-collector/e2e-runs/20260907-174815/FINAL_REPORT.txt`. ⚠ The server tree was 120
+      commits behind `main` beforehand, so the run covered that drift too.
       ⚠ Two things the estimate got wrong, both recorded in memory: (a) the `tolerantJump` group
       could NOT just be deleted — `restResyncDoesNotSeedTheWindow` is the 2026-08-23 live
       resync-loop regression test and was PORTED to ex6 as
