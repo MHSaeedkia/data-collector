@@ -50,7 +50,7 @@
 			"name": "sequence_jump_tolerance",
 			"type": "long",
 			"default": 0,
-			"doc": "Half-width of the accepted window around sequence_jump: an update is contiguous when last + jump - tolerance <= sequence_id <= last + jump + tolerance. 0 (the default, and every exchange but ex5) means the exact check. ex5/bitget stamps 600 +/- 10 because its sequence is a millisecond timestamp on a nominal 600 ms cadence, not a counter."
+			"doc": "Half-width of the accepted window around sequence_jump: an update is contiguous when last + jump - tolerance <= sequence_id <= last + jump + tolerance. 0 (the default) means the exact check, and every exchange stamps 0 since 2026-09-07. ex5/bitget was the only feed that ever stamped a nonzero one, because its sequence was then a millisecond timestamp rather than a counter; it is back on a real seq counter and snapshot-only. Kept for the next timestamp-sequenced feed."
 		},
 		{
 			"name": "event_time",

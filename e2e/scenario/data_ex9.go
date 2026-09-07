@@ -8,8 +8,9 @@
 //     ex3/wallex is the only other snapshot-only exchange, and it sends one SIDE per message
 //     where ex9 always sends both.
 //   - `sequence_id` is NULL and `sequence_jump` is 0 (user decision 2026-08-26). The wire has no
-//     counter at all, and `TS` is deliberately NOT re-used as one the way ex5's and ex8's `ts`
-//     are — a timestamp-as-sequence imposes a cadence the exchange never promised. So ex9 runs on
+//     counter at all, and `TS` is deliberately NOT re-used as one — a timestamp-as-sequence
+//     imposes a cadence the exchange never promised. (ex5 and ex8 both did it for a while and
+//     both moved back to a real counter; no feed is sequenced by a clock now.) So ex9 runs on
 //     job 2's EVENT-TIME branch, where the whole test is "not older than the last accepted frame".
 //   - `TS` is an ISO-8601 local date-time with NO zone marker (`"2027-01-15T08:00:00.000"`), read
 //     as UTC. Every other exchange sends epoch millis. That conversion is asserted here rather

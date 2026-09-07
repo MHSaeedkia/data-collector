@@ -608,3 +608,26 @@ defence in depth against a future re-arm. Javadoc says so rather than implying t
 symmetric — the same vacuous-guard trap this file has now hit three times.
 ⚠ **NOT run live.** The live check is the same one as before: unsubscribe a fed market and watch for
 exactly ONE reset, NO command, and the exchange dropping out of `p{id}-{side}`.
+
+---
+
+## 2026-09-07 — ex5 leaves the set of exchanges that can request a snapshot
+
+ex5/bitget is snapshot-only again (`books50`, real `seq`, jump 0 — see
+[[project_pair_extractor]]). Job 2's snapshot branch is the only branch it can reach, so **ex5 can
+emit no `snapshot_request` of any kind**: `no_baseline`, `awaiting_snapshot` and `sequence_gap`
+are all unreachable for it, and its only reachable reject reason is `stale_or_duplicate`.
+
+**Exchanges that can produce a control command: ex6, ex7, ex8.** (ex1/ex2 left 2026-09-02; ex3,
+ex4, ex9 never could; ex5 leaves now.)
+
+⚠ **NiFi consequence — the ex5 side of the control topic is now dead traffic.** Whatever answers
+`snapshot_request` for exchange 5 will never be triggered, and if it is triggered by hand it must
+NOT answer with the REST depth body: job 1 has no branch for that shape any more and will drop it
+silently. The only valid resync for ex5 is a resubscribe on `books50`, which returns a snapshot on
+the feed's own counter — the same advice already given for ex8.
+
+⚠ Historical note that must NOT be deleted: the "ex5 resync loop" (2026-08-23, 28.6 book resets
+and 28.7 snapshot requests per minute saturating `control-plane`) is why ex6's and ex8's REST
+snapshots are null-seq. The loop is unreachable on ex5 now; the rule it produced is still load
+bearing everywhere else.

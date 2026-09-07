@@ -21,7 +21,7 @@
 | `ex2-raw` | bitpin   | ✅ captured 2026-07-14; ⚠ REVISED 2026-07-25 (WS = delta) then **REVISED AGAIN 2026-09-02** (WS = snapshot) — two streams, BOTH full snapshots: REST (`action`+`pair`, null-seq) + WS (Centrifugo `pub`, ordered by `pub.offset`) |
 | `ex3-raw` | wallex   | ✅ captured 2026-07-14 (per-side snapshots) |
 | `ex4-raw` | ramzinex | ✅ captured 2026-07-14 (snapshot) |
-| `ex5-raw` | bitget   | ✅ captured 2026-07-14; ⚠ **REVISED 2026-08-22** — channel changed `books50` → `depth`/`scale`: now snapshot **+ update**, `seq` GONE, sequence = inner `ts`; **+ a REST snapshot stream captured 2026-08-23** (`data` object, `a`/`b`, NUMERIC levels, injected `pair`). ⚠ **RE-MEASURED live 2026-08-23**: the WS channel sends **no snapshots at all**, the REST body is the only baseline and is now **null-seq**, and the update window is **650 ± 110** |
+| `ex5-raw` | bitget   | ✅ captured 2026-07-14; revised 2026-08-22/23 (channel `books50` → `depth`/`scale`, delta feed, ts-as-sequence, + a REST stream); ⚠ **REVISED AGAIN 2026-09-07 — all of that is UNDONE**: back on `books50`, **snapshot-only**, `seq`/`pseq` back on the wire (jump 0), `checksum` gone, **the REST stream is gone** and `ex5-raw` carries ONE stream again |
 | `ex6-raw` | bybit    | ✅ captured 2026-07-14 (snapshot + delta; qty="0" delete frame still to capture); **+ a REST snapshot stream captured 2026-08-24** (`result` object, `a`/`b`, string levels, injected `action`/`pair`) — **null-seq**: `result.u` is on a DIFFERENT counter from the WS `data.u` |
 | `ex7-raw` | ompfinex | **POSTPONED** (2026-07-14, raw-data issue) — out of initial scope |
 | `ex8-raw` | okx      | ✅ captured 2026-07-14 (snapshot + update; qty="0" delete CONFIRMED on wire) |
@@ -342,185 +342,142 @@ Parsing notes (job 1):
 
 ## ex5-raw — bitget
 
-**⚠ REVISED 2026-08-22 — the "snapshot-only" assumption was WRONG, and the ordering field is
-GONE.** The feed moved off the `books50` channel onto the price-**grouped** `depth` channel
-(`arg.params.scale`), which changes three things at once:
+**⚠ REVISED 2026-09-07 — back on `books50`, snapshot-only, and it is the topic's ONLY stream.**
+The collector moved off the price-GROUPED `depth` channel and back onto `books50`. That undoes,
+in one move, everything the 2026-08-22 and 2026-08-23 revisions below recorded:
 
-1. **`action` now has TWO values**, `"snapshot"` and `"update"` — bitget is a true delta feed,
-   the fourth in scope after ex1/ex2 (REST+WS), ex6 and ex8. Qty `"0"` = level delete,
-   **confirmed on the wire** (see the update sample).
-2. **`seq` and `pseq` no longer exist.** The `checksum` that replaced them is a CRC
-   book-integrity value — **not monotonic, not a sequence, unusable by job 2.**
-3. `arg` gained `params.scale` and `instType` changed `"SPOT"` → `"sp"`; `arg.channel` is now
-   `depth`, so depth is no longer encoded in the channel name the way `books50` did.
+1. **`action` has ONE value again**, `"snapshot"`. bitget is not a delta feed here — every frame
+   is a full book, so there is no qty-`"0"` delete, no cold start, no `no_baseline` and no
+   `sequence_gap`. ex5 joins ex3, ex4 and ex9 as a snapshot-only feed and **can emit no control
+   command at all**.
+2. **`seq` and `pseq` are back**, and `checksum` is gone. The ordering field is a real monotonic
+   counter again — `data[i].seq`, jump 0 — not the `ts` clock the `depth` channel forced.
+   `sequence_jump_tolerance` therefore goes back to 0, and since ex5 was **the only exchange that
+   ever stamped a nonzero one, no feed uses that field any more** (it stays in the schema and in
+   job 2 as a no-op — see memory/project_type_validator.md).
+3. **`arg` lost `params.scale`** and `instType` changed back `"sp"` → `"SPOT"`; `arg.channel` is
+   `books50`, so depth is encoded in the channel name again.
+4. **The REST depth stream is GONE.** `ex5-raw` carried two streams between 2026-08-23 and this
+   change; the poller has been switched off, so the second one no longer exists and the
+   `data`-shape discriminator it needed has been removed from the parser. A body in that shape
+   now falls through the whitelist and is dropped. (The retired section is kept at the end of this
+   § for reference — it is history, not the wire.)
 
-Because `seq` is gone the sequence id of a WS **update** is the inner **`ts`** (STRING epoch
-millis), which is also the event time — the same double duty ex8/okx gives its `ts`. But where okx
-publishes on an exact 300 ms cadence, bitget's is a wall clock on a **variable** cadence, so ex5 is
-the ONE exchange with a nonzero `sequence_jump_tolerance`.
+**Verified against 5 CONSECUTIVE live frames (2026-09-07, BTCUSDT).** Not one sample — a real
+sequence, which is what makes the sequencing decision evidence rather than a guess:
 
-**⚠ REVISED 2026-08-23 (2) — measured against the live dev feed, 4569 frames / 36 minutes,
-BTCUSDT only. Two things documented here were wrong:**
+| what | measured |
+| ---- | -------- |
+| `action` | `"snapshot"` on all 5. No other value appeared. |
+| levels | **exactly 50 asks and 50 bids on all 5**, both sides always present, asks ascending, bids descending, never crossed |
+| `seq` | strictly increasing: 787944892031 → 903153 → 905969 → 911411 → 916487 |
+| `seq` step | **2816, 5076, 5442, 11122** — large and variable |
+| inner `ts` step | **97, 150, 150, 351 ms** — variable, no cadence |
+| `pseq` | **0 on every frame** |
+| outer `ts` | inner + **1–2 ms** |
+| qty `"0"` | **0 occurrences in 500 levels** |
+| `data` array | length **1** on all 5 |
 
-1. **The WS `depth` channel sends NO snapshots.** 3538 updates, **0** `action:"snapshot"` frames.
-   The REST endpoint below is ex5's ONLY baseline source. (The snapshot sample in this section is
-   a real capture, but it is not something the live feed currently produces.)
-2. **The cadence is bimodal**, not 600: a 575–625 mass **plus a real 725–775 cluster**. Only
-   93.2% of update→update transitions fell inside `600 ± 10`. The window is now **jump 650 ±
-   110** = `[540, 760]` = 99.83% of 3537 live transitions; a genuinely missed tick (~1200 ms)
-   still falls outside, so gap detection survives. See memory/project_type_validator.md.
+Two conclusions follow, and they are the whole design:
 
-**Snapshot sample** (level arrays trimmed — the real message carried **~160 asks and ~160 bids**;
-depth is no longer fixed by the channel name):
+1. **`seq` can be ORDERED on but never gap-checked.** It steps by thousands between snapshots that
+   are ~100–350 ms apart, so it is a fast underlying book counter and these frames are **sampled**
+   from it — consecutive snapshots are never adjacent in `seq`. No jump rule, fixed or dynamic,
+   could ever fit. `sequence_jump = 0` is the only possibility here, not a default. (The same
+   numbers say the old `depth` channel's timestamp-as-sequence could not have been re-fitted
+   either: 97–351 ms is not a cadence.)
+2. **⚠ `pseq` is NOT a predecessor pointer.** The obvious guess — that it chains frames the way
+   ex8/okx's `prevSeqId` does — is wrong: it reads 0 on every frame. Do not build a chain rule
+   from it.
+
+**Silent deletes, confirmed.** Levels disappear between consecutive frames with **no qty-`"0"`
+marker**: frame 1 → 2 dropped ask `79429.65` and bid `79425.21`; frame 4 → 5 dropped 11 asks and
+4 bids and added 11/4 new ones. **A frame must replace both sides wholesale** — merging would leave
+dead levels in the book forever.
+
+**Snapshot sample** — frame 1 of that capture (level arrays trimmed to 3; the real message carried
+**50 asks and 50 bids**, as the channel name says):
 
 ```json
 {
   "action": "snapshot",
   "arg": {
-    "instType": "sp",
-    "channel": "depth",
-    "instId": "BTCUSDT",
-    "params": { "scale": "0.01" }
+    "instType": "SPOT",
+    "channel": "books50",
+    "instId": "BTCUSDT"
   },
   "data": [
     {
       "asks": [
-        ["77208.71", "0.755945"],
-        ["77209.31", "0.140000"],
-        ["77209.32", "0.259388"]
+        ["79427.25", "0.122814"],
+        ["79429.65", "0.000377"],
+        ["79429.75", "0.001992"]
       ],
       "bids": [
-        ["77208.70", "0.141942"],
-        ["77208.54", "0.005000"],
-        ["77206.03", "0.000019"]
+        ["79427.24", "0.460398"],
+        ["79426.96", "0.005434"],
+        ["79425.21", "0.000377"]
       ],
-      "checksum": 0,
-      "ts": "1787404282388"
+      "ts": "1788771223652",
+      "seq": 787944892031,
+      "pseq": 0
     }
   ],
-  "ts": 1787404282388
+  "ts": 1788771223653
 }
 ```
-
-**Update sample** (level arrays trimmed; note the qty-`"0"` deletes and the brand-new levels):
-
-```json
-{
-  "action": "update",
-  "arg": {
-    "instType": "sp",
-    "channel": "depth",
-    "instId": "BTCUSDT",
-    "params": { "scale": "0.01" }
-  },
-  "data": [
-    {
-      "asks": [
-        ["77208.71", "0"],
-        ["77209.31", "0"],
-        ["77209.34", "0.005000"],
-        ["77213.59", "0.005970"]
-      ],
-      "bids": [
-        ["77209.33", "1.636034"],
-        ["77208.71", "0.423759"],
-        ["77201.53", "0"]
-      ],
-      "checksum": -1105358608,
-      "ts": "1787404282410"
-    }
-  ],
-  "ts": 1787404282410
-}
-```
-
-**⚠ The two samples above are 22 ms apart** (`…388` → `…410`), nowhere near 600 — and a WS
-snapshot→update pair like this does not occur on the live feed at all, since the channel sends no
-snapshots. The transition that DOES occur is REST snapshot → WS update, and that one is no longer
-window-checked: the REST body is null-seq, so job 2 takes the `baselinePending` bootstrap and the
-next update re-anchors the baseline unconditionally. See the REST section below.
 
 Parsing notes (job 1):
 
 - **Envelope**: NOT Centrifugo — bitget's own WS shape: top-level `action` / `arg` / `data` /
   `ts`, the same family as ex8/okx. Market key is `arg.instId` (`BTCUSDT`, must match
   `exchange_markets.market`).
-- **`data` is an ARRAY** containing the book object (one element in both samples) — the parser
-  must unwrap the array, not treat `data` as an object. It emits one event per element, so one
-  Kafka record can fan out into several events.
-- **`action` is the regime discriminator**, now `"snapshot" | "update"`. Any other value is noise
-  and is discarded per the message-types rule above.
+- **`data` is an ARRAY** containing the book object — the parser must unwrap the array, not treat
+  `data` as an object. It emits one event per element, so one Kafka record can fan out into several
+  events. **No other exchange in scope can do that.** ⚠ All 5 captured frames carry exactly ONE
+  element, so the fan-out is supported but unobserved on this channel.
+- **`action` is the regime discriminator**, and `"snapshot"` is its only accepted value. Anything
+  else is noise and is discarded per the message-types rule above — including `"update"`, which
+  was first-class on the `depth` channel.
 - **Levels**: `asks`/`bids` are `[price, qty]` **string** pairs ✅ (BigDecimal-from-string, no
-  numeric-literal hazard). Asks price-ascending, bids price-descending (best-first both sides) on
-  BOTH frames. Prices may lack decimals.
-- **A side may be absent on an update** — the parser nulls the missing side rather than dropping
-  the frame (job 5 reads null as "leave this side alone"), matching ex8/okx. Both captured frames
-  happen to carry both sides.
-- **Sequence**: inner `ts` (parse the string to long), **jump 650, tolerance 110**. It is the ONLY
-  ordering signal on the wire, and it is a clock, not a counter — the band is fitted to the
-  measured distribution, not to a cadence bitget publishes. `checksum` is metadata — bitget
-  intends it for CRC verification of the top of the book, which is the divergence detector this
-  feed actually wants and this pipeline does not implement (todo.md).
-- **Two timestamps**: inner `ts` is a **string** epoch-millis (`"1787404282388"`), top-level `ts`
-  a JSON **number**. In both captures they are equal, unlike the old `books50` frames where the
-  outer one was slightly later. Only the inner one is read.
-- **`scale` is a price-GROUPING bucket** (`"0.01"` here), like okx's `grouping` — it explains the
-  level spacing, it is not a wire rule and job 1 ignores it.
+  numeric-literal hazard). Asks price-ascending, bids price-descending (best-first both sides).
+  Prices may lack decimals.
+- **BOTH sides are required.** Every frame is a full book, so a half-frame would wipe a live side
+  rather than leave it alone — the whole frame is dropped instead. This is the opposite of the
+  `depth` channel's rule, where a one-sided update nulled the absent side like ex8/okx.
+- **Sequence**: `data[i].seq`, an integral JSON number, **jump 0**. A snapshot is ORDERED, never
+  jump-checked (the platform-wide invariant), so job 2's whole test is `seq <= lastSeq` ⇒
+  `stale_or_duplicate`; any forward seq is accepted however far it jumps.
+- **⚠ `pseq` is read by nobody, and it is NOT a predecessor pointer** — it reads **0 on every
+  captured frame**. It looks like ex8/okx's `prevSeqId` and is nothing of the sort; a chain rule
+  built on it would reject everything.
+- **Two timestamps**: inner `ts` is a **string** epoch-millis (`"1788771223652"`), top-level `ts`
+  a JSON **number**, 1–2 ms later. Only the inner one is read — as the event time.
+- **Wire TYPES are part of the whitelist**: `seq` must be an integral number and `ts` a string. A
+  frame that swaps them is a different message, not a lenient variant of this one, and is dropped.
 
-### ex5 REST snapshot (SECOND stream, captured 2026-08-23)
+### RETIRED — the `depth` channel and its REST stream (2026-08-22 … 2026-09-07)
 
-`ex5-raw` carries **two** streams, the same split ex1 and ex2 have: the WS `depth` feed above, and
-bitget's REST depth endpoint. NiFi tags the REST body with `"action": "snapshot"` and injects the
-market as a top-level `"pair"` (the response carries no symbol of its own), exactly as it does for
-ex1/ex2.
+Kept as history: none of it describes the current wire. It is here because the two live incidents
+it records are the reason two rules elsewhere in the platform exist.
 
-```json
-{
-  "code": "00000",
-  "msg": "success",
-  "requestTime": 1787465707150,
-  "data": {
-    "a": [[1.4482, 433.2497], [1.4483, 927.4044], [1.4484, 1432.4082]],
-    "b": [[1.4481, 83.5936], [1.448, 433.2497], [1.4479, 3312.1526]],
-    "ts": "1787465707152"
-  },
-  "pair": "XRPUSDT",
-  "action": "snapshot",
-  "simulation": 0,
-  "id": "12caf5fe-b438-493e-9b42-75bdf31d92e6"
-}
-```
+- The `depth`/`scale` channel was a **true delta feed** (`action: "snapshot" | "update"`, qty
+  `"0"` = delete) with **no `seq` on the wire** — the `checksum` that replaced it is a CRC, not a
+  sequence — so the sequence id had to be the inner `ts`, a millisecond clock.
+- Measured live 2026-08-23 (4569 frames / 36 min, BTCUSDT): the WS channel sent **no snapshots at
+  all** (3538 updates, 0), so bitget's REST depth endpoint was its only baseline. Sequencing that
+  REST body by its own `ts` — a different clock, behind the last WS update 57% of the time — made
+  ~90% of resyncs gap instantly: accept → gap → empty the book → ask again, **28.6 resets/min**.
+  The fix was to make the REST body **null-seq** (the `baselinePending` bootstrap) and widen the
+  update window to `650 ± 110`. That is the "ex5 resync loop", and ex6/bybit and ex8/okx both
+  keep their REST snapshots null-seq because of it.
+- update→update was **bimodal** (a 575–625 mass plus a real 725–775 cluster), which is why
+  `sequence_jump_tolerance` was added to the schema at all.
+- The REST body's shape, for anyone reviving the poller: `data` a single **OBJECT**, sides spelled
+  `a`/`b`, levels as JSON **NUMBERS**, market from NiFi's injected root `pair`, `requestTime`
+  ignored. `action` read `"snapshot"` on both streams, so the parser discriminated on the shape of
+  `data` — an object being REST, an array being WS.
 
-(Level arrays trimmed — the real response carried ~195 asks and ~195 bids. `simulation` and `id`
-are NiFi's, shown here because this capture came off the raw topic; the committed fixture omits
-them, like every other fixture, and the shared tests inject them.)
-
-Parsing notes (job 1) — it differs from the WS frame on **every** axis that matters:
-
-- **`action` is `"snapshot"` on BOTH streams, so it cannot be the discriminator.** Same trap as
-  ex1/ex2. The parser branches on the shape of `data`: an **object** is the REST body, an
-  **array** is a WS frame.
-- **Market key is the injected root `pair`** (`XRPUSDT`), not `arg.instId` — there is no `arg`.
-- **`data` is a single OBJECT**, not an array, so this stream can never fan one record out into
-  several events the way the WS one can.
-- **The sides are `a` / `b`**, not `asks` / `bids`. Both are required: this is a full book, never
-  a per-side snapshot, so a body missing either side is dropped rather than half-applied.
-- **Levels are JSON NUMBERS**, not string pairs — the one place ex5 shares a hazard with ex3/ex4.
-  They go through `Levels.fromNumericArrays`, i.e. BigDecimal from the decimal literal then
-  `toPlainString`, never via double. Scale is the literal's own: `1.448` stays `"1.448"`.
-- **`sequence_id` is NULL and `sequence_jump` is 0** — the `baselinePending` bootstrap ex1/ex2
-  give their REST bodies. `data.ts` is still the **event time**; it is a real timestamp, just not
-  a comparable sequence. **⚠ REVISED 2026-08-23 (2) — this replaces the original decision to
-  sequence it by its own `data.ts` at 600 ± 10, which caused a live resync loop.** Measured on the
-  dev feed: the REST `ts` is on the endpoint's clock, ranging −706..+662 ms against the WS update
-  just before it and **behind it 57% of the time**, and the update just after it landed inside the
-  old window only **9.9%** of the time. So ~90% of resyncs gapped instantly — accept → gap → empty
-  the book → request another snapshot → repeat, **28.6 book resets and 28.7 requests per minute**,
-  with `control-plane` saturated. Replaying the same 36-minute capture through null-seq +
-  `650 ± 110` gives **0.1 resets/min and 0.1 requests/min**. Never compare the two clocks.
-- **`requestTime` is ignored** — it is the API round trip, not the book's timestamp.
-- **`code` / `msg` are not inspected.** An error body has no `data.a` / `data.b`, so the shape
-  whitelist already discards it; a second check would be dead weight.
 
 ## ex6-raw — bybit
 

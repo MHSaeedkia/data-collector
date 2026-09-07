@@ -386,3 +386,119 @@ value, but measured from a predecessor never accepted → `sequence_gap` + RESET
 ex8's sequence is `seqId`, its jump is dynamic, and only ex5 is still sequenced by a timestamp.
 Test labels that said "(ex8, jump 300)" were relabelled "(fixed jump 300)": those tests still pin
 real generic behaviour, they were just mis-attributed after the switch.
+
+---
+
+## 2026-09-07 — ex5 leaves the delta group; `sequence_jump_tolerance` loses its only user
+
+ex5/bitget went back to the `books50` channel: snapshot-only, real `seq` counter, jump 0. See
+[[project_pair_extractor]] for the wire. **Zero behavioural change in job 2** — the snapshot branch
+already handled exactly this shape (it is ex4's, and was ex5's own before 2026-08-22).
+
+**What this changes about job 2's own state:**
+
+- The delta group is now **ex6, ex7, ex8** only. ex1/ex2 left it 2026-09-02, ex5 leaves it now.
+- **`sequence_jump_tolerance` is 0 on every exchange.** ex5 was the only feed that ever stamped a
+  nonzero one (600 ± 10, then 650 ± 110), because its sequence was then a millisecond clock that
+  never landed on an exact multiple. At 0 the window collapses to the exact `seq == last + jump`
+  check, so the feature is now inert in production.
+- **The window code and the schema field STAY** (user decision). Removing them would mean
+  re-registering `raw-order-book-event` AND `rejected-order-book-event` and resubmitting every
+  job, for no behaviour change, and the next timestamp-sequenced feed would just have to re-add
+  them. What was removed instead is the *claim* that ex5 uses it — the comments in
+  `TypeValidateFunction`, `RawOrderBookEvent` and the `.avsc` `doc` all said so.
+- `TypeValidateFunctionTest`'s `bitget(...)` helper is now **`tolerantJump(...)` on a SYNTHETIC
+  exchange id (`TOLERANT_EX = 99`)**, and four display names lost their "(ex5)" tag. The test
+  bodies are byte-identical — they still exercise the window, they just no longer assert something
+  false about a live exchange. `bitgetRestResyncDoesNotSeedTheWindow` →
+  `restResyncDoesNotSeedTheWindow`, reframed as the regression test for the PATTERN (which
+  ex6/ex8 still have at tolerance 0), not for the exchange.
+
+⚠ **The "ex5 resync loop" stays in the notes and in the comments as history, and it must.** It is
+the reason ex6's and ex8's REST snapshots are null-seq. Do not delete those references just
+because ex5 no longer has a REST stream.
+
+**71 job-2 tests green, unchanged in count.**
+
+---
+
+## 2026-09-07 (PR #1 review) — changing an exchange's sequence SEMANTICS is a job-2 state migration
+
+**Job 2 holds `lastSeq` in keyed state, and nothing in a job-1 parser change clears it.** When ex5
+moved from the `depth` channel (sequence = inner `ts`, epoch MILLIS ~1.8e12) to `books50`
+(sequence = `seq` ~7.9e11), the new values are about a TRILLION lower than what a running job 2
+already has. Its snapshot branch rejects `seq <= lastSeq` as `stale_or_duplicate`, so a
+job-1-only deploy dead-letters every ex5 frame indefinitely.
+
+**There is no way out of that state for a snapshot-only feed**, and this is the part worth
+remembering: the only escape hatch is `!resyncPending()`, and `resyncRequestedAt` is set only by
+`askForSnapshot` — called from the three UPDATE-branch sites (`no_baseline`, `awaiting_snapshot`,
+`sequence_gap`) and from the silence timer. A snapshot-only exchange reaches none of the three, and
+the silence timer never fires because `lastArrivalMs` is stamped for EVERY event before any branch
+(deliberately — "a key rejecting every update is alive"). Frames keep arriving, so the market never
+looks silent, and nothing ever asks NiFi for anything.
+
+⚠ **This corrects the "benign" reading in [[project_pair_extractor]]**: it is not a resync loop,
+true, but it is also not self-healing. It needs an operator to restart job 2. Same shape for any
+future backwards `seq` (a reconnect, a per-connection counter, an exchange-side reset).
+
+**Rule going forward: if a change alters what an exchange's `sequence_id` MEANS, resubmit job 2
+with it.** No checkpointing is configured, so that just clears the state; the cost is one cold
+start for the delta feeds (`no_baseline` + one `snapshot_request` each, then re-baseline).
+
+**Detection**, if it is missed: the staleness exporter watches `type-validated-raw-flink` per
+subscribed market, so ex5 markets alarm as stale — but with no reason attached, while `ex5-raw`
+looks perfectly healthy. `ex{id}-p{id}-rejected-flink` is deliberately unmonitored.
+
+**Proven live, not reasoned**: `63-ex5-seq-carried-over-from-depth` PASSES against a provisioned
+stack, and is mutation-checked — lowering ONLY the carried-over `seq` to 500 flips the run to 4
+accepted snapshots and 0 rejects. See [[project_e2e_harness]].
+
+---
+
+## 2026-09-07 — FIXED: the no-progress clock (`no_progress`)
+
+The lockout described in the section above is **closed in code**, user decision after the options
+were laid out. The fault it covers is not ex5's and not a deploy's: **ex2 and ex4 sequence their
+snapshots by Centrifugo `pub.offset`**, which restarts when the channel history is recreated, and
+ex5's `seq` would do the same if it turns out to be per-connection. All three are snapshot-only,
+so all three could sit dead-lettered forever.
+
+**The change is one idea: job 2 measured liveness by ARRIVAL only, so a key refusing 100% of what
+arrives looked healthy.** Now it keeps a second clock, `lastAcceptedMs`, stamped in `emit(...)` —
+the single choke point every accepted event passes through, so a future accept path cannot forget
+it. `onTimer` takes the EARLIER of the two deadlines:
+
+| clock | condition | reason |
+| ----- | --------- | ------ |
+| arrival | nothing came in for the threshold | `stale` (unchanged) |
+| progress | things came in, none accepted for the threshold | `no_progress` (new) |
+
+**Three things that make it safe, and each is a test:**
+
+1. **The progress clock is gated on `!resyncPending()`.** A delta feed holding updates as
+   `awaiting_snapshot` is already asking on the rejection path, and re-diagnosing it would
+   double-ask for one fault — the exact objection the arrival-only design was built on. Gating
+   also keeps the armed deadline in the FUTURE: a key resync-pending for an hour has a progress
+   clock an hour stale, and arming on it would fire instantly and **spin**. That was the one real
+   hazard in this change.
+2. **Silence outranks no-progress** when both hold.
+3. **Recovery is not new code.** The ask sets `resyncRequestedAt`, which opens the snapshot
+   branch's existing `!resyncPending()` escape hatch, so the next snapshot is accepted whatever
+   its sequence id and re-anchors `lastSeq`. All that was added is a way IN to the resync path
+   that already existed.
+
+⚠ **One existing test asserted the hole and was rewritten, not deleted**:
+`rejectedEventsCountAsArrival` → `rejectedEventsCountAsArrivalButNotAsProgress`. Its old rationale
+("a key rejecting everything is already re-asking on the rejection path") is true only of the
+UPDATE branch — the frame it rejects is a stale SNAPSHOT, which asks for nothing. It now asserts
+the reason is `no_progress` and NOT `stale`, which still proves the arrival clock counted the
+rejected frame as the feed being alive.
+
+`no_progress` is a new value of `control_command.reason`, which is a plain Avro **string** with a
+default — no schema change, `doc` updated only. **No consumer branches on `reason`**
+(`market-subscriptions` never reads it); it is diagnostic.
+
+**Verified: 294 normalizer tests green (73 in job 2, +2), and 7 e2e scenarios PASS live** —
+25, 62, 63 (ex5), 32 (ex6 deltas), 38 (ex8 no-baseline), and the two that could most plausibly
+regress, `44-control-ex6-gap-resync-gap` and `46-control-ex6-stale-resync-accepted`.
