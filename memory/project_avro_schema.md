@@ -137,6 +137,9 @@ alone. See [[project_pair_extractor]] § ex8.
 
 ## 2026-09-07 — `sequence_jump_tolerance` is now inert (doc-only change)
 
+> ⚠ **SUPERSEDED the same day — the field was REMOVED outright. See the next section.** The
+> "keep it" reasoning below is kept because it records what was weighed.
+
 ex5/bitget moved back to a snapshot-only `books50` feed with a real `seq` counter, so **no
 exchange stamps a nonzero `sequence_jump_tolerance` any more** (see [[project_pair_extractor]]).
 

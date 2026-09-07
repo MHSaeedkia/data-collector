@@ -360,7 +360,8 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   were new capabilities ex5 could not have as a snapshot-only feed: it has a cold start
   (`no_baseline` + a control command) and it can gap. `27-ex5-jump-tolerance` is the ONLY scenario
   anywhere that exercises `sequence_jump_tolerance`: both window edges (+590, +610) accepted, +611
-  a real gap.
+  a real gap. ⚠ **Both the scenario and the FIELD are gone** — 27 was retired 2026-09-07 and the
+  schema field was deleted the same day, precisely because retiring 27 left it with no coverage.
 - **`31-ex5-rest-snapshot-resync` (2026-08-23)** — bitget's REST depth body, the second stream on
   `ex5-raw` ([[project_pair_extractor]]). It is run where the REST body actually appears: a WS gap
   empties the book and asks the control plane, and the REST snapshot is what answers, after which

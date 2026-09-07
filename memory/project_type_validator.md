@@ -136,7 +136,9 @@ REST-snapshot + WS-delta exactly like ex1, and needed NO job-2 code change (the 
 resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extractor]].
 (The remaining snapshot-only feed ex4 and the no-ordering ex3 never hit the gap branch, so they
 never emit a reset. **ex5 bitget LEFT this list 2026-08-22** — it became a snapshot/update delta
-feed and now does hit it; see the jump-tolerance note below.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+feed and now does hit it; see the jump-tolerance note below. ⚠ ex5 REJOINED the snapshot-only
+list 2026-09-07, and the jump tolerance that note describes was deleted the same day — see the
+LAST dated § of this file.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
 verified live yet.**
 
 ## The ordering guards are suspended during a resync (2026-08-19)
@@ -373,7 +375,8 @@ above is WITHDRAWN unimplemented.** The team switched okx to the `books` channel
 `sequence_jump = seqId - prevSeqId` per message, so this function's `seq == lastSeq + jump` reduces
 to `prevSeqId == lastSeq` — exact contiguity with **no window, no tolerance, and no change to job
 2**. So the grid/multiple rule and the extra schema field are not needed and were never written; the
-`sequence_jump_tolerance` field stays used by ex5/bitget alone. Details in
+`sequence_jump_tolerance` field stays used by ex5/bitget alone (⚠ which lasted two more days:
+ex5 left the delta group 2026-09-07 and the field was deleted the same day). Details in
 [[project_pair_extractor]] § ex8 IMPLEMENTED.
 
 **What DID change here: the dynamic jump finally has cover.** It had none — ex7/ompfinex has relied

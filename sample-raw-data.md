@@ -352,9 +352,10 @@ in one move, everything the 2026-08-22 and 2026-08-23 revisions below recorded:
    command at all**.
 2. **`seq` and `pseq` are back**, and `checksum` is gone. The ordering field is a real monotonic
    counter again — `data[i].seq`, jump 0 — not the `ts` clock the `depth` channel forced.
-   `sequence_jump_tolerance` therefore goes back to 0, and since ex5 was **the only exchange that
-   ever stamped a nonzero one, no feed uses that field any more** (it stays in the schema and in
-   job 2 as a no-op — see memory/project_type_validator.md).
+   `sequence_jump_tolerance` therefore went back to 0, and since ex5 was **the only exchange that
+   ever stamped a nonzero one, the field lost its last user and was DELETED from both schemas on
+   2026-09-07** — job 2's contiguity check is a plain `seq == last + jump` equality again. See
+   memory/project_type_validator.md and memory/project_avro_schema.md.
 3. **`arg` lost `params.scale`** and `instType` changed back `"sp"` → `"SPOT"`; `arg.channel` is
    `books50`, so depth is encoded in the channel name again.
 4. **The REST depth stream is GONE.** `ex5-raw` carried two streams between 2026-08-23 and this
@@ -472,7 +473,9 @@ it records are the reason two rules elsewhere in the platform exist.
   update window to `650 ± 110`. That is the "ex5 resync loop", and ex6/bybit and ex8/okx both
   keep their REST snapshots null-seq because of it.
 - update→update was **bimodal** (a 575–625 mass plus a real 725–775 cluster), which is why
-  `sequence_jump_tolerance` was added to the schema at all.
+  `sequence_jump_tolerance` was added to the schema at all. It outlived its only user by two
+  weeks and was **removed on 2026-09-07**; a future timestamp-sequenced feed would have to
+  re-add it.
 - The REST body's shape, for anyone reviving the poller: `data` a single **OBJECT**, sides spelled
   `a`/`b`, levels as JSON **NUMBERS**, market from NiFi's injected root `pair`, `requestTime`
   ignored. `action` read `"snapshot"` on both streams, so the parser discriminated on the shape of

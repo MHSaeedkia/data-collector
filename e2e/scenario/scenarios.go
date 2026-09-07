@@ -41,9 +41,11 @@ var Scenarios = []struct {
 
 	// Bitget — snapshot-only again since 2026-09-07, back on the `books50` channel with a
 	// real `seq` counter (jump 0). 26 (ex5-update-before-snapshot), 27 (ex5-jump-tolerance)
-	// and 31 (ex5-rest-snapshot-resync) were REMOVED with that change: ex5 sends no updates,
-	// stamps no jump tolerance, and has no second REST stream, so none of those code paths is
-	// reachable through it any more. Numbers left retired rather than reused or renumbered,
+	// and 31 (ex5-rest-snapshot-resync) were REMOVED with that change: ex5 sends no updates
+	// and has no second REST stream, so none of those code paths is reachable through it any
+	// more. (27's subject went further — ex5 was the only feed that ever stamped a jump
+	// tolerance, so the field itself was deleted from the schema on 2026-09-07 and job 2's
+	// contiguity check is a plain equality again.) Numbers left retired rather than renumbered,
 	// per the convention below. Ex5StaleSeq — the snapshot ordering rule that replaces all
 	// three — is appended as 62. See data_ex5.go.
 	{"25-ex5-snapshot-stream", Ex5SnapshotStream},
