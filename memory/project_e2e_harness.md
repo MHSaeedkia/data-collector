@@ -906,3 +906,37 @@ changed), but nothing was observed and no mutation check was done.
 two-stream discriminator in the present tense, `data_ex9.go` claimed ex5 and ex8 are
 timestamp-sequenced (neither is any more), and `lineage.go` listed ex5 among the JSON-NUMBER
 payloads that must not round-trip through float64 — that is ex3 and ex4 now.
+
+---
+
+## 2026-09-07 (PR #1 review) — ex5 block RUN LIVE, and `63-ex5-seq-carried-over-from-depth`
+
+**The ex5 block no longer rests on reasoning: 25, 28, 29, 30, 62 and the new 63 all PASS** against
+a freshly provisioned stack. The "NOT RUN LIVE" caveat on this change is discharged for e2e; what
+is still unverified is the dev server's actual `ex5-raw` wire.
+
+**`63-ex5-seq-carried-over-from-depth` (new, appended — 62 was the previous tail).** It pins the
+DEPLOY hazard: job 2 carrying a `lastSeq` from the `depth` channel's millisecond clock while job 1
+starts stamping a `books50` `seq` a trillion lower. Sources 02–04 carry the REAL captured seqs
+moving forward and are all dead-lettered `stale_or_duplicate`; the control stream is asserted
+EMPTY, which is the load-bearing half — it proves the feed cannot ask its way out. See
+[[project_type_validator]] for why.
+
+⚠ **Why source 01 carries a millisecond value as its `seq`**: `warmup.Run` cancels and resubmits
+every job before each scenario, so **no scenario can inherit state from the one before it**. 01
+stands in for the state a live job 2 holds at deploy time. Job 2 does not care how `lastSeq` got
+there. Any future "the pipeline carried bad state across a deploy" case has to be written this
+way.
+
+**Mutation-checked** (the convention 31 established): lowering ONLY 01's `seq` to 500 makes the run
+fail `ex5-p1-orderbook-snapshot-flink: got 4 records, want 1` — all four frames accepted, zero
+rejects. One value, opposite outcome, so the assertion is causal rather than incidental.
+
+**The control experiment is the rest of the block**: warmup gives every other ex5 scenario an EMPTY
+job 2, and the same low seq values are accepted there immediately.
+
+**Running one scenario:** there is no filter flag — `main.go` runs the whole compiled list. For the
+review it was patched with a temporary `E2E_ONLY` env check and reverted afterwards; `-serve` +
+`POST /scenarios/run` is the supported way to run one case. `-provision-stack=false` reuses an
+already-running stack and saves the `down -v`/`up --wait`. On a machine with only JDK 26, `mvn`
+needs `-Djacoco.skip=true` (the harness's own build passes `-DskipTests`, so it is unaffected).

@@ -1198,9 +1198,22 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.STALE);
     }
 
+    /**
+     * Given a key whose only recent traffic was REJECTED, When the threshold passes, Then it
+     * is not called {@code stale} — the arrival clock did its job — but it IS called
+     * {@code no_progress}, because nothing has been accepted for a whole threshold.
+     *
+     * <p>REVISED 2026-09-07: this test used to assert NO command at all, on the rationale
+     * that "a key rejecting everything is already re-asking on the rejection path". That
+     * rationale only covers the UPDATE branch, where the three asking rejects live. The
+     * event rejected here is a stale SNAPSHOT, which asks for nothing, so the key was
+     * refusing every frame while telling nobody — see {@link TypeValidateFunction#NO_PROGRESS}.
+     * The reason assertion is the point: {@code no_progress} rather than {@code stale} proves
+     * the arrival clock still counted the rejected frame as the feed being alive.
+     */
     @Test
-    @DisplayName("staleness: a REJECTED event still counts as arriving - the feed is alive")
-    void rejectedEventsCountAsArrival() throws Exception {
+    @DisplayName("staleness: a rejected event counts as ARRIVING, but not as PROGRESS")
+    void rejectedEventsCountAsArrivalButNotAsProgress() throws Exception {
         withRetryInterval(600_000L, EX8);
         send(delta(8, 1, "snapshot", 1000L, 300L));
         harness.setProcessingTime(50_000L);
@@ -1209,10 +1222,74 @@ class TypeValidateFunctionTest {
         harness.setProcessingTime(100_000L);
 
         assertThat(rejects()).hasSize(1);
-        // Silence means nothing ARRIVED. A key rejecting everything is alive and is
-        // already re-asking on the rejection path; calling it stale too would be one
-        // fault asking twice.
-        assertThat(controlCommands()).isEmpty();
+        assertThat(controlCommands()).hasSize(1);
+        // Not STALE: it spoke 50s ago and the threshold is 60s.
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.NO_PROGRESS);
+    }
+
+    /**
+     * Given a SNAPSHOT-ONLY feed whose sequence counter re-based below the last accepted one
+     * (ex2/ex4 Centrifugo {@code pub.offset} recreated, ex5 {@code seq} on a reconnect, or a
+     * job-1 change to what the sequence MEANS), When a whole threshold passes with frames
+     * arriving and none accepted, Then job 2 asks for a snapshot and the NEXT frame is
+     * accepted whatever its sequence id, re-anchoring {@code lastSeq} on the new base.
+     *
+     * <p>Before 2026-09-07 this key stayed dead-lettered until an operator restarted the job:
+     * a snapshot-only feed reaches none of the three asking rejects (all in the update
+     * branch), and the silence timer never fires while frames keep arriving. The recovery
+     * itself is not new — it is the {@code !resyncPending()} escape hatch the resync path has
+     * always had. All that was missing was a way in.
+     */
+    @Test
+    @DisplayName("no-progress: a re-based sequence counter asks, then re-anchors on the next frame")
+    void rebasedSequenceCounterRecovers() throws Exception {
+        withRetryInterval(600_000L, new WatchedMarket(5, 1, 60));
+        send(snapshotFeed(5, 1, 1_800_000_000_000L)); // the pre-rebase counter
+        harness.setProcessingTime(10_000L);
+        send(snapshotFeed(5, 1, 787_944_892_031L)); // re-based: a trillion lower
+        assertThat(rejects()).hasSize(1);
+        assertThat(controlCommands()).isEmpty(); // still inside the threshold
+
+        harness.setProcessingTime(61_000L);
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.NO_PROGRESS);
+
+        // The way back in: the next frame is accepted despite still being below lastSeq,
+        // and the one after it chains forward from the NEW base.
+        send(snapshotFeed(5, 1, 787_944_903_153L));
+        send(snapshotFeed(5, 1, 787_944_916_487L));
+        assertThat(validBusiness()).hasSize(3);
+        assertThat(rejects()).hasSize(1); // no new dead letters
+        assertThat(controlCommands()).hasSize(1); // and it did not ask twice
+    }
+
+    /**
+     * Given a delta feed already holding updates as {@code awaiting_snapshot}, When the
+     * threshold passes, Then the no-progress clock stays quiet: the key is refusing
+     * everything for a cause it has already reported and is already retrying on, and one
+     * fault must not ask twice. That gate is also what keeps the timer's deadline in the
+     * FUTURE — a key resync-pending for hours has a progress clock hours stale, and arming a
+     * timer on it would fire instantly and spin.
+     */
+    @Test
+    @DisplayName("no-progress: a key already awaiting a snapshot is not diagnosed again")
+    void awaitingSnapshotIsNotReDiagnosed() throws Exception {
+        withRetryInterval(600_000L, EX8);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        harness.setProcessingTime(10_000L);
+        send(from(delta(8, 1, "update", 99000L, 300L), "job1-gap")); // GAP — opens the episode
+        assertThat(controlCommands()).hasSize(1);
+
+        // The feed keeps talking and every frame is held. Well past the 60s threshold
+        // measured from the last ACCEPTED event, which was at t=0.
+        harness.setProcessingTime(50_000L);
+        send(from(delta(8, 1, "update", 99300L, 300L), "job1-held-1"));
+        harness.setProcessingTime(100_000L);
+        send(from(delta(8, 1, "update", 99600L, 300L), "job1-held-2"));
+        harness.setProcessingTime(150_000L);
+
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.SEQUENCE_GAP);
     }
 
     @Test

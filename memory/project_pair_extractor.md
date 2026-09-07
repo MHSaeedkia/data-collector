@@ -912,10 +912,18 @@ them through the built parser):
 (frame 1 → 2 dropped ask 79429.65 and bid 79425.21; frame 4 → 5 dropped 11 asks and 4 bids).
 Wholesale replacement is mandatory; merging would leave dead levels in the book forever.
 
-The remaining `seq` risk is now small and its failure mode is benign: if it were per-connection
-rather than per-book, a reconnect would dead-letter `stale_or_duplicate` — never a resync loop,
-because a snapshot feed cannot gap. The null-seq alternative was considered and rejected: it would
-lose duplicate detection for nothing.
+⚠ **CORRECTED 2026-09-07 (PR #1 review) — the remaining `seq` risk is NOT benign.** The original
+note said a backwards `seq` (a per-connection counter, a reconnect, an exchange-side reset) would
+"dead-letter `stale_or_duplicate` — never a resync loop, because a snapshot feed cannot gap". The
+first half is right and the conclusion is wrong: it is not a loop, but it is also **not
+self-healing**. A snapshot-only feed can reach no branch that calls `askForSnapshot`, and the
+silence timer never fires while frames keep arriving, so the escape hatch never opens and the key
+stays dead-lettered until an operator restarts job 2. The same mechanism makes a job-1-only
+deploy of THIS change go dark on ex5 — see [[project_type_validator]] and
+`63-ex5-seq-carried-over-from-depth`. The null-seq alternative (the ex3/ex9 event-time branch)
+self-heals on any reconnect and remains the fallback if `seq` turns out not to be durable per
+market; it costs only exact-duplicate detection, which on a wholesale-replacement snapshot feed is
+idempotent anyway.
 
 ⚠ Two capabilities are supported but UNOBSERVED, and are marked as defensive in the tests: the
 multi-element `data` fan-out (all 5 frames carry one element) and a qty-`"0"` level (none in 500).
@@ -931,3 +939,46 @@ the scenario churn and [[project_avro_schema]] for the `doc` string.
 use `JAVA_HOME=$(/usr/libexec/java_home -v 21)`), e2e build/vet/gofmt/test clean. NOT RUN LIVE** —
 the docker stack was down, so the e2e books are reasoned from the old ex5 scenarios (only prices
 and sequencing changed), not observed.
+
+---
+
+## 2026-09-07 — bitget's DOCS on `seq`/`pseq`: resets are documented, and `pseq=0` may be the marker
+
+Checked against bitget's official Depth Channel docs (see [[project_type_validator]] for why it
+mattered). ⚠ **The doc pages are a JS SPA and could not be fetched directly** — the wording below
+is the search index's extract of the official page, returned identically for two independent
+queries. Re-read it from the page itself before building anything load-bearing on it.
+
+**Two documented conditions where `seq` is NOT monotonic:**
+
+> "In cases such as system releases or service restarts, the serial numbers may be reset. At this
+> time, users will most likely receive a push message with **pseq=0**. After the reset, all
+> subsequent messages will continue to be ordered normally."
+
+> "The seq of update incremental messages should be increasing, **except during symbol
+> maintenance**."
+
+So a reset is a **routine operational event** — bitget deploying, or a symbol going into
+maintenance. It is not exotic and not something we can avoid.
+
+⚠ **OVERFLOW IS NOT THE MECHANISM, and it never will be.** Observed `seq` ≈ 7.88e11 against an
+int64 ceiling of 9.22e18, advancing ~3e4/s → roughly **10 million years** to wrap. Any reasoning
+that treats "the counter reached its maximum" as the reset case is wrong by seven orders of
+magnitude; the reset is a deploy, not an overflow.
+
+**⚠ `pseq` may carry a SECOND meaning we did not know about — this needs a longer capture.** The
+notes above (from 5 consecutive frames) concluded "pseq reads 0 on every frame, so it is not a
+predecessor pointer". That stays true as an observation, but the docs give `pseq=0` a specific
+job: it is the **reset marker**. Two readings, and they have opposite consequences:
+
+- **(likely)** on `books50` — snapshot-only, no incremental chain — `pseq` is simply always 0
+  because there is no predecessor to name. Then the wire carries NO reset signal and job 2's
+  no-progress timer is the only detector we can have.
+- **(if wrong)** `pseq` is normally non-zero and drops to 0 exactly on a reset. Then we have an
+  **instant, exact reset signal on the very first frame**, which is strictly better than waiting
+  out a 60 s threshold.
+
+Settle it by watching `pseq` across a longer capture and, ideally, across a real bitget deploy.
+If the second reading holds, the parser should surface it and job 2 should re-anchor on it, with
+the timer demoted to a safety net. Note the seq/pseq CHAIN wording in the docs is about the
+*incremental* channel, which is what argues for the first reading.

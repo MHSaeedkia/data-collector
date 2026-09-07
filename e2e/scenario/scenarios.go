@@ -133,4 +133,11 @@ var Scenarios = []struct {
 	// coverage: a repeated or older `seq` is stale_or_duplicate, a forward one is accepted
 	// however far it jumps, and the control stream stays empty. See data_ex5.go.
 	{"62-ex5-stale-seq", Ex5StaleSeq},
+
+	// The ex5 DEPLOY hazard (added 2026-09-07, PR #1 review). Job 2 keeps `lastSeq` in keyed
+	// state and is not resubmitted by this change, so at deploy time it still holds the `depth`
+	// channel's millisecond sequence — about a trillion above any `books50` seq. Every frame off
+	// the new channel is then dead-lettered stale_or_duplicate with no control command and no way
+	// back. Resubmit job-type-validator alongside job-pair-extractor. See data_ex5.go.
+	{"63-ex5-seq-carried-over-from-depth", Ex5SeqCarriedOverFromDepth},
 }

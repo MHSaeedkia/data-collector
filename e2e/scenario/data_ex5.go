@@ -512,3 +512,109 @@ var Ex5PrecisionDust = Scenario{
 		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "79698.5", Quantity: "0.4"}},
 	},
 }
+
+// Ex5SeqCarriedOverFromDepth — the DEPLOY hazard, made reproducible: job 2 holding a `lastSeq`
+// left over from the `depth` channel, where the sequence id was the inner `ts` in epoch MILLIS
+// (~1.8e12). A `books50` `seq` is ~7.9e11 — about a trillion LOWER — so every frame off the new
+// channel lands on `seq <= lastSeq` and is dead-lettered, and the whole exchange goes dark until
+// job 2's state is cleared.
+//
+// Why the first source carries a millisecond value as its `seq`: the harness cancels and
+// resubmits every job before each scenario (warmup.Run), so no scenario can inherit state from
+// the one before it. Source 01 therefore stands in for the state a LIVE job 2 is holding at the
+// moment job 1 is redeployed — job 2 does not care how `lastSeq` got there, only what it is.
+// 01 is a legal `books50` frame in every other respect.
+//
+// The three things this pins, none of which is true of `Ex5StaleSeq`:
+//
+//   - 02, 03 and 04 carry the REAL captured seq values (787944892031 -> 903153 -> 916487), so the
+//     sequence is moving FORWARD across them and is still rejected every time. The lockout does
+//     not clear itself as the counter climbs.
+//   - The control stream is EMPTY. Job 2's `!resyncPending()` escape hatch is the only way a
+//     lower `seq` is ever accepted, and only askForSnapshot opens it — reachable from the update
+//     branch (no_baseline / awaiting_snapshot / sequence_gap) and from the silence timer, none of
+//     which a snapshot-only feed whose frames keep ARRIVING can reach. So nothing asks NiFi for
+//     anything and there is no path back.
+//   - The aggregated book is frozen on 01's levels: downstream keeps serving the pre-migration
+//     book rather than going visibly empty.
+//
+// The control experiment is every other ex5 scenario in this file: warmup resubmits the jobs, so
+// they meet a job 2 with EMPTY state and the same low seq values are accepted immediately. The
+// fix at deploy time is exactly that — resubmit job-type-validator alongside job-pair-extractor,
+// which every Makefile deploy target already does (they all run cancel-flink-jobs.sh first).
+//
+// ⚠ SINCE 2026-09-07 THE LOCKOUT IS BOUNDED, NOT PERMANENT. Job 2 now also measures health on the
+// last ACCEPTED event, so after one `staleness_threshold_seconds` (60 in 02_seed.sql) it asks for
+// a snapshot with reason `no_progress` and the next frame re-anchors `lastSeq`. This scenario
+// still asserts the lockout because it observes the window BEFORE that timer fires: the whole run
+// completes in ~30 s of processing time. What it pins is that nothing recovers on its own within
+// that window — no forward seq gets in, and nothing is asked. The recovery half is unit-tested in
+// TypeValidateFunctionTest.rebasedSequenceCounterRecovers, where processing time can be moved by
+// hand instead of waited out.
+var Ex5SeqCarriedOverFromDepth = Scenario{
+	ExchangeID: 5,
+	PairID:     1,
+	Sources: []string{
+		// 01 the state job 2 carries over the deploy: a sequence id on the `depth` channel's
+		// millisecond clock, 1800000000000 = 2027-01-15T08:00:00Z as a NUMBER.
+		`{
+	"id": "0e1f4b8c-2d3a-4f61-9c7e-5b8a1d2e3f40",
+	"simulation": 1,
+	"action": "snapshot",
+	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
+	"data": [
+		{ "asks": [["79600.00", "1"]], "bids": [["79599.00", "2"]], "ts": "1800000000000", "seq": 1800000000000, "pseq": 0 }
+	],
+	"ts": 1800000000005
+}`,
+		// 02 the first real books50 frame after the redeploy — captured seq, a trillion lower
+		`{
+	"id": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9",
+	"simulation": 1,
+	"action": "snapshot",
+	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
+	"data": [
+		{ "asks": [["79601.00", "1"]], "bids": [["79598.00", "2"]], "ts": "1800000000100", "seq": 787944892031, "pseq": 0 }
+	],
+	"ts": 1800000000105
+}`,
+		// 03 seq has moved forward by the captured 11122 — still below the carried-over state
+		`{
+	"id": "2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901",
+	"simulation": 1,
+	"action": "snapshot",
+	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
+	"data": [
+		{ "asks": [["79602.00", "1"]], "bids": [["79597.00", "2"]], "ts": "1800000000200", "seq": 787944903153, "pseq": 0 }
+	],
+	"ts": 1800000000205
+}`,
+		// 04 the last frame of the live capture. Forward again, rejected again: waiting does not
+		// fix this, the counter would need ~1e12 more increments.
+		`{
+	"id": "3c4d5e6f-7081-4293-a4b5-c6d7e8f90123",
+	"simulation": 1,
+	"action": "snapshot",
+	"arg": { "instType": "SPOT", "channel": "books50", "instId": "BTCUSDT" },
+	"data": [
+		{ "asks": [["79603.00", "1"]], "bids": [["79596.00", "2"]], "ts": "1800000000300", "seq": 787944916487, "pseq": 0 }
+	],
+	"ts": 1800000000305
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01 only — nothing from the new channel ever reaches the book builder
+			ExchangeID: 5,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks:       []events.PriceLevel{{Price: "79600", Quantity: "1"}},
+			Bids:       []events.PriceLevel{{Price: "79599", Quantity: "2"}},
+		},
+	},
+	WantRejects: []string{"stale_or_duplicate", "stale_or_duplicate", "stale_or_duplicate"},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "79600", Quantity: "1"}},
+		Bids: []events.AggregatedLevel{{ExchangeID: 5, Simulation: 1, Price: "79599", Quantity: "2"}},
+	},
+}

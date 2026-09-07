@@ -1053,10 +1053,47 @@ the dated § in `memory/project_pair_extractor.md`.
 - [x] **292 normalizer tests green; e2e build/vet/gofmt/`go test ./...` clean.** Use
       `JAVA_HOME=$(/usr/libexec/java_home -v 21)` — the repo's jacoco cannot instrument JDK 25.
 
-- [ ] **⚠ NOT RUN LIVE.** Docker was down, so no e2e scenario was executed and no mutation check was
-      done. Run the ex5 block (25, 28, 29, 30, 62) against a provisioned stack before merging, and
-      check `ex5-raw` on the dev server actually carries `books50` frames with `seq` — the whole
-      change rests on one sample plus the user's word.
+- [x] **RUN LIVE 2026-09-07 (PR #1 review) — the whole ex5 block PASSES**: 25, 28, 29, 30, 62 and
+      the new 63, against a freshly provisioned stack (`docker compose down -v` + `up --wait`, all
+      six jobs resubmitted per scenario by `warmup.Run`). 63 was mutation-checked as well, see
+      below. Local `mvn` needs `-Djacoco.skip=true` on this machine — only Temurin 26 is installed
+      and jacoco cannot instrument it either, so the "use JDK 21" note above does not work as
+      written.
+- [ ] **⚠ Still unverified on the dev server**: that `ex5-raw` actually carries `books50` frames
+      with `seq`. The wire shape still rests on one sample plus the user's word.
+- [x] **FIXED IN CODE 2026-09-07 — the no-progress clock.** The lockout below is no longer
+      permanent for ANY feed: job 2 now also measures health on the last ACCEPTED event, so a key
+      that is arriving but accepting nothing for one `staleness_threshold_seconds` asks for a
+      snapshot with the new reason `no_progress`, and the existing `!resyncPending()` hatch lets
+      the next snapshot re-anchor `lastSeq`. This was NOT an ex5 problem — **ex2 and ex4 sequence
+      their snapshots by Centrifugo `pub.offset`, which restarts when the channel history is
+      recreated**, and both were exposed to exactly the same dead end. See
+      [[project_type_validator]]. 294 normalizer tests green; 7 e2e scenarios PASS live including
+      44 and 46, the two control-plane ones most likely to regress.
+- [ ] **⚠ DEPLOY ORDER — resubmit `job-type-validator` alongside `job-pair-extractor`.** Job 2 keeps
+      `lastSeq` in keyed state and this change does not touch its code, so a job-1-only deploy
+      leaves it holding the `depth` channel's MILLISECOND sequence (~1.8e12) while job 1 starts
+      stamping a `books50` `seq` (~7.9e11, about a trillion lower). Every ex5 frame then hits
+      `seq <= lastSeq` in the snapshot branch and is dead-lettered `stale_or_duplicate` — with NO
+      control command, because `askForSnapshot` is reachable only from the update branch and from
+      the silence timer, and a feed whose frames keep ARRIVING is never silent. It does not clear
+      itself as `seq` climbs. Proven live by `63-ex5-seq-carried-over-from-depth`, and
+      mutation-checked: lowering ONLY that carried-over `seq` to 500 turns the run into 4 accepted
+      snapshots and 0 rejects (the run then FAILS `got 4 records, want 1`). No checkpointing is
+      configured, so resubmitting job 2 simply clears the state — the cost is one cold start for
+      ex6/ex7/ex8, which emit `no_baseline` + one `snapshot_request` and re-baseline normally.
+      Detection if it is missed: the staleness exporter alarms on `ex5-p*-type-validated-raw-flink`
+      while `ex5-raw` looks healthy; `ex5-p*-rejected-flink` is deliberately unmonitored.
+      **REVISED — this is now belt-and-braces, not a blocker.** Every Makefile deploy target
+      (`refresh-normalizer`, `run-normalizer-jobs`, `prod-deploy`) runs `cancel-flink-jobs.sh`
+      first, which cancels EVERY running job, and `run-job.sh` cancels nothing — so there is no
+      supported single-job resubmit path that could leave job 2 running with stale state. And
+      since the no-progress fix above, even if one appeared the market would recover on its own
+      after one staleness threshold instead of needing an operator. Keep `63-ex5-…` as the
+      regression test for both.
+- [ ] **Deploy note for the no-progress fix:** it changes `job-type-validator`, so that job must be
+      rebuilt and resubmitted for it to take effect — no schema re-registration needed
+      (`control_command.reason` is a plain string; only its `doc` changed).
 - [ ] **⚠ NiFi must stop polling bitget's REST depth endpoint, if it has not already.** Job 1 has no
       branch for that shape now and will drop every such body silently (`dropped-no-parser` does not
       even fire — the parser returns empty). Same for answering an ex5 `snapshot_request` with REST:
@@ -1076,9 +1113,18 @@ the dated § in `memory/project_pair_extractor.md`.
 - [ ] **Two ex5 capabilities are supported but UNOBSERVED** and marked defensive in the tests: the
       multi-element `data` fan-out (all 5 frames carry exactly 1 element) and a qty-"0" level (0 in
       500 captured levels). Drop the tests only with evidence, not on a hunch.
-- [ ] **`sequence_jump_tolerance` now has NO test coverage in e2e** (27 was the only scenario) and no
-      production user. Decide whether that is acceptable or whether the job-2 unit tests are enough;
-      removing the field entirely is the alternative, and costs a re-registration of both subjects.
+- [ ] **REMOVE `sequence_jump_tolerance` — user decision 2026-09-07, in its OWN branch after this
+      one merges.** It has no production user (every feed stamps 0) and, since 27 was retired, no
+      e2e coverage; what is left is an untested window in job 2's hot path plus a
+      `TypeValidateFunctionTest` group that invents synthetic exchange 99 to exercise behaviour no
+      exchange produces. The field carries `default: 0`, so dropping it from both subjects is Avro
+      compatible in both directions. ~13 files: `raw_order_book_event.avsc` +
+      `rejected_order_book_event.avsc` and their `_example.json`, `RawOrderBookEvent`, the raw and
+      rejected serializer/deserializer pairs, `TypeValidateFunction` (window → equality),
+      `TypeValidateFunctionTest`'s `tolerantJump` group, the `isZero()` assertions in the bitget /
+      okx / lbank parser tests, and the mention in `data_ex5.go`. The real cost is re-registering
+      both subjects and resubmitting every job, not the code — kept out of this branch so an
+      ex5-only change does not drag that with it. `sequence_jump` itself STAYS (ex6/ex7/ex8).
 - [ ] **Register the `.avsc` doc fix** whenever the next real schema change goes out. Doc-only, Avro
       compatible, no version bump needed on its own — the serializers read the registry, never the
       bundled copy.
