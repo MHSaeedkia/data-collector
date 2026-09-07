@@ -90,6 +90,10 @@ func newConsumer(broker, group, pattern string, offset kgo.Offset) (*Consumer, e
 		kgo.ConsumeTopics(pattern),
 		kgo.ConsumerGroup(name),
 		kgo.ConsumeResetOffset(offset),
+		// Both patterns this is called with (job 5's snapshots, job 6's aggregated family) are
+		// EXACTLY_ONCE/transactional again; franz-go defaults to read_uncommitted, which would let
+		// this see records from a transaction that later aborts.
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 	)
 	if err != nil {
 		return nil, err

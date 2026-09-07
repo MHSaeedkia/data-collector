@@ -1,14 +1,17 @@
 package io.tibobit.normalizer.precision;
 
+import io.tibobit.normalizer.checkpoint.CheckpointingConfigurer;
+import io.tibobit.normalizer.kafka.PatternTopicSelector;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.serde.RawOrderBookEventDeserializer;
 import io.tibobit.normalizer.serde.RawOrderBookEventSerializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
-import org.apache.flink.connector.kafka.sink.TopicSelector;
+import org.apache.flink.connector.kafka.sink.TransactionNamingStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -30,6 +33,8 @@ public class PrecisionJob {
 
     private static final Pattern INPUT_TOPIC_PATTERN =
             Pattern.compile("ex[0-9]+-p[0-9]+-rebased-flink");
+    private static final Pattern OUTPUT_TOPIC_PATTERN =
+            Pattern.compile("ex[0-9]+-p[0-9]+-applied-precision-flink");
 
     public static void main(String[] args) throws Exception {
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
@@ -41,12 +46,16 @@ public class PrecisionJob {
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "60000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        CheckpointingConfigurer.configure(env);
 
         KafkaSource<RawOrderBookEvent> source = KafkaSource.<RawOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
+                // job 3's sink is EXACTLY_ONCE/transactional; read_committed avoids seeing
+                // records from a transaction that later aborts.
+                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new RawOrderBookEventDeserializer(schemaRegistryUrl))
                 .build();
 
@@ -55,25 +64,35 @@ public class PrecisionJob {
                 refreshIntervalMs);
 
         env.fromSource(source, WatermarkStrategy.noWatermarks(), "rebased-source")
+                .uid("rebased-source")
                 .map(new PrecisionFunction(precisions))
                 .name("apply-precision")
+                .uid("apply-precision")
                 .sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)
-                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                        // failure drops records silently. Idempotence is the load-bearing one:
-                        // plain retries can reorder writes, which corrupts the book downstream.
+                        // EXACTLY_ONCE, POOLING and the pattern-aware topic selector: see
+                        // PairExtractorJob's sink comment for why (same reasoning, every sink).
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                        .setTransactionalIdPrefix("job4-applied-precision")
+                        .setTransactionNamingStrategy(TransactionNamingStrategy.POOLING)
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
                         .setProperty("retries", "2147483647")
                         .setProperty("delivery.timeout.ms", "120000")
+                        .setProperty("transaction.timeout.ms", "600000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
-                                .setTopicSelector((TopicSelector<RawOrderBookEvent>) event ->
-                                        "ex" + event.getExchangeId() + "-p" + event.getPairId()
-                                                + "-applied-precision-flink")
+                                .setTopicSelector(new PatternTopicSelector<RawOrderBookEvent>(OUTPUT_TOPIC_PATTERN) {
+                                    @Override
+                                    public String apply(RawOrderBookEvent event) {
+                                        return "ex" + event.getExchangeId() + "-p" + event.getPairId()
+                                                + "-applied-precision-flink";
+                                    }
+                                })
                                 .setValueSerializationSchema(new RawOrderBookEventSerializer(schemaRegistryUrl))
                                 .build())
                         .build())
-                .name("applied-precision-sink");
+                .name("applied-precision-sink")
+                .uid("applied-precision-sink");
 
         env.execute("normalizer-precision");
     }

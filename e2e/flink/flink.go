@@ -34,6 +34,10 @@ const (
 	cancelTimeout = time.Minute
 	startTimeout  = 2 * time.Minute
 	pollInterval  = time.Second
+	// checkpointTimeout bounds WaitForCheckpoint. Generous relative to
+	// CheckpointingConfigurer's 10s interval + 120s timeout — a slow first
+	// checkpoint under test-harness load should not flake the caller.
+	checkpointTimeout = 3 * time.Minute
 )
 
 // RunJobs builds the normalizer modules and submits every job jar,
@@ -158,22 +162,134 @@ func upload(ctx context.Context, api, jar string) (string, error) {
 	return path.Base(resp.Filename), nil
 }
 
+type jobSummary struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+func listJobs(ctx context.Context, api string) ([]jobSummary, error) {
+	var list struct {
+		Jobs []jobSummary `json:"jobs"`
+	}
+	if err := do(ctx, http.MethodGet, api+"/jobs", nil, "", &list); err != nil {
+		return nil, err
+	}
+	return list.Jobs, nil
+}
+
+// RunningJobIDs returns the ids of every job currently RUNNING or RESTARTING.
+// A caller that is about to inject a crash captures this beforehand and
+// compares it against what WaitAllRunning finds afterwards — the ids must be
+// the SAME ones, because a Flink job recovering in place from a checkpoint
+// keeps its id; only a fresh submission through warmup.Run would mint new
+// ones, and that is not what a TaskManager crash does.
+func RunningJobIDs(ctx context.Context, api string) ([]string, error) {
+	jobs, err := listJobs(ctx, api)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, job := range jobs {
+		if job.Status == "RUNNING" || job.Status == "RESTARTING" {
+			ids = append(ids, job.ID)
+		}
+	}
+	return ids, nil
+}
+
+// JobIDsByName returns the id of every RUNNING or RESTARTING job, keyed by
+// its Flink job name (the string each job's main() passes to env.execute).
+// /jobs/overview carries the name; /jobs (used by listJobs / CancelJobs)
+// does not, which is why this hits a different endpoint rather than adding
+// a field there.
+func JobIDsByName(ctx context.Context, api string) (map[string]string, error) {
+	var list struct {
+		Jobs []struct {
+			ID     string `json:"jid"`
+			Name   string `json:"name"`
+			Status string `json:"state"`
+		} `json:"jobs"`
+	}
+	if err := do(ctx, http.MethodGet, api+"/jobs/overview", nil, "", &list); err != nil {
+		return nil, err
+	}
+	ids := make(map[string]string, len(list.Jobs))
+	for _, job := range list.Jobs {
+		if job.Status == "RUNNING" || job.Status == "RESTARTING" {
+			ids[job.Name] = job.ID
+		}
+	}
+	return ids, nil
+}
+
+// RestartTaskManagers simulates a TaskManager crash without touching the
+// JobManager or resubmitting anything: `docker compose restart` on the named
+// services kills every task running there mid-stream, the same way a host
+// OOM or container reschedule would. Flink's own failover — not this harness
+// — is what recovers the affected jobs once the container reconnects and
+// re-registers, restoring each one from its own last completed checkpoint.
+// The dev stack's single TaskManager service is "taskmanager"; the prod
+// stack's four are "taskmanager-1".."taskmanager-4".
+func RestartTaskManagers(ctx context.Context, composeFile string, services ...string) error {
+	cmd := exec.CommandContext(ctx, "docker",
+		append([]string{"compose", "-f", composeFile, "restart"}, services...)...)
+
+	var out bytes.Buffer
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	} else {
+		cmd.Stdout, cmd.Stderr = &out, &out
+	}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker compose restart %s: %w\n%s", strings.Join(services, " "), err, out.String())
+	}
+	return nil
+}
+
+// WaitForCheckpoint waits until id has completed at least one checkpoint —
+// proof that a subsequent crash actually has committed state to recover,
+// rather than restarting into emptiness that would look identical to a
+// successful recovery.
+func WaitForCheckpoint(ctx context.Context, api, id string) error {
+	return poll(ctx, checkpointTimeout, func() (bool, error) {
+		var resp struct {
+			Latest struct {
+				Completed *struct {
+					ID int64 `json:"id"`
+				} `json:"completed"`
+			} `json:"latest"`
+		}
+		if err := do(ctx, http.MethodGet, api+"/jobs/"+id+"/checkpoints", nil, "", &resp); err != nil {
+			return false, err
+		}
+		return resp.Latest.Completed != nil, nil
+	})
+}
+
+// WaitAllRunning waits until every id in ids is back to RUNNING — the shape a
+// job takes once Flink's own failover has restored it from its last
+// checkpoint after a TaskManager crash. A job that instead reaches FAILED or
+// CANCELED is recovery failing, not succeeding, and is reported as an error.
+func WaitAllRunning(ctx context.Context, api string, ids []string) error {
+	for _, id := range ids {
+		if err := waitRunning(ctx, api, id); err != nil {
+			return fmt.Errorf("job %s did not recover: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // CancelJobs cancels every running job and waits for each to reach a terminal
 // state, so their task slots are free before new jobs are submitted — and so
 // nothing is still consuming the topics when they are deleted.
 func CancelJobs(ctx context.Context, api string) error {
-	var list struct {
-		Jobs []struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		} `json:"jobs"`
-	}
-	if err := do(ctx, http.MethodGet, api+"/jobs", nil, "", &list); err != nil {
+	jobs, err := listJobs(ctx, api)
+	if err != nil {
 		return err
 	}
 
 	var ids []string
-	for _, job := range list.Jobs {
+	for _, job := range jobs {
 		if job.Status == "RUNNING" || job.Status == "RESTARTING" {
 			ids = append(ids, job.ID)
 		}

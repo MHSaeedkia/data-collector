@@ -5,15 +5,18 @@ import java.util.regex.Pattern;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
-import org.apache.flink.connector.kafka.sink.TopicSelector;
+import org.apache.flink.connector.kafka.sink.TransactionNamingStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
+import io.tibobit.normalizer.checkpoint.CheckpointingConfigurer;
+import io.tibobit.normalizer.kafka.PatternTopicSelector;
 import io.tibobit.normalizer.lookup.RefreshingLookup;
 import io.tibobit.normalizer.model.ControlCommand;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
@@ -36,6 +39,9 @@ import io.tibobit.normalizer.serde.RejectedOrderBookEventSerializer;
 public class TypeValidatorJob {
 
     private static final Pattern INPUT_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-p[0-9]+-raw-flink");
+    private static final Pattern VALIDATED_TOPIC_PATTERN =
+            Pattern.compile("ex[0-9]+-p[0-9]+-type-validated-raw-flink");
+    private static final Pattern REJECTED_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-p[0-9]+-rejected-flink");
 
     public static void main(String[] args) throws Exception {
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
@@ -66,12 +72,18 @@ public class TypeValidatorJob {
         long refreshIntervalMs = Long.parseLong(getEnv("REFRESH_INTERVAL_MS", "15000"));
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        CheckpointingConfigurer.configure(env);
 
         KafkaSource<RawOrderBookEvent> source = KafkaSource.<RawOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
                 .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
+                // job 1's sink is now EXACTLY_ONCE/transactional; without this, a
+                // read_uncommitted consumer (Kafka's default) can see records from a
+                // transaction that later aborts — silent corruption one hop earlier than the
+                // replay problem checkpointing exists to close.
+                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new RawOrderBookEventDeserializer(schemaRegistryUrl))
                 .build();
 
@@ -84,64 +96,77 @@ public class TypeValidatorJob {
 
         SingleOutputStreamOperator<RawOrderBookEvent> validated = env
                 .fromSource(source, WatermarkStrategy.noWatermarks(), "raw-flink-source")
+                .uid("raw-flink-source")
                 .keyBy(new ExchangePairKey())
                 .process(new TypeValidateFunction(snapshotRetryMs, watched))
-                .name("type-validate");
+                .name("type-validate")
+                .uid("type-validate");
 
         // Valid events -> ex{id}-p{id}-type-validated-raw-flink (same shared
         // raw-order-book-event schema).
         validated.sinkTo(KafkaSink.<RawOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
-                // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                // failure drops records silently. Idempotence is the load-bearing one:
-                // plain retries can reorder writes, which corrupts the book downstream.
+                // EXACTLY_ONCE, POOLING and the pattern-aware topic selector: see
+                // PairExtractorJob's sink comment for why (same reasoning, every sink).
+                .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                .setTransactionalIdPrefix("job2-type-validated")
+                .setTransactionNamingStrategy(TransactionNamingStrategy.POOLING)
                 .setProperty("acks", "all")
                 .setProperty("enable.idempotence", "true")
                 .setProperty("retries", "2147483647")
                 .setProperty("delivery.timeout.ms", "120000")
+                .setProperty("transaction.timeout.ms", "600000")
                 .setRecordSerializer(KafkaRecordSerializationSchema.<RawOrderBookEvent>builder()
-                        .setTopicSelector((TopicSelector<RawOrderBookEvent>) event -> "ex"
-                        + event.getExchangeId() + "-p" + event.getPairId()
-                        + "-type-validated-raw-flink")
+                        .setTopicSelector(new PatternTopicSelector<RawOrderBookEvent>(VALIDATED_TOPIC_PATTERN) {
+                            @Override
+                            public String apply(RawOrderBookEvent event) {
+                                return "ex" + event.getExchangeId() + "-p" + event.getPairId()
+                                        + "-type-validated-raw-flink";
+                            }
+                        })
                         .setValueSerializationSchema(
                                 new RawOrderBookEventSerializer(schemaRegistryUrl))
                         .build())
                 .build())
-                .name("type-validated-sink");
+                .name("type-validated-sink")
+                .uid("type-validated-sink");
 
         // Rejects -> dead-letter ex{id}-p{id}-rejected-flink (subject
         // rejected-order-book-event).
         DataStream<RejectedOrderBookEvent> rejected = validated.getSideOutput(TypeValidateFunction.REJECTED);
         rejected.sinkTo(KafkaSink.<RejectedOrderBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
-                // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                // failure drops records silently. Idempotence is the load-bearing one:
-                // plain retries can reorder writes, which corrupts the book downstream.
+                .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                .setTransactionalIdPrefix("job2-rejected")
+                .setTransactionNamingStrategy(TransactionNamingStrategy.POOLING)
                 .setProperty("acks", "all")
                 .setProperty("enable.idempotence", "true")
                 .setProperty("retries", "2147483647")
                 .setProperty("delivery.timeout.ms", "120000")
+                .setProperty("transaction.timeout.ms", "600000")
                 .setRecordSerializer(KafkaRecordSerializationSchema.<RejectedOrderBookEvent>builder()
-                        .setTopicSelector(
-                                (TopicSelector<RejectedOrderBookEvent>) rejection -> "ex"
-                                + rejection.getEvent().getExchangeId()
-                                + "-p"
-                                + rejection.getEvent().getPairId()
-                                + "-rejected-flink")
+                        .setTopicSelector(new PatternTopicSelector<RejectedOrderBookEvent>(REJECTED_TOPIC_PATTERN) {
+                            @Override
+                            public String apply(RejectedOrderBookEvent rejection) {
+                                return "ex" + rejection.getEvent().getExchangeId()
+                                        + "-p" + rejection.getEvent().getPairId() + "-rejected-flink";
+                            }
+                        })
                         .setValueSerializationSchema(
                                 new RejectedOrderBookEventSerializer(schemaRegistryUrl))
                         .build())
                 .build())
-                .name("rejected-sink");
+                .name("rejected-sink")
+                .uid("rejected-sink");
 
-        // Control-plane -> shared control-plane topic, consumed by NiFi to trigger a
-        // fresh snapshot.
+        // Control-plane -> shared control-plane topic, consumed by NiFi to trigger a fresh
+        // snapshot. Deliberately left OFF EXACTLY_ONCE/transactions: NiFi consumes this topic and
+        // would otherwise need read_committed too, and a resend of a snapshot request is harmless
+        // (job 2 re-asks itself if the first one is lost), so there is nothing here worth trading
+        // immediacy for.
         DataStream<ControlCommand> controlCommands = validated.getSideOutput(TypeValidateFunction.CONTROL);
         controlCommands.sinkTo(KafkaSink.<ControlCommand>builder()
                 .setBootstrapServers(bootstrapServers)
-                // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                // failure drops records silently. Idempotence is the load-bearing one:
-                // plain retries can reorder writes, which corrupts the book downstream.
                 .setProperty("acks", "all")
                 .setProperty("enable.idempotence", "true")
                 .setProperty("retries", "2147483647")
@@ -154,7 +179,8 @@ public class TypeValidatorJob {
                         .setValueSerializationSchema(new ControlCommandSerializer(schemaRegistryUrl))
                         .build())
                 .build())
-                .name("control-plane-sink");
+                .name("control-plane-sink")
+                .uid("control-plane-sink");
 
         env.execute("normalizer-type-validator");
     }

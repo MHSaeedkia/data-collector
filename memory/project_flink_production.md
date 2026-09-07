@@ -1273,3 +1273,150 @@ crash rather than removed it. That is why all three were changed.
   host-agnostic. Do not "fix" this by growing the TaskManager there.
 - Nothing here is verified live: **not deployed.** Fault 2's fix needs a jar rebuild
   (`make run-all-jobs`), fault 1's needs the JobManager recreated.
+
+## 2026-09-07 — Checkpointing re-added a third time, on `fix/checkpointing`, with the fix that was never shipped
+
+User's call after being shown the full 2026-08-31/09-02/09-05 history in this file (two live
+incidents — the `INCREMENTING` producer-id-churn broker OOM, then `POOLING`'s startup failure via
+`getTopicNames()` — both ending in the 2026-09-05 full revert): bring checkpointing back, this time
+shipping the `POOLING` + custom-`TopicSelector` fix that [[project_kafka_broker_memory]] designed
+on 2026-09-05 but never implemented. Two decisions the user made explicitly, asked up front rather
+than picked silently, given the incident history: **EXACTLY_ONCE with the POOLING fix** (not
+`AT_LEAST_ONCE`, this document's own standing recommendation from §11 — the user chose exactness
+over the zero-added-latency option), and **scope stays the 6 chained normalizer jobs only** —
+`flink/merger` and `flink/adjustment` explicitly excluded from checkpointing this round, same as
+every prior round, but not exempt from the *consumer-side* obligation: their `KafkaSource`s reading
+job 6's now-transactional output still needed `isolation.level=read_committed` (a sink turning
+transactional is a change to every consumer of that topic regardless of who checkpoints — the rule
+PR #11 established, re-applied rather than re-derived).
+
+**What shipped, file by file:**
+
+- **`CheckpointingConfigurer` rewritten from scratch** in a new package,
+  `flink/normalizer/common/.../checkpoint/` (the old `checkpointingConfigurer` casing — flagged as
+  a non-blocking nit in the 2026-09-02 review — is moot; the class was deleted whole on 2026-09-05
+  and nothing references the old name). Values: 10s interval, 120s timeout, 5s min-pause, 1
+  max-concurrent, **3** tolerable failures (not Flink's default 0 — the exact mechanism that turned
+  a root-owned volume into a permanent 6-job restart loop on 2026-08-31), `DELETE_ON_CANCELLATION`,
+  hashmap state backend set explicitly, incremental checkpoints explicitly `false` (RocksDB-only,
+  does not apply to hashmap — set so the choice is visible rather than implied), unaligned
+  checkpoints explicitly `false` (no observed sustained back-pressure; revisit if
+  `backPressuredTimeMsPerSecond` fires, not on a schedule), and **`pipeline.max-parallelism=128`**
+  — new this round, M5's sibling S2, parked since 2026-08-31 and closed now so raising parallelism
+  later never needs invalidating checkpoint history. Storage type + directory are applied through
+  `env.configure(Configuration, ClassLoader)` in the SAME call as everything else, never through
+  `getCheckpointConfig().configure()` alone — re-verified against the actual flink-core-2.2.0 jar
+  this round (`CheckpointingOptions`/`CheckpointConfig` javap output, not memory of the 2026-09-02
+  fix) rather than trusted from the file. Does **not** set any restart-strategy key — the first
+  version of this class (2026-08-31) did, and silently fought the cluster's `exponential-delay`
+  policy; this is now a `CheckpointingConfigurerTest` regression guard (`leavesRestartStrategyAlone`),
+  not just a comment.
+- **`.uid()` added to every operator in all 6 jobs — M5, closed.** Source, every transform, every
+  sink, across `PairExtractorJob`, `TypeValidatorJob`, `RebaserJob`, `PrecisionJob`,
+  `BookBuilderJob`, `AggregatorJob`. Parked with checkpointing since 2026-08-31, never done in any
+  prior round; needed before a checkpoint can restore across a topology-changing redeploy, which is
+  what every `make run-all-jobs`/`prod-deploy` after a code change actually is.
+- **The POOLING/dynamic-routing fix, designed 2026-09-05, shipped for the first time.**
+  `PatternTopicSelector<T>` (`flink/normalizer/common/.../kafka/`) is an abstract class implementing
+  both `TopicSelector<T>` and `KafkaDatasetIdentifierProvider`; each of the 8 transactional sinks
+  gets a small named subclass overriding `apply()` in place of the lambda every sink used before.
+  This is exactly the mechanism [[project_kafka_broker_memory]] diagnosed live on 2026-09-05:
+  `POOLING`'s `LISTING` abort strategy calls `getTopicNames()` on the record serializer inside
+  `initialize()`, unconditionally, on a clean first submit — and that throws
+  `IllegalStateException` unless the selector exposes a `DefaultKafkaDatasetIdentifier`, which a
+  lambda cannot (a lambda is only ever assignable to the interface named at its own call site).
+  ⚠ **Deliberately a named class per sink, not a generic wrapper holding a `Function<T,String>`
+  field** — that field would itself be a lambda assigned to a plain, non-`Serializable`
+  `java.util.function.Function`, and would throw `NotSerializableException` the first time Flink
+  ships the operator to a TaskManager: a subtler instance of the identical class of bug (target-type
+  serializability, not implementation), caught in review before it was written rather than live.
+  `PatternTopicSelectorTest` pins the actual `ObjectOutputStream` round-trip, not just the
+  interface, so this specific failure mode cannot regress silently again.
+- **All 8 transactional sinks**: `EXACTLY_ONCE`, `TransactionNamingStrategy.POOLING`, a unique
+  `transactionalIdPrefix` per sink (`job1-raw-flink`, `job2-type-validated`, `job2-rejected`,
+  `job3-rebased`, `job3-rejected`, `job4-applied-precision`, `job5-orderbook-snapshot`,
+  `job6-aggregated` — all 8 checked unique, matching the PR #11 review's own verification method),
+  `transaction.timeout.ms=600000`. Job 2's `control-plane` sink again deliberately excluded — NiFi
+  reads it directly and would need `read_committed` too, and a duplicate snapshot request costs
+  nothing.
+- **`isolation.level=read_committed`** restored on the 5 normalizer sources downstream of a
+  transactional sink, PLUS `flink/merger` and `flink/adjustment`'s sources (new this round in the
+  sense that these two files were touched even though they gained no checkpointing of their own),
+  PLUS both Go consumers (`web/internal/kafka/consumer.go`, `e2e/consumer/consumer.go`) via
+  `kgo.FetchIsolationLevel(kgo.ReadCommitted())`. `job-pair-extractor`'s source (reads NiFi's raw
+  topic, never transactional) is correctly untouched, as always.
+- **Checkpoint volume + Dockerfile ownership restored** — `data-collector-flink-checkpoints` back
+  in both compose files on the JobManager and every TaskManager, and `flink/normalizer/Dockerfile`'s
+  `mkdir -p`/`chown flink:flink` stanza regained `/opt/flink/checkpoints` alongside `ha`/`archive`.
+  This is the literal fix for the 2026-08-31 root-owned-volume incident, re-applied from this
+  file's own record rather than rediscovered by hitting the bug again.
+- **Monitoring restored**: `flink-checkpoints` rule group back in
+  `monitoring/prometheus/rules/flink.yml` (`FlinkCheckpointsFailing`, `FlinkCheckpointsNotCompleting`,
+  `FlinkCheckpointDurationHigh` — the three metric names carried forward from the 2026-09-02 review's
+  confirmation against the flink-runtime-2.2.0 jar, not re-guessed), the matching Alertmanager
+  inhibit rule, and the restart-loop rule's annotation reworded from "checkpointing removed, state
+  is always lost" back to "checkpointing means state is *usually* preserved, but a genuine restart
+  LOOP still fails before completing one — correlate with `FlinkCheckpointsFailing`."
+- **New tests**: `CheckpointingConfigurerTest` (8 cases, including a storage/dir round-trip read
+  back from `env.getConfiguration()` rather than `CheckpointConfig` — the exact place the
+  2026-09-02 bug hid — and a dedicated regression guard asserting `restart-strategy.type` is never
+  set) and `PatternTopicSelectorTest` (3 cases: routing via the overridden `apply()`, the
+  `KafkaDatasetIdentifierProvider` exposure `POOLING` actually calls, and a real
+  `ObjectOutputStream`/`ObjectInputStream` round-trip proving serializability rather than asserting
+  the interface alone). `mvn -o clean test` on all 7 touched modules (`common` +
+  the 6 job modules): every `surefire-reports/*.txt` green, verified per-module rather than trusted
+  from `-q` console output (which, under JDK 25, is dominated by the same pre-existing
+  `Unsupported class file major version 69` JaCoCo-on-JDK25 noise this file already knew about —
+  confirmed non-fatal again by checking `mvn`'s actual process exit code, 0, not by eyeballing the
+  tail of the log).
+- **New live e2e test, not yet run**: `RunCheckpointRecovery` (`e2e/scenario/checkpoint_recovery.go`,
+  reachable as `main -checkpoint-recovery`, kept OUT of the default `Scenarios` list because it is
+  disruptive — it runs `docker compose restart` on a real TaskManager container). Reuses
+  `Ex9SnapshotStream` (3 sources, zero rejects, zero control commands — chosen because a
+  snapshot-only, gap-free feed cannot produce a result that looks like a checkpointing bug but
+  isn't), splits its sources across the simulated crash, and finishes by calling the SAME
+  `Scenario.verify` every ordinary scenario uses — so a crash run is held to the identical
+  final-book assertion as an uninterrupted one, not a bespoke weaker check. Also asserts, via two
+  new `flink` package exports (`JobIDsByName`, plus the already-present-shaped
+  `WaitForCheckpoint`/`WaitAllRunning`/`RestartTaskManagers`), that all 6 checkpointed jobs come
+  back with the **same** Flink job id post-crash — proof of in-place recovery, since a fresh
+  resubmission through `warmup.Run` would mint new ones. New `config.TaskManagerServices` (env
+  `TASKMANAGER_SERVICES`, default `"taskmanager"`) lets a prod run target all four TaskManager
+  names instead of dev's one. **Compiles clean (`go build ./...`, `go vet ./...`), and the
+  pre-existing `go test ./scenario/...` suite still passes — but nobody has run
+  `-checkpoint-recovery` against a live stack yet.**
+
+**What `RunCheckpointRecovery` does NOT prove, by design — read before treating it as full state-
+recovery proof.** `Ex9SnapshotStream` was picked BECAUSE its snapshot-replaces-whole-book semantics
+does not need cross-message continuity to reach the right final answer: the pipeline could, in
+principle, lose every job's internal keyed state across the crash and still land on the exact same
+final book by re-deriving it from Kafka's own committed records alone. So this test proves record
+delivery is consistent (no loss, no duplication) and that jobs recover in place — it does NOT prove
+that job 2's own state (`lastEventTime`/`lastSeq`, the fields [[project_type_validator]] and
+[[project_control_plane]] depend on) specifically survived the checkpoint/restore cycle. A stronger
+version — replay an EARLIER frame after the crash and assert job 2 still rejects it `out_of_order`,
+which is only possible if `lastEventTime` was actually restored — was scoped out to keep this test's
+own failure modes legible, and is a natural next addition before leaning on this as proof of
+per-job state recovery rather than pipeline-level consistency.
+
+**Three things flagged as most likely to surprise on first live deploy, in probability order**
+(none of them new risks — all three were already open in this file or in
+[[project_kafka_broker_memory]], carried forward rather than re-discovered): (1) POOLING's
+`LISTING` abort strategy calls `AdminUtils.getTopicsByPattern` — a full `listTopics()` — per writer
+`initialize()`, i.e. per subtask per restart; still unmeasured at this cluster's partition count.
+(2) The §11 latency arithmetic (~10s interval x 6 hops ≈ 30s avg/60s worst end-to-end) is
+unchanged by the POOLING fix — POOLING fixes the broker-OOM mechanism, not the checkpoint-interval
+arithmetic — and nobody has re-measured `pipeline_timings` under this exact build. (3)
+`records_lag_max` and the three checkpoint metric names are confirmed against a jar and a past
+scrape, not against a live scrape of this specific build. Also open, unrelated to this round but
+now more load-bearing than before: the dev TaskManager's memory headroom (2026-09-02's finding that
+6 jobs checkpointing every 10s starved a 1.688 GB default TaskManager and lost the JobManager) —
+`docker-compose.yml` currently sets `process.size: 2g` per the 2026-09-06 entry above, which may or
+may not be enough; nobody has re-run this specific build against it. `promtool check rules` /
+`amtool check-config` were NOT run this round (neither binary available in this environment) —
+both passed after the equivalent 2026-09-02 edit, so confirm before deploy rather than assume.
+
+**Nothing in this section has been deployed or observed live.** Every fix other than
+`PatternTopicSelector` is a previously-diagnosed cure re-applied from this file's or
+[[project_kafka_broker_memory]]'s own record; `PatternTopicSelector` itself is new engineering,
+exercised only by `mvn test` and `go build`/`go vet`, not by a running cluster.

@@ -31,13 +31,20 @@ inhibit_rules:
     # match the source alert itself.
     - source_matchers: ["alertname = FlinkJobManagerDown"]
       target_matchers:
-          - "alertname =~ FlinkJobCountWrong|FlinkTaskManagersMissing|FlinkJobRestarting|FlinkJobRestartLoop|FlinkTaskBackPressured|FlinkKafkaSourceLag"
+          - "alertname =~ FlinkJobCountWrong|FlinkTaskManagersMissing|FlinkJobRestarting|FlinkJobRestartLoop|FlinkTaskBackPressured|FlinkKafkaSourceLag|FlinkCheckpointsFailing|FlinkCheckpointsNotCompleting|FlinkCheckpointDurationHigh"
 
     # A job in a restart loop always trips the any-restart warning too. Keep the
     # critical one, drop the duplicate — matched on job_name so only the looping
     # job is silenced.
     - source_matchers: ["alertname = FlinkJobRestartLoop"]
       target_matchers: ["alertname = FlinkJobRestarting"]
+      equal: ["job_name"]
+
+    # A checkpoint failure is the CAUSE when a job restarts (M1's restart strategy fires right
+    # after), not an independent symptom — page once, not twice. Matched on job_name so only the
+    # affected job's restart alert is silenced.
+    - source_matchers: ["alertname = FlinkCheckpointsFailing"]
+      target_matchers: ["alertname =~ FlinkJobRestarting|FlinkJobRestartLoop"]
       equal: ["job_name"]
 
 receivers:

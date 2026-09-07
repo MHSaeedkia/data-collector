@@ -117,6 +117,11 @@ func readRecords(ctx context.Context, broker, topic string, wait time.Duration) 
 		kgo.SeedBrokers(strings.Split(broker, ",")...),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		// Most topics this reads are EXACTLY_ONCE/transactional again (jobs 1-6's main and
+		// dead-letter sinks); read_committed is a no-op on the few that aren't (control-plane).
+		// franz-go defaults to read_uncommitted, which would let an aborted transaction's records
+		// surface here as a flaky record-count assertion rather than a visible bug.
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 	)
 	if err != nil {
 		return nil, err

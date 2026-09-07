@@ -34,13 +34,15 @@ RUN apt-get update -qq && apt-get install -y -q --no-install-recommends maven \
  && apt-get purge -y maven && apt-get autoremove -y -q \
  && rm -rf /root/.m2 /tmp/confluent-deps-pom.xml /var/lib/apt/lists/*
 
-# Mount points for the HA store (M3) and the job archive (S4). Both have to exist
-# in the image and be owned by `flink`: Docker creates a missing mount destination
-# as root:root, and this image runs as uid 9999, so a named volume mounted at a path
-# the image does not already have is unwritable. Verified by probe — without this
-# the JobManager cannot write either.
+# Mount points for the HA store (M3), the job archive (S4) and checkpoint storage. All three
+# have to exist in the image and be owned by `flink`: Docker creates a missing mount destination
+# as root:root, and this image runs as uid 9999, so a named volume mounted at a path the image
+# does not already have is unwritable. Verified by probe — without this the JobManager cannot
+# write any of them. This bit checkpointing specifically once already (2026-08-31): a fresh
+# checkpoint volume came up root-owned, the first checkpoint failed, and Flink's default
+# zero-tolerance failed the job — on all 6 checkpointing jobs at once, since they share the volume.
 # /opt/flink/log needs no entry here; it already exists in the image.
 USER root
-RUN mkdir -p /opt/flink/ha /opt/flink/archive \
- && chown flink:flink /opt/flink/ha /opt/flink/archive
+RUN mkdir -p /opt/flink/ha /opt/flink/archive /opt/flink/checkpoints \
+ && chown flink:flink /opt/flink/ha /opt/flink/archive /opt/flink/checkpoints
 USER flink

@@ -120,8 +120,16 @@ func Run(ctx context.Context, cfg config.Config, s Scenario) error {
 // a source sent without one produces nothing at all and the scenario fails with
 // an empty snapshot stream rather than anything that points at the cause.
 func (s Scenario) produce(ctx context.Context, cfg config.Config) error {
-	topic := fmt.Sprintf("ex%d-raw", s.ExchangeID)
-	for i, source := range s.Sources {
+	return produceSources(ctx, cfg, s.ExchangeID, s.Sources)
+}
+
+// produceSources puts sources on exchangeID's raw topic, in order. Split out of
+// Scenario.produce so RunCheckpointRecovery can send a scenario's sources in two
+// separate calls (before and after a simulated crash) while still verifying the
+// whole scenario's expectations in one call afterwards.
+func produceSources(ctx context.Context, cfg config.Config, exchangeID int64, sources []string) error {
+	topic := fmt.Sprintf("ex%d-raw", exchangeID)
+	for i, source := range sources {
 		stamped, _, err := stampID(source)
 		if err != nil {
 			return fmt.Errorf("source %d: %w", i, err)

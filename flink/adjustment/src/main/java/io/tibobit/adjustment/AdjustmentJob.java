@@ -131,6 +131,12 @@ public class AdjustmentJob {
                 // created after the job starts is discovered late and whatever was produced in the
                 // gap is lost, which is why warmup.sh pre-creates the adjusted family.
                 .setStartingOffsets(OffsetsInitializer.latest())
+                // job 6's sink (AggregatorJob) is EXACTLY_ONCE/transactional again — this job has
+                // no checkpointing of its own, but reading read_uncommitted (the default) would
+                // still let it see records from a transaction that later aborts. A sink turning
+                // transactional is a change to every consumer of that topic, not only to the next
+                // Flink job in the chain.
+                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new AggregatedOrderBookDeserializer(schemaRegistryUrl))
                 .build();
 

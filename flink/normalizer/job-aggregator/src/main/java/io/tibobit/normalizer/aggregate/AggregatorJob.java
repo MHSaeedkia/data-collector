@@ -1,13 +1,16 @@
 package io.tibobit.normalizer.aggregate;
 
+import io.tibobit.normalizer.checkpoint.CheckpointingConfigurer;
+import io.tibobit.normalizer.kafka.PatternTopicSelector;
 import io.tibobit.normalizer.model.OrderBookSnapshot;
 import io.tibobit.normalizer.serde.OrderBookSnapshotDeserializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
 import org.apache.flink.connector.kafka.sink.KafkaSink;
-import org.apache.flink.connector.kafka.sink.TopicSelector;
+import org.apache.flink.connector.kafka.sink.TransactionNamingStrategy;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -32,6 +35,10 @@ public class AggregatorJob {
 
     private static final Pattern INPUT_TOPIC_PATTERN =
             Pattern.compile("ex[0-9]+-p[0-9]+-orderbook-snapshot-flink");
+    // Anchored, like every consumer of this job's output (merger, adjustment, web, e2e) — a loose
+    // pattern here would make the dataset-identifier used by POOLING's LISTING abort strategy
+    // match topics this sink does not itself write to.
+    private static final Pattern OUTPUT_TOPIC_PATTERN = Pattern.compile("^p[0-9]+-(asks|bids)$");
 
     public static void main(String[] args) throws Exception {
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
@@ -39,6 +46,7 @@ public class AggregatorJob {
         String schemaRegistryUrl = getEnv("SCHEMA_REGISTRY_URL", "http://schema-registry:8082");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        CheckpointingConfigurer.configure(env);
 
         KafkaSource<OrderBookSnapshot> source = KafkaSource.<OrderBookSnapshot>builder()
                 .setBootstrapServers(bootstrapServers)
@@ -68,32 +76,49 @@ public class AggregatorJob {
                 .setProperty("max.partition.fetch.bytes", "524288")
                 .setGroupId(groupId)
                 .setStartingOffsets(OffsetsInitializer.latest())
+                // job 5's sink is EXACTLY_ONCE/transactional; read_committed avoids seeing
+                // records from a transaction that later aborts.
+                .setProperty("isolation.level", "read_committed")
                 .setValueOnlyDeserializer(new OrderBookSnapshotDeserializer(schemaRegistryUrl))
                 .build();
 
         env.fromSource(source, WatermarkStrategy.noWatermarks(), "orderbook-snapshot-source")
+                .uid("orderbook-snapshot-source")
                 .flatMap(new SnapshotSplitter())
                 .name("split-sides")
+                .uid("split-sides")
                 .keyBy(new PairSideKey())
                 .process(new CrossExchangeAggregator())
                 .name("aggregate")
+                .uid("aggregate")
                 .sinkTo(KafkaSink.<AggregatedOrderBook>builder()
                         .setBootstrapServers(bootstrapServers)
-                        // Without checkpointing, DeliveryGuarantee is NONE and a broker-side
-                        // failure drops records silently. Idempotence is the load-bearing one:
-                        // plain retries can reorder writes, which corrupts the book downstream.
+                        // EXACTLY_ONCE, POOLING and the pattern-aware topic selector: see
+                        // PairExtractorJob's sink comment for why (same reasoning, every sink).
+                        // This is the terminal, web-facing hop — merger, adjustment, web and e2e
+                        // all read this topic family and all now need read_committed too (done in
+                        // their own modules; see the checkpointing writeup).
+                        .setDeliveryGuarantee(DeliveryGuarantee.EXACTLY_ONCE)
+                        .setTransactionalIdPrefix("job6-aggregated")
+                        .setTransactionNamingStrategy(TransactionNamingStrategy.POOLING)
                         .setProperty("acks", "all")
                         .setProperty("enable.idempotence", "true")
                         .setProperty("retries", "2147483647")
                         .setProperty("delivery.timeout.ms", "120000")
+                        .setProperty("transaction.timeout.ms", "600000")
                         .setRecordSerializer(KafkaRecordSerializationSchema.<AggregatedOrderBook>builder()
                                 // Route each record to p{pair_id}-{side} (e.g. p1-asks).
-                                .setTopicSelector((TopicSelector<AggregatedOrderBook>) book ->
-                                        "p" + book.getPairId() + "-" + book.getSide())
+                                .setTopicSelector(new PatternTopicSelector<AggregatedOrderBook>(OUTPUT_TOPIC_PATTERN) {
+                                    @Override
+                                    public String apply(AggregatedOrderBook book) {
+                                        return "p" + book.getPairId() + "-" + book.getSide();
+                                    }
+                                })
                                 .setValueSerializationSchema(new AggregatedOrderBookSerializer(schemaRegistryUrl))
                                 .build())
                         .build())
-                .name("aggregated-order-book-sink");
+                .name("aggregated-order-book-sink")
+                .uid("aggregated-order-book-sink");
 
         env.execute("normalizer-aggregator");
     }

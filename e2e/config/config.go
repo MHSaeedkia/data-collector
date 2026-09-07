@@ -10,12 +10,13 @@ import (
 
 // Config holds everything the harness needs from the environment.
 type Config struct {
-	SchemaRegistryURL string
-	SchemasDir        string
-	KafkaBroker       string
-	FlinkAPI          string
-	NormalizerDir     string
-	ComposeFile       string
+	SchemaRegistryURL   string
+	SchemasDir          string
+	KafkaBroker         string
+	FlinkAPI            string
+	NormalizerDir       string
+	ComposeFile         string
+	TaskManagerServices []string
 }
 
 // Load reads envFile (if present) into the process environment, then builds the
@@ -32,6 +33,10 @@ func Load(envFile string) (Config, error) {
 		FlinkAPI:          env("FLINK_API", "http://localhost:7070"),
 		NormalizerDir:     env("NORMALIZER_DIR", "../flink/normalizer"),
 		ComposeFile:       env("COMPOSE_FILE", "../docker-compose.yml"),
+		// The dev compose file (the default ComposeFile above) runs ONE TaskManager
+		// service named "taskmanager"; the prod file runs four, "taskmanager-1".."-4".
+		// Comma-separated so a prod run can override with all four in one var.
+		TaskManagerServices: splitCSV(env("TASKMANAGER_SERVICES", "taskmanager")),
 	}
 
 	if cfg.SchemaRegistryURL == "" {
@@ -45,6 +50,18 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitCSV splits a comma-separated list, trimming whitespace and dropping
+// empty entries (a trailing comma must not produce a blank service name).
+func splitCSV(csv string) []string {
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // loadEnvFile parses a KEY=VALUE file. A missing file is not an error.

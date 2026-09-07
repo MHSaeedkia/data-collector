@@ -247,3 +247,27 @@ frozen at 680409 for the whole outage, so the aggregator hop is the one that pro
 Still true and still unaddressed: **`docker-compose.yml` sets no `restart-strategy`**, so with
 checkpointing off a job that throws once now stays FAILED with nothing restarting it. The cluster is
 healthy but has no automatic recovery. See todo.
+
+**⚠ SUPERSEDED 2026-09-06** — `docker-compose.yml` gained M1's `restart-strategy` block as part of
+the direct-buffer-OOM fix in [[project_flink_production]], independent of checkpointing.
+
+## 2026-09-07 — the POOLING fix designed above, shipped for the first time, on `fix/checkpointing`
+
+The "fix that keeps dynamic routing" this file designed on 2026-09-05 (a named `TopicSelector`
+class implementing `KafkaDatasetIdentifierProvider` via `ofPattern(...)`) was never implemented
+after the revert — checkpointing came back off instead. User's call this round: bring checkpointing
+back a third time and actually ship this fix rather than reverting to `INCREMENTING` or dropping
+`POOLING`. Implemented as `PatternTopicSelector<T>`
+(`flink/normalizer/common/src/main/java/io/tibobit/normalizer/kafka/PatternTopicSelector.java`), a
+small abstract class each of the 8 transactional sinks subclasses instead of using a lambda —
+exactly the design sketched here, with one detail this file did not spell out: it must be a
+**named class**, not a reusable wrapper holding a `Function<T,String>` field, because that field
+would itself be a non-`Serializable`-typed lambda and would fail differently (`NotSerializableException`
+on first shipment to a TaskManager) but for the same underlying reason (a lambda's serializability
+is fixed at its call site's target type, not by what the enclosing object implements).
+`PatternTopicSelectorTest` proves the actual `ObjectOutputStream` round-trip, not just the
+interface. Full writeup, including the other things that came back with it (the `.uid()`/M5 item,
+`pipeline.max-parallelism`, monitoring, the checkpoint volume) in [[project_flink_production]]'s
+2026-09-07 section — **NOT deployed or observed live**, same caveat as everything else in that
+section. The measurement cost this file flagged (`AdminUtils.getTopicsByPattern` doing a full
+`listTopics()` per writer `initialize()`) is still unmeasured; carried forward, not resolved.

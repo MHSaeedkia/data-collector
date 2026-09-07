@@ -128,6 +128,14 @@ services:
             # what both would need to survive losing the box.
             - data-collector-flink-ha:/opt/flink/ha
             - data-collector-flink-archive:/opt/flink/archive
+            # Checkpointing is back (see CheckpointingConfigurer, applied inside all 6
+            # normalizer jobs) — filesystem storage means the JobManager writes checkpoint
+            # metadata here and every TaskManager writes its state files to the SAME path, so
+            # this must be one shared volume, not a per-container one. The Dockerfile
+            # pre-creates and chowns this path — a fresh volume mounted onto a path Docker has
+            # to create itself comes up root-owned and the first checkpoint write fails (hit
+            # live on 2026-08-31, took down all 6 checkpointing jobs at once, sharing one volume).
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         logging:
@@ -195,6 +203,9 @@ services:
             # real cluster it is one shared filesystem visible to every node; a
             # named volume mounted by all five containers is the compose equivalent.
             - data-collector-flink-ha:/opt/flink/ha
+            # Shared with the JobManager and every other TaskManager — see the matching
+            # comment on the JobManager's volumes block.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -266,6 +277,9 @@ services:
             # real cluster it is one shared filesystem visible to every node; a
             # named volume mounted by all five containers is the compose equivalent.
             - data-collector-flink-ha:/opt/flink/ha
+            # Shared with the JobManager and every other TaskManager — see the matching
+            # comment on the JobManager's volumes block.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -337,6 +351,9 @@ services:
             # real cluster it is one shared filesystem visible to every node; a
             # named volume mounted by all five containers is the compose equivalent.
             - data-collector-flink-ha:/opt/flink/ha
+            # Shared with the JobManager and every other TaskManager — see the matching
+            # comment on the JobManager's volumes block.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -408,6 +425,9 @@ services:
             # real cluster it is one shared filesystem visible to every node; a
             # named volume mounted by all five containers is the compose equivalent.
             - data-collector-flink-ha:/opt/flink/ha
+            # Shared with the JobManager and every other TaskManager — see the matching
+            # comment on the JobManager's volumes block.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         deploy:
@@ -503,10 +523,11 @@ services:
 
             # --- Broker memory. The 2026-09-02..04 daily OOM lived here. ---
             #
-            # HISTORY, not current state: checkpointing and EXACTLY_ONCE were removed again
-            # on 2026-09-05, so nothing writes transactionally today and none of the churn
-            # described below is being generated. These three settings stay because they are
-            # cheap, and because they are the prerequisite if EXACTLY_ONCE ever returns.
+            # Checkpointing and EXACTLY_ONCE are back (see CheckpointingConfigurer + every
+            # normalizer job's KafkaSink). This time the sinks use TransactionNamingStrategy
+            # .POOLING from the start (a small fixed id pool, reused across checkpoints) instead
+            # of the default INCREMENTING that caused the churn below, so these three settings
+            # are back to doing real work rather than sitting idle as insurance.
             #
             # Kafka's default heap is 1 GB and nothing here used to override it. The
             # broker died of `java.lang.OutOfMemoryError: Java heap space` roughly once a
@@ -922,6 +943,7 @@ volumes:
     data-collector-taskmanager-4-logs:
     data-collector-flink-ha:
     data-collector-flink-archive:
+    data-collector-flink-checkpoints:
     data-collector-zk-data:
     data-collector-zk-datalog:
     data-collector-redis-data:

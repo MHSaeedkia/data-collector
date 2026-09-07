@@ -27,6 +27,10 @@ func main() {
 	addr := flag.String("addr", ":9595", "address the -serve listener binds to")
 	provisionStack := flag.Bool("provision-stack", true, "provision stack using `docker compose up -d` command")
 	logLevel := flag.String("log-level", "info", "log verbosity: debug, info, warn or error")
+	checkpointRecovery := flag.Bool("checkpoint-recovery", false,
+		"run the live checkpoint-recovery fault-injection test (kills a TaskManager mid-stream "+
+			"and asserts every checkpointed job recovers in place with no data loss or "+
+			"duplication) instead of the built-in scenario list")
 
 	flag.Parse()
 
@@ -52,6 +56,16 @@ func main() {
 
 	if *serve {
 		runServer(cfg, *addr)
+		return
+	}
+
+	if *checkpointRecovery {
+		start := time.Now()
+		if err := scenario.RunCheckpointRecovery(ctx, cfg); err != nil {
+			slog.Error("checkpoint-recovery FAIL", "took", took(start), "err", err)
+			os.Exit(1)
+		}
+		slog.Info("checkpoint-recovery PASS", "took", took(start))
 		return
 	}
 

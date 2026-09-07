@@ -46,6 +46,16 @@ services:
                 metrics.reporter.prom.port: 9249
         volumes:
             - data-collector-jobmanager-logs:/opt/flink/log
+            # Checkpointing is back (see CheckpointingConfigurer, applied inside all 6
+            # normalizer jobs) — filesystem storage means the JobManager writes checkpoint
+            # metadata here and every TaskManager writes its state files to the SAME path, so
+            # this must be one shared volume, not a per-container one. Dev has one TaskManager,
+            # so the blast radius of getting this wrong is two containers rather than five, but
+            # it is not optional: without it, a task rescheduled after a restart cannot find its
+            # own checkpoint. The Dockerfile pre-creates and chowns this path — a fresh volume
+            # mounted onto a path Docker has to create itself comes up root-owned and the first
+            # checkpoint write fails (hit live on 2026-08-31, took down all 6 jobs at once).
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
         healthcheck:
@@ -95,6 +105,8 @@ services:
                 metrics.reporter.prom.port: 9250
         volumes:
             - data-collector-taskmanager-logs:/opt/flink/log
+            # Shared with the JobManager — see the matching comment there.
+            - data-collector-flink-checkpoints:/opt/flink/checkpoints
         networks:
             - data-collector-net
 
@@ -143,10 +155,11 @@ services:
 
             # --- Broker memory. The 2026-09-02..04 daily OOM lived here. ---
             #
-            # HISTORY, not current state: checkpointing and EXACTLY_ONCE were removed again
-            # on 2026-09-05, so nothing writes transactionally today and none of the churn
-            # described below is being generated. These three settings stay because they are
-            # cheap, and because they are the prerequisite if EXACTLY_ONCE ever returns.
+            # Checkpointing and EXACTLY_ONCE are back (see CheckpointingConfigurer + every
+            # normalizer job's KafkaSink). This time the sinks use TransactionNamingStrategy
+            # .POOLING from the start (a small fixed id pool, reused across checkpoints) instead
+            # of the default INCREMENTING that caused the churn below, so these three settings
+            # are back to doing real work rather than sitting idle as insurance.
             #
             # Kafka's default heap is 1 GB and nothing here used to override it. The
             # broker died of `java.lang.OutOfMemoryError: Java heap space` roughly once a
@@ -454,6 +467,7 @@ volumes:
     data-collector-taskmanager-logs:
     data-collector-taskmanager-2-logs:
     data-collector-redis-data:
+    data-collector-flink-checkpoints:
 
 networks:
     data-collector-net:
