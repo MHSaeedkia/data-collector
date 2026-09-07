@@ -1113,20 +1113,30 @@ the dated § in `memory/project_pair_extractor.md`.
 - [ ] **Two ex5 capabilities are supported but UNOBSERVED** and marked defensive in the tests: the
       multi-element `data` fan-out (all 5 frames carry exactly 1 element) and a qty-"0" level (0 in
       500 captured levels). Drop the tests only with evidence, not on a hunch.
-- [ ] **REMOVE `sequence_jump_tolerance` — user decision 2026-09-07, in its OWN branch after this
-      one merges.** It has no production user (every feed stamps 0) and, since 27 was retired, no
-      e2e coverage; what is left is an untested window in job 2's hot path plus a
-      `TypeValidateFunctionTest` group that invents synthetic exchange 99 to exercise behaviour no
-      exchange produces. The field carries `default: 0`, so dropping it from both subjects is Avro
-      compatible in both directions. ~13 files: `raw_order_book_event.avsc` +
-      `rejected_order_book_event.avsc` and their `_example.json`, `RawOrderBookEvent`, the raw and
-      rejected serializer/deserializer pairs, `TypeValidateFunction` (window → equality),
-      `TypeValidateFunctionTest`'s `tolerantJump` group, the `isZero()` assertions in the bitget /
-      okx / lbank parser tests, and the mention in `data_ex5.go`. The real cost is re-registering
-      both subjects and resubmitting every job, not the code — kept out of this branch so an
-      ex5-only change does not drag that with it. `sequence_jump` itself STAYS (ex6/ex7/ex8).
-- [ ] **Register the `.avsc` doc fix** whenever the next real schema change goes out. Doc-only, Avro
-      compatible, no version bump needed on its own — the serializers read the registry, never the
-      bundled copy.
+- [x] **REMOVE `sequence_jump_tolerance` — DONE 2026-09-07** on branch
+      `chore/remove-sequence-jump-tolerance`, cut after the ex5 branch merged. Job 2's contiguity
+      is a plain `seq == last + jump` equality again; zero behaviour change, since every feed
+      stamped 0. 14 files: both `.avsc` + both `_example.json`, `RawOrderBookEvent`, the raw
+      serializer/deserializer (the rejected serializer delegates, so no change),
+      `TypeValidateFunction`, `TypeValidateFunctionTest`, the `isZero()` assertions in the bitget /
+      okx / lbank parser tests, and the `BitgetParser` / `data_ex5.go` comments.
+      **284 normalizer tests green, e2e Go build/vet/gofmt/test clean; 3 mutations bite.**
+      ⚠ Two things the estimate got wrong, both recorded in memory: (a) the `tolerantJump` group
+      could NOT just be deleted — `restResyncDoesNotSeedTheWindow` is the 2026-08-23 live
+      resync-loop regression test and was PORTED to ex6 as
+      `restResyncOnAnotherClockDoesNotGapTheNextUpdate`, mutation-checked; (b) re-registering the
+      subjects is NOT required and was deliberately NOT done — code-first is safe because the
+      field had `default: 0`, while registry-first would NPE every running job's deserializer.
+      `sequence_jump` itself STAYS (ex6/ex7/ex8). See the follow-up item below.
+- [ ] **Register the trimmed `raw-order-book-event` + `rejected-order-book-event`** whenever the
+      next real schema change goes out. No longer doc-only: as of 2026-09-07 the committed `.avsc`
+      also DROPS `sequence_jump_tolerance`. Still Avro compatible (removing a field that carried
+      `default: 0` is BACKWARD, the registry's default level) and still not urgent — the
+      serializers read the registry, never the bundled copy, so production runs correctly on the
+      old registered version while the code ignores the field.
+      ⚠ **ORDER MATTERS, and it is the opposite of an ADD.** Deploy all 6 jobs first, register
+      second. Registering while a job still runs old code makes its reader schema lose the field,
+      so `record.get("sequence_jump_tolerance")` returns null and the `(long)` cast NPEs in
+      `RawOrderBookEventDeserializer`. See the last dated § of `memory/project_avro_schema.md`.
 - [ ] **Re-answer the open question above** ("Audit the other delta feeds for the same hole") — ex5
       is no longer one of the "known good" delta feeds it lists, because it is not a delta feed.

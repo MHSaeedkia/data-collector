@@ -869,7 +869,9 @@ so `BitgetParser` went back to it rather than being rewritten:
    can reach, so `no_baseline`, `awaiting_snapshot` and `sequence_gap` are all unreachable for
    this exchange and it can reach exactly one reject reason, `stale_or_duplicate`. ex5 joins ex3,
    ex4 and ex9 in that group. [[project_control_plane]]
-2. **`sequence_jump_tolerance` now has NO user anywhere on the platform.** ex5 was the only
+2. **`sequence_jump_tolerance` now has NO user anywhere on the platform** — and was therefore
+   **REMOVED outright later the same day** ([[project_type_validator]], [[project_avro_schema]]).
+   ex5 was the only
    exchange that ever stamped a nonzero one. **Kept, not removed** (user decision) — the field
    defaults to 0, which collapses job 2's window back to the exact check, so it is a no-op for
    every feed and removing it would mean re-registering both Avro subjects and resubmitting every

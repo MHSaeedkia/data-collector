@@ -49,8 +49,9 @@ captured wire formats in `sample-raw-data.md`):
 - **`sequence_jump` semantics**: >0 = delta feed, job-2 gap rule `seq == last + jump` (ex6=1,
   ex8=300, **ex5=600 since 2026-08-22**); **0 = snapshot feed** — no gap rule, only the
   out-of-order check (drop if not strictly greater than last seen).
-- **`sequence_jump_tolerance` (added 2026-08-22, `default: 0` so it is a BACKWARD-compatible
-  evolution)**: half-width of the accepted window, making the real rule
+- **`sequence_jump_tolerance` — ⚠ REMOVED 2026-09-07, see the last dated § of this file. The
+  paragraph below describes it while it existed (2026-08-22 → 2026-09-07).** (added 2026-08-22,
+  `default: 0` so it was a BACKWARD-compatible evolution): half-width of the accepted window, making the real rule
   `last + jump - tol <= seq <= last + jump + tol`. At 0 — every exchange but ex5 — it collapses to
   the exact check that was there before, so nothing else changed behaviour. **ex5 bitget stamps 10**
   because its sequence is a millisecond CLOCK on a nominal 600 ms cadence, not a counter, so it
@@ -150,3 +151,35 @@ exchange stamps a nonzero `sequence_jump_tolerance` any more** (see [[project_pa
   `.avsc` in `schemas/` is the human-facing source of truth that a person registers by hand. A
   doc-only edit is Avro-compatible and does not need a version bump; register it whenever the next
   real schema change goes out.
+
+---
+
+## 2026-09-07 (later) — `sequence_jump_tolerance` DROPPED from both subjects
+
+The "keep the field" decision in the section above was **reversed by the user the same day**. The
+field is gone from `raw_order_book_event.avsc`, from its nested copy in
+`rejected_order_book_event.avsc`, from both `_example.json`, and from `RawOrderBookEvent` + the
+raw serde pair. The rejected serializer needed no change — it delegates to the raw one, as it did
+when the field was added.
+
+**⚠ The standing "re-register both subjects" warning is for ADDING a field. A REMOVAL runs the
+other way, and the ordering is not symmetric:**
+
+- **Code-first is safe, and re-registration is OPTIONAL.** Dropping
+  `.set("sequence_jump_tolerance", …)` from the serializer works against the OLD registry schema
+  too, because the field carries `"default": 0` — `GenericRecordBuilder.build()` fills unset
+  fields from their schema default. So the code change is correct and complete on its own, and
+  **this branch does not touch the registry**.
+- **Registry-first BREAKS RUNNING JOBS.** Both serde classes call
+  `AvroSchemaLoader.loadLatest(...)` at first use. If the trimmed schema is registered while a job
+  is still running the old code, its reader schema loses the field,
+  `record.get("sequence_jump_tolerance")` returns `null`, and the `(long)` cast **NPEs** in
+  `RawOrderBookEventDeserializer`.
+
+So when the subjects are eventually re-registered: **deploy the code to all 6 jobs first, register
+second** (or stop, register, submit). Dropping a defaulted field is BACKWARD-compatible — the
+registry's default level — so registration itself will pass.
+
+The `.avsc` in `schemas/` is the single source of truth: `common/pom.xml` copies it onto the TEST
+classpath, so the serde tests exercise the trimmed schema directly. That is what proves the serde
+edit correct without a live registry.

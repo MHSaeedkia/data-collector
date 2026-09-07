@@ -97,29 +97,6 @@ class TypeValidateFunctionTest {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
     }
 
-    /** Not a seeded exchange — see {@link #tolerantJump(int, String, long)}. */
-    private static final int TOLERANT_EX = 99;
-
-    /**
-     * A delta message whose sequence is a millisecond CLOCK rather than a
-     * counter, so it carries a wide jump tolerance and job 2 checks a window
-     * instead of an equality. The 650 ± 110 band is the one ex5/bitget used
-     * while it sat on the {@code depth} channel.
-     *
-     * <p><b>No live exchange stamps a nonzero tolerance since 2026-09-07</b>,
-     * when ex5 went back to the {@code books50} channel — snapshot-only, with a
-     * real {@code seq} counter and jump 0 (see BitgetParser). The window code
-     * stays in job 2 and the field stays in the schema (both are a no-op at
-     * tolerance 0), so these tests keep exercising it against the SYNTHETIC
-     * exchange id above rather than making a claim about any live feed.
-     */
-    private static RawOrderBookEvent tolerantJump(int pair, String type, long ts) {
-        RawOrderBookEvent event
-                = new RawOrderBookEvent(TOLERANT_EX, pair, type, ts, 650L, ts, List.of(), List.of());
-        event.setSequenceJumpTolerance(110L);
-        return event;
-    }
-
     private void send(RawOrderBookEvent e) throws Exception {
         harness.processElement(new StreamRecord<>(e));
     }
@@ -283,33 +260,6 @@ class TypeValidateFunctionTest {
                         TypeValidateFunction.STALE_OR_DUPLICATE);
     }
 
-    @Test
-    @DisplayName("tolerant jump: both edges of the last+jump±tolerance window are contiguous")
-    void toleranceWindowEdgesAccepted() throws Exception {
-        long t0 = 1787404282000L;
-        send(tolerantJump(1, "snapshot", t0));
-        send(tolerantJump(1, "update", t0 + 540)); // low edge  -> ok
-        send(tolerantJump(1, "update", t0 + 540 + 760)); // high edge -> ok
-        send(tolerantJump(1, "update", t0 + 540 + 760 + 650)); // dead centre -> ok
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0, t0 + 540, t0 + 1300, t0 + 1950);
-        assertThat(rejects()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("tolerant jump: one millisecond outside the window is still a gap")
-    void toleranceWindowIsNotUnbounded() throws Exception {
-        long t0 = 1787404282000L;
-        send(tolerantJump(1, "snapshot", t0));
-        send(tolerantJump(1, "update", t0 + 761)); // 1 ms past the high edge -> gap
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0);
-        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
-                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
-    }
-
     /**
      * The live resync loop, reproduced and shown fixed (dev server,
      * 2026-08-23, on ex5 as it then was). A delta feed whose only baseline is a
@@ -320,66 +270,35 @@ class TypeValidateFunctionTest {
      * the two clocks: the REST body is ordered by event time, and the next
      * update re-anchors the baseline.
      *
-     * <p>ex5 no longer has that shape (snapshot-only since 2026-09-07), but
-     * ex6/bybit and ex8/okx do — at tolerance 0 — so this stays the regression
-     * test for the pattern, not for the exchange.
+     * <p>ex5 no longer has that shape (snapshot-only since 2026-09-07), so this
+     * is pinned on ex6/bybit, which still does — as does ex8/okx. It is the
+     * regression test for the PATTERN, not for the exchange, and it is the only
+     * one that starts from a cold update rather than from the snapshot: the
+     * REST answer arrives with an event time BEHIND the update that provoked
+     * it, and the ask must still fire exactly once.
      */
     @Test
     @DisplayName("resync: a REST snapshot on the other clock no longer gaps the next update")
-    void restResyncDoesNotSeedTheWindow() throws Exception {
-        long t0 = 1787404282000L;
-        send(tolerantJump(1, "update", t0)); // cold start -> no_baseline, asks for a snapshot
-        send(nullSeqSnapshot(TOLERANT_EX, 1, t0 - 40)); // the REST answer, ts BEHIND the update it follows
-        send(tolerantJump(1, "update", t0 + 600)); // baselinePending adopts this unconditionally
-        send(tolerantJump(1, "update", t0 + 1200)); // +600 -> inside the window
-        send(tolerantJump(1, "update", t0 + 1950)); // +750 -> the live cluster the old window rejected
+    void restResyncOnAnotherClockDoesNotGapTheNextUpdate() throws Exception {
+        send(delta(6, 1, "update", 500L, 1L)); // cold start -> no_baseline, asks for a snapshot
+        send(nullSeqSnapshot(6, 1, 499L)); // the REST answer, event time BEHIND the update it follows
+        send(delta(6, 1, "update", 600L, 1L)); // baselinePending adopts this unconditionally
+        send(delta(6, 1, "update", 601L, 1L)); // contiguous from the adopted baseline
+        send(delta(6, 1, "update", 602L, 1L)); // and again -- no gap cascade
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(null, t0 + 600, t0 + 1200, t0 + 1950);
+                .containsExactly(null, 600L, 601L, 602L);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.NO_BASELINE);
         assertThat(controlCommands()).hasSize(1); // ONE ask, not one per snapshot
     }
 
-    /**
-     * The band is widened, not removed: a genuinely missed tick is ~2x the
-     * cadence and still lands outside [540, 760]. Without this the widening
-     * would have quietly disabled gap detection altogether.
-     */
     @Test
-    @DisplayName("tolerant jump: a missed tick (~1200 ms) is still a gap")
-    void toleranceWindowStillDetectsAMissedTick() throws Exception {
-        long t0 = 1787404282000L;
-        send(tolerantJump(1, "snapshot", t0));
-        send(tolerantJump(1, "update", t0 + 750)); // the upper live cluster -> accepted
-        send(tolerantJump(1, "update", t0 + 750 + 1200)); // one tick lost -> gap
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0, t0 + 750);
-        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
-                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
-    }
-
-    @Test
-    @DisplayName("tolerant jump: a backwards ts is stale_or_duplicate, not a gap")
-    void toleranceWindowStillRejectsStale() throws Exception {
-        long t0 = 1787404282000L;
-        send(tolerantJump(1, "snapshot", t0));
-        send(tolerantJump(1, "update", t0 + 600)); // ok
-        send(tolerantJump(1, "update", t0 + 600)); // duplicate ts
-        send(tolerantJump(1, "update", t0 + 100)); // older
-
-        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
-                .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
-                        TypeValidateFunction.STALE_OR_DUPLICATE);
-    }
-
-    @Test
-    @DisplayName("tolerance 0 (every other exchange) keeps the exact seq == last + jump check")
-    void zeroToleranceIsTheExactCheck() throws Exception {
+    @DisplayName("delta feed: contiguity is an EQUALITY -- +2 on a jump-1 feed is a gap, not a near miss")
+    void exactJumpCheckRejectsAnOvershoot() throws Exception {
         send(delta(6, 1, "snapshot", 10L, 1L));
         send(delta(6, 1, "update", 11L, 1L)); // exact -> ok
-        send(delta(6, 1, "update", 13L, 1L)); // +2 with tolerance 0 -> gap, not accepted
+        send(delta(6, 1, "update", 13L, 1L)); // +2 -> gap, not accepted
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(10L, 11L);
@@ -421,22 +340,6 @@ class TypeValidateFunctionTest {
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(1000L, 1300L, 1307L, 1607L);
-        assertThat(rejects()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("snapshot after updates: a resync ts off the cadence grid re-anchors the window")
-    void resyncSnapshotIsNotWindowChecked() throws Exception {
-        // A sequenced resync snapshot carrying the same jump/tolerance as the updates around it,
-        // arriving whenever the collector answered rather than on a tick.
-        long t0 = 1787404282000L;
-        send(tolerantJump(1, "snapshot", t0));
-        send(tolerantJump(1, "update", t0 + 650));
-        send(tolerantJump(1, "snapshot", t0 + 1500)); // 190 ms past the window end -> still accepted
-        send(tolerantJump(1, "update", t0 + 2150)); // 650 after the SNAPSHOT, not after t0 + 650
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0, t0 + 650, t0 + 1500, t0 + 2150);
         assertThat(rejects()).isEmpty();
     }
 

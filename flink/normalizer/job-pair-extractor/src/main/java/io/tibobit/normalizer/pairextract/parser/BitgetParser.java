@@ -30,10 +30,10 @@ import java.util.List;
  *       shape now falls through the whitelist and is dropped.</li>
  *   <li><b>No timestamp-as-sequence, and no jump window.</b> {@code seq} and {@code pseq} are
  *       back on the wire, so the ordering field is a real monotonic counter again rather than the
- *       {@code ts} clock the {@code depth} channel forced. {@code sequenceJump} is 0 and
- *       {@code sequenceJumpTolerance} is left at its default 0 — <b>ex5 was the only exchange
- *       that ever stamped a nonzero tolerance, so no feed uses that field any more</b> (it stays
- *       in the schema and in job 2 as a no-op).</li>
+ *       {@code ts} clock the {@code depth} channel forced. {@code sequenceJump} is 0. ex5 was the
+ *       only exchange that ever stamped a jump tolerance, so when it left the delta group the
+ *       field lost its last user and was <b>dropped from the schema and from job 2</b> on
+ *       2026-09-07.</li>
  * </ul>
  *
  * <p><b>{@code pseq} is read by nobody, and it is NOT a predecessor pointer.</b> The obvious guess

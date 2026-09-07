@@ -875,7 +875,7 @@ never the numbers):
 | # | identifier | why it is gone |
 | - | ---------- | -------------- |
 | 26 | `Ex5UpdateBeforeSnapshot` | ex5 sends no updates, so it has no cold start and can reach `no_baseline` never |
-| 27 | `Ex5JumpTolerance` | ex5 stamps tolerance 0 now, and it was the ONLY scenario in the suite exercising `sequence_jump_tolerance` — **that feature now has NO e2e coverage at all**, by design, because no exchange stamps it |
+| 27 | `Ex5JumpTolerance` | ex5 stamps tolerance 0 now, and it was the ONLY scenario in the suite exercising `sequence_jump_tolerance` — **that feature now has NO e2e coverage at all**, by design, because no exchange stamps it. ⚠ **That absence of coverage became a reason to DELETE the feature: the field was removed 2026-09-07** — see [[project_type_validator]] |
 | 31 | `Ex5RestSnapshotResync` | `ex5-raw` has one stream again; the REST poller is off |
 
 **Current ex5 block: 25, 28, 29, 30, and 62.**

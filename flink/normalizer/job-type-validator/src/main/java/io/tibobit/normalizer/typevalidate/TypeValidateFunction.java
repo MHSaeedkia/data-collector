@@ -57,12 +57,8 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * ex1/ex2 REVISED 2026-09-02 out of this group and ex5 REVISED 2026-09-07 out
  * of it, see above): needs a baseline and a contiguous sequence. No baseline
  * yet → {@code no_baseline}; still waiting to re-sync after a gap →
- * {@code awaiting_snapshot}; {@code sequence_id} within
- * {@code sequence_jump_tolerance} of {@code lastSeq + sequence_jump} → valid
- * (the tolerance is 0 on every exchange now that ex5/bitget, the only feed that
- * ever stamped one, is snapshot-only again — see the window comment in
- * {@code processElement});
- * {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
+ * {@code awaiting_snapshot}; {@code sequence_id == lastSeq + sequence_jump} →
+ * valid; {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
  * forward jump is a gap → {@code sequence_gap}, and the stream is marked
  * untrusted (every update rejected until the next snapshot re-syncs).</li>
  * </ul>
@@ -416,17 +412,18 @@ public class TypeValidateFunction
             reject(event, AWAITING_SNAPSHOT, ctx);
             return;
         }
-        // Contiguity, as a WINDOW rather than an equality: the expected next sequence is
-        // last + jump, and sequence_jump_tolerance is how far either side of it still counts as
-        // contiguous. EVERY exchange stamps tolerance 0 since 2026-09-07, which collapses this
-        // back to the exact `seq == last + jump` check it has always been (ex6 jump 1, ex8 jump
-        // 300 — real counters and a real fixed cadence). ex5/bitget was the only feed that ever
-        // stamped one, because its sequence was then a millisecond clock and never landed on an
-        // exact multiple; it is back on a real `seq` counter and snapshot-only. The window is
-        // kept for the next timestamp-sequenced feed, not because anything needs it today.
+        // Contiguity: the expected next sequence is exactly last + jump. The jump is either a
+        // constant from the exchange's cadence (ex6 = 1) or stamped per message from a frame
+        // that names its own predecessor (ex7 `u - U`, ex8 `seqId - prevSeqId`), where this
+        // reduces to "the predecessor it names is the last one we accepted".
+        //
+        // This was briefly a WINDOW (`expected ± sequence_jump_tolerance`), added 2026-08-22 for
+        // ex5/bitget when its sequence was a millisecond clock that never landed on an exact
+        // multiple of the cadence. ex5 went back to a real `seq` counter and snapshot-only on
+        // 2026-09-07, leaving the window with no user, and the field was dropped from the schema
+        // on 2026-09-07. A future timestamp-sequenced feed would have to re-add it.
         long expected = last + event.getSequenceJump();
-        long tolerance = event.getSequenceJumpTolerance();
-        if (seq >= expected - tolerance && seq <= expected + tolerance) {
+        if (seq == expected) {
             lastSeq.update(seq);
             emit(event, out, arrivedAt);
         } else if (seq <= last) {

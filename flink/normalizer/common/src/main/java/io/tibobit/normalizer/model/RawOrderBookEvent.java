@@ -18,15 +18,6 @@ import java.util.List;
  *       ({@code seqId - prevSeqId}), where the rule reduces to "the predecessor it names is the
  *       last one we accepted". 0 = snapshot feed, or a snapshot on a delta feed — out-of-order
  *       check only.</li>
- *   <li>{@code sequenceJumpTolerance}: half-width of the accepted window around
- *       {@code sequenceJump}, so the rule is really
- *       {@code last + jump - tol <= seq <= last + jump + tol}. At 0 the window collapses to the
- *       exact check every delta feed has always had. <b>0 on every exchange since 2026-09-07</b>:
- *       ex5/bitget was the only one that ever stamped it (its sequence was a millisecond
- *       TIMESTAMP, so it never landed on an exact multiple) and it moved back to a real
- *       {@code seq} counter on the {@code books50} channel. The field and the window code are
- *       kept — a future timestamp-sequenced feed needs them — but nothing exercises them in
- *       production today.</li>
  *   <li>{@code simulation}: NiFi's flag from the raw payload — 0 = live, 1 = simulation, other
  *       values undefined, absent = 0. Set by job 1 and carried unchanged by jobs 2–4. It is NOT
  *       part of any keying or validation rule; it only rides along.</li>
@@ -47,7 +38,6 @@ public class RawOrderBookEvent {
     private List<String> sourceIds = List.of();
     private Long sequenceId;
     private long sequenceJump;
-    private long sequenceJumpTolerance;
     private long eventTime;
     private List<PriceLevel> asks;
     private List<PriceLevel> bids;
@@ -131,14 +121,6 @@ public class RawOrderBookEvent {
 
     public void setSequenceJump(long sequenceJump) {
         this.sequenceJump = sequenceJump;
-    }
-
-    public long getSequenceJumpTolerance() {
-        return sequenceJumpTolerance;
-    }
-
-    public void setSequenceJumpTolerance(long sequenceJumpTolerance) {
-        this.sequenceJumpTolerance = sequenceJumpTolerance;
     }
 
     public long getEventTime() {
