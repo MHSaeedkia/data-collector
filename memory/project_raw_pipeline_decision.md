@@ -119,6 +119,8 @@ kafka-ui (192.168.150.104:8080), latest-200 per topic.
   ordering field is the inner **`ts`** (STRING epoch millis, also the event time), and because
   that is a CLOCK rather than a counter it needed a new schema field,
   `sequence_jump_tolerance` — **ex5 is jump 600 ± 10**, everyone else 0 (= the old exact check).
+  ⚠ **STALE: the field was REMOVED 2026-09-07** once ex5 left the delta group and it had no user
+  left; job 2 is a plain equality again. See [[project_type_validator]], [[project_avro_schema]].
   See [[avro-schema]], [[type-validator]], [[pair-extractor]].
 - **Three regimes**: full-snapshot-every-msg (**ex1 nobitex + ex2 bitpin + ex4 ramzinex +
   ex5 bitget RE-CONFIRMED 2026-07-14** post-reset, samples + parsing notes in

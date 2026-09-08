@@ -35,7 +35,8 @@
 //     NUMERIC sides, an injected `pair`). The poller is gone; the shape is now noise, which
 //     Ex5NoiseFrames pins.
 //   - The `sequence_jump_tolerance` window. ex5 was the only exchange that ever stamped a nonzero
-//     one, so the field is now 0 platform-wide and no scenario exercises it.
+//     one, so when it left the delta group the field lost its last user and was removed from the
+//     schema outright (2026-09-07). Job 2's contiguity check is a plain equality again.
 //
 // Every bitget market in the seed is a USDT market with rebase 0/0, so job 3 is the identity here
 // and there is nothing to assert about it — ex1 and ex4 are the only two exchanges that can.

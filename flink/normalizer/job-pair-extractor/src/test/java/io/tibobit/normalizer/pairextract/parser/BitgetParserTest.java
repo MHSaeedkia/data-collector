@@ -12,10 +12,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Tests {@link BitgetParser} (ex5) against the captured wire samples (sample-raw-data.md § ex5),
  * REVISED 2026-09-07 for the return to the {@code books50} channel: snapshot-only, {@code seq}
- * and {@code pseq} back on the wire, and no REST stream on {@code ex5-raw} at all. The three
- * things the {@code depth} channel needed and this one does not — an {@code "update"} regime, the
- * inner {@code ts} doing double duty as a sequence, and a nonzero {@code sequenceJumpTolerance} —
- * each get a test here proving they are gone rather than merely unused.
+ * and {@code pseq} back on the wire, and no REST stream on {@code ex5-raw} at all. The two things
+ * the {@code depth} channel needed and this one does not — an {@code "update"} regime and the
+ * inner {@code ts} doing double duty as a sequence — each get a test here proving they are gone
+ * rather than merely unused. (The third, a nonzero jump tolerance, no longer exists at all: the
+ * field was dropped from the schema on 2026-09-07.)
  *
  * <p>The two snapshot fixtures are a <b>genuinely consecutive captured pair</b> (frames 1 and 2 of
  * a 5-frame live capture, level arrays trimmed), so {@link #consecutiveCapturesMoveForward()}
@@ -42,7 +43,6 @@ class BitgetParserTest {
         assertThat(event.getType()).isEqualTo("snapshot");
         assertThat(event.getSequenceId()).isEqualTo(787944892031L);
         assertThat(event.getSequenceJump()).isZero();
-        assertThat(event.getSequenceJumpTolerance()).isZero();
         assertThat(event.getEventTime()).isEqualTo(1788771223652L); // inner STRING ts
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("79427.25");
         assertThat(event.getAsks().get(0).getQuantity()).isEqualTo("0.122814");

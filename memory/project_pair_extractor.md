@@ -408,7 +408,7 @@ only moves forward.
 tempting alternative was `TS`-as-sequence, the way ex5 and ex8 use their `ts`; it was rejected
 because a timestamp-as-sequence imposes a publish cadence the exchange never promised, and that is
 precisely what cost ex5 a live resync loop and forced the platform's only nonzero
-`sequence_jump_tolerance`. A null sequence puts ex9 on job 2's **event-time branch**, where the
+`sequence_jump_tolerance` (a field since REMOVED, 2026-09-07 — ex5 was its only user). A null sequence puts ex9 on job 2's **event-time branch**, where the
 whole test is "not older than the last accepted frame" — the user's words: *"it is providing all
 the snapshots, so just verifying that timestamp is not out of order is good enough."* That is
 sound for a full-snapshot feed, because an accepted frame replaces the book outright, so there is
@@ -559,7 +559,9 @@ control plane keeps asking with `reason: sequence_gap` and NiFi keeps answering 
 
 **1. The trigger — WHY the gap fires at all, and this is NOT settled.** `OkxParser` stamps
 `jump = 300` with `sequenceJumpTolerance` **0**, so job 2 requires each WS update's `ts` to be
-EXACTLY `previous + 300`. ex5/bitget shipped the same shape of assumption and a live measurement
+EXACTLY `previous + 300`. ⚠ **BOTH halves of that sentence are now stale**: ex8 moved to a DYNAMIC
+jump (`seqId - prevSeqId`) on 2026-09-05, and `sequenceJumpTolerance` was deleted outright on
+2026-09-07. The reasoning below is kept because the TRAP it describes is still real. ex5/bitget shipped the same shape of assumption and a live measurement
 destroyed it (93.2% inside `600 ± 10`, a real second cluster at 725–775 ms, hence `650 ± 110`).
 
 ⚠ **CORRECTING AN EARLIER READING IN THIS FILE.** It first said the ex8 window is "extrapolated from
@@ -869,7 +871,9 @@ so `BitgetParser` went back to it rather than being rewritten:
    can reach, so `no_baseline`, `awaiting_snapshot` and `sequence_gap` are all unreachable for
    this exchange and it can reach exactly one reject reason, `stale_or_duplicate`. ex5 joins ex3,
    ex4 and ex9 in that group. [[project_control_plane]]
-2. **`sequence_jump_tolerance` now has NO user anywhere on the platform.** ex5 was the only
+2. **`sequence_jump_tolerance` now has NO user anywhere on the platform** — and was therefore
+   **REMOVED outright later the same day** ([[project_type_validator]], [[project_avro_schema]]).
+   ex5 was the only
    exchange that ever stamped a nonzero one. **Kept, not removed** (user decision) — the field
    defaults to 0, which collapses job 2's window back to the exact check, so it is a no-op for
    every feed and removing it would mean re-registering both Avro subjects and resubmitting every

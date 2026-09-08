@@ -136,7 +136,9 @@ REST-snapshot + WS-delta exactly like ex1, and needed NO job-2 code change (the 
 resync + null-seq `out_of_order` guard are exchange-agnostic), see [[pair-extractor]].
 (The remaining snapshot-only feed ex4 and the no-ordering ex3 never hit the gap branch, so they
 never emit a reset. **ex5 bitget LEFT this list 2026-08-22** — it became a snapshot/update delta
-feed and now does hit it; see the jump-tolerance note below.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
+feed and now does hit it; see the jump-tolerance note below. ⚠ ex5 REJOINED the snapshot-only
+list 2026-09-07, and the jump tolerance that note describes was deleted the same day — see the
+LAST dated § of this file.) As of 2026-07-22 only the enum fix + re-registration are done; **no delta feed has been
 verified live yet.**
 
 ## The ordering guards are suspended during a resync (2026-08-19)
@@ -216,6 +218,7 @@ value, not a sequence), so its ordering field is now the inner millisecond `ts`.
 lands on an exact multiple of a cadence, so `seq == last + jump` could not work: the rule is now
 `last + jump - tol <= seq <= last + jump + tol`, with `tol` from the new
 `sequence_jump_tolerance` schema field (`default: 0`, so a BACKWARD-compatible evolution).
+⚠ **STALE — the field and the window were REMOVED 2026-09-07; see the last dated § of this file.**
 **ex5 stamps jump 600 / tolerance 10; every other exchange stamps 0, which collapses the window
 back to the exact check** — ex6's jump 1 and ex8's jump 300 are unchanged, and that is pinned by
 `zeroToleranceIsTheExactCheck`. Job 2 stays exchange-agnostic: it reads the tolerance off the
@@ -372,7 +375,8 @@ above is WITHDRAWN unimplemented.** The team switched okx to the `books` channel
 `sequence_jump = seqId - prevSeqId` per message, so this function's `seq == lastSeq + jump` reduces
 to `prevSeqId == lastSeq` — exact contiguity with **no window, no tolerance, and no change to job
 2**. So the grid/multiple rule and the extra schema field are not needed and were never written; the
-`sequence_jump_tolerance` field stays used by ex5/bitget alone. Details in
+`sequence_jump_tolerance` field stays used by ex5/bitget alone (⚠ which lasted two more days:
+ex5 left the delta group 2026-09-07 and the field was deleted the same day). Details in
 [[project_pair_extractor]] § ex8 IMPLEMENTED.
 
 **What DID change here: the dynamic jump finally has cover.** It had none — ex7/ompfinex has relied
@@ -502,3 +506,54 @@ default — no schema change, `doc` updated only. **No consumer branches on `rea
 **Verified: 294 normalizer tests green (73 in job 2, +2), and 7 e2e scenarios PASS live** —
 25, 62, 63 (ex5), 32 (ex6 deltas), 38 (ex8 no-baseline), and the two that could most plausibly
 regress, `44-control-ex6-gap-resync-gap` and `46-control-ex6-stale-resync-accepted`.
+
+---
+
+## 2026-09-07 (later) — `sequence_jump_tolerance` REMOVED; contiguity is an equality again
+
+The "keep it as a no-op" decision recorded in the section above was **reversed by the user the
+same day**, once it was clear the field had no user and no coverage. Branch
+`chore/remove-sequence-jump-tolerance`, cut after the ex5 branch merged.
+
+`processElement`'s update branch is now plainly `seq == last + jump` — the window, the
+`tolerance` local and the field it read are gone. **Zero behavioural change**: every feed stamped
+0, and `expected ± 0` is that same equality.
+
+**Why the audit said it was safe to remove:**
+
+- **No producer.** `setSequenceJumpTolerance` had zero callers in any `src/main` across the repo —
+  the only writer was a test helper. ex5 was the only feed that ever stamped a nonzero value.
+- **No coverage.** Retiring e2e scenario 27 had already left the window with no e2e test at all.
+- **No blast radius.** The field lived only on `raw_order_book_event` and its nested copy in
+  `rejected_order_book_event`. `flink/adjustment`, `flink/merger`, `nifi/`, `web/`, `postgres/`
+  and `market-subscriptions/` never referenced it; the raw subject is touched only by the
+  normalizer's shared serde.
+
+⚠ **The `tolerantJump` test group was NOT deleted wholesale.** Four tests were pure window tests
+and went; `resyncSnapshotIsNotWindowChecked` was redundant once the window was gone (the two
+`snapshotAfterUpdates*` tests already pin snapshot re-anchoring at jump 0). But
+**`restResyncDoesNotSeedTheWindow` carried independent value and was PORTED to ex6, not deleted** —
+it is the regression test for the 2026-08-23 live resync loop, and its own javadoc said the
+pattern still applies to ex6/bybit and ex8/okx. It is now
+`restResyncOnAnotherClockDoesNotGapTheNextUpdate` on ex6: cold update → `no_baseline` + ONE ask,
+then a null-seq REST answer whose event time (499) is BEHIND the update that provoked it (500),
+then adoption at 600 and clean contiguity. It is the only job-2 test that starts from a cold
+update rather than a snapshot. **Mutation-checked**: flipping `baselinePending.update(true)` to
+`false` fails it by name.
+
+`zeroToleranceIsTheExactCheck` → `exactJumpCheckRejectsAnOvershoot` (the name described a concept
+that no longer exists; the assertions are unchanged).
+
+**VERIFIED LIVE 2026-09-07 — the full 58-scenario e2e suite passes on the dev server** against a
+freshly provisioned stack (`82f7dd4`). Every delta feed the equality actually governs came back
+green: ex6 (`34-ex6-sequence-gap`), ex8's dynamic jump (`40-ex8-sequence-gap`,
+`41-ex8-stale-duplicate`), ex7 (`50-ex7-sequence-gap`), the control-plane pair 44/46, and
+`48-ex6-rest-snapshot-resync` — which is the e2e twin of the unit test PORTED to ex6 rather than
+deleted, so the port is confirmed at both levels. Two scenarios failed on a taskmanager restart
+(`NoResourceAvailableException`) and re-ran green; see [[project_e2e_harness]] for how to
+recognise that flake. Full artefacts: `/opt/data-collector/e2e-runs/20260907-174815/`.
+
+**Verified: 284 normalizer tests green across all 6 modules, e2e Go build/vet/gofmt/test clean.**
+The only test-count change anywhere in the tree is −5 in `TypeValidateFunctionTest` (73 → 68),
+confirmed by diffing `@Test` counts per file against `main`. Two mutations confirm the surviving
+check bites: `seq >= expected` fails 25, and `expected = last + 1` fails 8.
