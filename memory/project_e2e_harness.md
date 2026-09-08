@@ -997,3 +997,38 @@ reproduces the full state at any time.
 ⚠ **The server tree was 120 commits / 503 files behind `main`** before this run (clean ancestor, no
 divergence), so this run also exercised all that drift, not just the branch's 2 commits. Worth
 saying out loud when attributing any failure.
+
+---
+
+## 2026-09-08 — `SCENARIO=` env var: running ONE case without a temp binary
+
+The gap the two sections above kept hitting ("there is still no filter flag") is closed. `SCENARIO`
+in the environment (or in `e2e/.env`) makes `main.go` run exactly one case from
+`scenario.Scenarios` instead of the whole list. The value is either the **full name** or just its
+**leading number** — `SCENARIO=62` and `SCENARIO=62-ex5-stale-seq` are the same thing — because the
+numbers are what memory/, `todo.md` and the run logs quote.
+
+```
+cd e2e && SCENARIO=62 go run . -provision-stack=false
+```
+
+**Why this and not the alternatives:** `-serve` + `POST /scenarios/run` needs the whole scenario as
+a JSON body, and the throwaway `cmd/rerun` binary (2026-09-07) meant building and deleting an
+untracked file every time. This is the same `scenario.Run` call path as a full run — the list is
+sliced, nothing else changes — so a green single run means what a green full run would mean for
+that case.
+
+**Design decisions worth not re-deriving:**
+
+- It is an **env var, not a flag**, so it rides `config.Load`'s existing `.env`-then-environment
+  precedence (a real env var wins over the file) and works unchanged in a docker/CI invocation.
+  It is read into `config.Config.Scenario`; empty means run everything.
+- **Prefix matching is segment-exact** — `strings.HasPrefix(name, want+"-")`, so `SCENARIO=6` does
+  NOT match `62-ex5-stale-seq`. It errors instead. A loose prefix would silently run the wrong case.
+- **An unmatched value is fatal (exit 1), not an empty run.** A typo that "passes" is the one
+  failure mode this feature could plausibly introduce, so it cannot happen.
+- `-serve` mode ignores it: the request body already names the scenario.
+
+Verified live against a running local stack: `SCENARIO=62` and `SCENARIO=44-control-ex6-gap-resync-gap`
+each ran alone and PASSED (27 s / 23 s), `SCENARIO=nope` and `SCENARIO=6` exit 1 with a readable
+message before touching the stack. Build/vet/gofmt clean, `scenario` tests pass.

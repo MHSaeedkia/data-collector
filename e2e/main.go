@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"orderbook-e2e/config"
@@ -55,12 +56,23 @@ func main() {
 		return
 	}
 
+	cases := scenario.Scenarios
+	if cfg.Scenario != "" {
+		i, err := selectScenario(cfg.Scenario)
+		if err != nil {
+			slog.Error("select scenario", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("running one scenario", "SCENARIO", cfg.Scenario, "name", cases[i].Name)
+		cases = cases[i : i+1]
+	}
+
 	// One failure does not stop the run: a suite this slow is only worth waiting
 	// on if it reports every case it can, so failures are collected and listed
 	// at the end.
 	var failed []string
-	for i, sc := range scenario.Scenarios {
-		slog.Info("scenario start", "n", i+1, "of", len(scenario.Scenarios), "name", sc.Name)
+	for i, sc := range cases {
+		slog.Info("scenario start", "n", i+1, "of", len(cases), "name", sc.Name)
 		start := time.Now()
 		if err := scenario.Run(ctx, cfg, sc.S); err != nil {
 			slog.Error("scenario FAIL", "name", sc.Name, "took", took(start), "err", err)
@@ -71,10 +83,24 @@ func main() {
 	}
 
 	if len(failed) > 0 {
-		slog.Error("run finished with failures", "failed", len(failed), "of", len(scenario.Scenarios), "names", failed)
+		slog.Error("run finished with failures", "failed", len(failed), "of", len(cases), "names", failed)
 		os.Exit(1)
 	}
-	slog.Info("run finished", "passed", len(scenario.Scenarios))
+	slog.Info("run finished", "passed", len(cases))
+}
+
+// selectScenario resolves the SCENARIO env value to exactly one case. The value
+// is either the full name ("25-ex5-snapshot-stream") or just its leading number
+// ("25"), because the numbers are what memory/ and the run logs quote. An
+// unknown value is fatal rather than an empty run: a typo must not look like a
+// pass.
+func selectScenario(want string) (int, error) {
+	for i, sc := range scenario.Scenarios {
+		if sc.Name == want || strings.HasPrefix(sc.Name, want+"-") {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("no scenario matches SCENARIO=%q; names are listed in scenario/scenarios.go", want)
 }
 
 // setupLogger installs the process logger. The harness is a console tool, so

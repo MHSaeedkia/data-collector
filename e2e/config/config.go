@@ -16,6 +16,10 @@ type Config struct {
 	FlinkAPI          string
 	NormalizerDir     string
 	ComposeFile       string
+
+	// Scenario selects a single case from the compiled-in list instead of
+	// running all of them. Empty means run everything.
+	Scenario string
 }
 
 // Load reads envFile (if present) into the process environment, then builds the
@@ -32,6 +36,7 @@ func Load(envFile string) (Config, error) {
 		FlinkAPI:          env("FLINK_API", "http://localhost:7070"),
 		NormalizerDir:     env("NORMALIZER_DIR", "../flink/normalizer"),
 		ComposeFile:       env("COMPOSE_FILE", "../docker-compose.yml"),
+		Scenario:          env("SCENARIO", ""),
 	}
 
 	if cfg.SchemaRegistryURL == "" {

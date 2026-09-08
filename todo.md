@@ -1145,3 +1145,8 @@ the dated § in `memory/project_pair_extractor.md`.
       `RawOrderBookEventDeserializer`. See the last dated § of `memory/project_avro_schema.md`.
 - [ ] **Re-answer the open question above** ("Audit the other delta feeds for the same hole") — ex5
       is no longer one of the "known good" delta feeds it lists, because it is not a delta feed.
+- [x] **`SCENARIO=` env var to run a single e2e case** (2026-09-08). `cd e2e && SCENARIO=62 go run .
+      -provision-stack=false` runs one scenario by number or full name; an unknown value exits 1
+      rather than running nothing. Closes the "there is still no filter flag" note from the
+      2026-09-07 live run — no more throwaway `cmd/rerun` binary. Verified live: 62 and 44 each
+      passed alone. See [[project_e2e_harness]].
