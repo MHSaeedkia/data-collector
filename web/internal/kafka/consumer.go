@@ -158,12 +158,26 @@ func (c *Consumer) handleFetchErr(topic string, partition int32, err error) {
 	if !c.shouldPurge(topic, err, time.Now()) {
 		return
 	}
-	log.Printf("kafka[%s]: %s was recreated with a new topic ID — purging it so the regex re-discovers it "+
-		"(a 'first record from %s' line means it recovered)", c.name, topic, topic)
+	// Deliberately does NOT quote the recovery line's wording. An earlier
+	// version spelled out "a 'first record from <topic>' line means it
+	// recovered", and the e2e test — which greps the logs for exactly that —
+	// matched THIS line instead and passed against a build with the fix
+	// removed. A log line that quotes another log line is a trap for anything
+	// reading the log.
+	log.Printf("kafka[%s]: %s was recreated with a new topic ID — purging it so the regex re-discovers it; "+
+		"it announces itself again once a record arrives", c.name, topic)
 	// PurgeTopicsFromClient issues a BLOCKING metadata call, so it must
 	// never run on the poll loop — that would stall consumption for every
 	// other topic this client serves.
-	go c.client.PurgeTopicsFromClient(topic)
+	go func() {
+		c.client.PurgeTopicsFromClient(topic)
+		// The purge only drops the caches. Nothing then asks for this topic
+		// again until the metadata max age elapses (5 minutes by default),
+		// because the purge also removed the cursor whose fetch errors were
+		// driving the refreshes. Without this the fix still works but takes
+		// minutes; with it, seconds.
+		c.client.ForceMetadataRefresh()
+	}()
 }
 
 // shouldPurge decides whether this error means the topic must be purged,
