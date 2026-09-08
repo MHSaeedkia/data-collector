@@ -400,3 +400,57 @@ these rates would be thousands of lines a second and would bury the useful ones.
 Verified by running the binary with Kafka, postgres and the registry all unreachable and driving
 a real websocket at it (connect → select → junk message → disconnect): every line above appears
 once, in order, with no per-tick repetition.
+
+---
+
+## 2026-09-08 — `UNKNOWN_TOPIC_ID`: a recreated topic stalls the consumer forever
+
+Symptom: `kafka[ex]: fetch error ex8-p1-orderbook-snapshot-flink[0]: UNKNOWN_TOPIC_ID`, repeating,
+while `kafka-topics --describe` showed the topic perfectly healthy. It never recovered on its own;
+only restarting the container fixed it. **Reproduced deliberately on 2026-09-08 and confirmed.**
+
+### The mechanism (all of this is readable in `web/vendor/github.com/twmb/franz-go`)
+
+- `kgo`'s `cursor.topicID` (`pkg/kgo/source.go:121`) is **written once at cursor creation and
+  deliberately never re-adopted** if a delete+recreate hands back a new ID for the same name. This
+  is a design choice, not a bug: `OffsetForLeaderEpoch` has no TopicID field, so an adopted ID
+  cannot be validated against truncation (franz-go issue #908, PRs #391/#377 backed the
+  auto-adoption out). librdkafka and the Java client adopt and gamble; franz-go stalls loudly.
+- `pkg/kgo/source.go:1251` swallows the first 5 consecutive `UnknownTopicID` fetch failures
+  (Kafka returns it briefly for a genuinely new topic) and surfaces every one after that. That is
+  the repeating log line.
+- **franz-go already self-heals the ordinary case**: `pkg/kgo/metadata.go:477` — for a REGEX
+  consumer, a topic that is *absent* from a metadata response for longer than
+  `missingTopicDelete` (default **15s**) is auto-purged via `PurgeTopicsFromClient`, and the regex
+  then re-discovers it with the new ID. This is why a plain `kafka-topics --delete` **does not**
+  reproduce the bug — the client watches the topic disappear, purges, and re-adopts cleanly.
+
+### The condition that actually breaks it
+
+The client must **never observe a successful metadata response with the topic missing**. A broker
+outage does exactly that: while Kafka is unreachable metadata requests *fail*, which is not the
+same as "topic absent from a good response", so the 15s counter never starts. The client wakes to
+a topic that exists with a new ID, keeps its old cursor (`metadata.go:412` preserves the old
+mapping until an explicit purge), and stalls forever. Fits the 2026-09-05 broker OOM: Kafka died,
+lost its data, `warmup.sh` recreated the topics with new IDs, the web app was blind throughout.
+
+**Reproduce it with `docker pause`** — that is the whole trick, and a plain delete will mislead you:
+create a throwaway topic matching the regex, let the app discover it, `docker pause orderbook-web`,
+delete + recreate the topic, `docker unpause`. The error appears and never clears.
+
+### The fix
+
+`Consumer.handleFetchErr` calls `PurgeTopicsFromClient(topic)` on `UNKNOWN_TOPIC_ID` — the same
+escape hatch franz-go uses for absence, triggered by the error instead. Rate-limited to once per
+minute per topic (`purgeCooldown`), because the error repeats on every poll and the purge issues a
+**blocking** metadata call — which is also why it runs in a goroutine and never on the poll loop.
+`shouldPurge` is split out from the franz-go call purely so the rule is unit-testable without a
+broker; that is why `internal/kafka` now has tests when it deliberately had none before. The purge
+also `delete`s the topic from `perTopic` so the `first record from {topic}` line prints again —
+that line is how an operator sees the recovery worked.
+
+**Blast radius worth remembering:** this is not only an `ex*` problem. After any broker rebuild,
+every subscribed topic can be pinned to a dead ID, `p{id}-{side}` included — and a stalled
+`p1-asks` means the aggregated view for that pair silently shows nothing. It is a second,
+independent cause of the original "sometimes it shows one exchange / shows nothing" report, on top
+of the hub freeze.
