@@ -158,4 +158,53 @@ class BybitParserTest {
         assertThat(parser.parse(subscribeAck)).isEmpty();
         assertThat(parser.parse("{}".getBytes(StandardCharsets.UTF_8))).isEmpty();
     }
+
+    /**
+     * Given a WS snapshot whose {@code u} is 1 — bybit's documented service-restart frame —
+     * When parsed, Then it is NULL-seq with jump 0 so job 2 re-anchors it through
+     * baselinePending instead of ordering 1 against the running counter, AND it keeps its
+     * levels and its snapshot type so job 5 overwrites the book rather than emptying it.
+     */
+    @Test
+    @DisplayName("u == 1 is the service restart: null-seq, but still a full snapshot")
+    void serviceRestartSnapshotIsNullSeq() throws Exception {
+        byte[] restart = ("{\"topic\":\"orderbook.50.BTCUSDT\",\"type\":\"snapshot\","
+                + "\"ts\":1784027470176,\"data\":{\"s\":\"BTCUSDT\","
+                + "\"b\":[[\"62724.1\",\"0.407233\"]],\"a\":[[\"62724.2\",\"0.529827\"]],"
+                + "\"u\":1,\"seq\":111416318484},\"cts\":1784027470170}")
+                        .getBytes(StandardCharsets.UTF_8);
+
+        List<ParsedBookEvent> parsed = parser.parse(restart);
+
+        assertThat(parsed).hasSize(1);
+        RawOrderBookEvent event = parsed.get(0).getEvent();
+        assertThat(event.getType()).isEqualTo("snapshot");
+        assertThat(event.getSequenceId()).isNull();
+        assertThat(event.getSequenceJump()).isEqualTo(0L);
+        assertThat(event.getEventTime()).isEqualTo(1784027470170L);
+        // The book is NOT discarded — the exchange said overwrite, not clear.
+        assertThat(event.getBids()).hasSize(1);
+        assertThat(event.getAsks()).hasSize(1);
+    }
+
+    /**
+     * Given a DELTA claiming {@code u == 1}, When parsed, Then it is sequenced normally. Bybit
+     * documents u==1 as snapshot data only; a delta saying it is undocumented, and silently
+     * re-anchoring the stream on one would hand any stray frame the power to reset the book.
+     */
+    @Test
+    @DisplayName("u == 1 on a delta is NOT treated as a restart")
+    void uOneOnADeltaIsSequencedNormally() throws Exception {
+        byte[] delta = ("{\"topic\":\"orderbook.50.BTCUSDT\",\"type\":\"delta\","
+                + "\"ts\":1784027470196,\"data\":{\"s\":\"BTCUSDT\","
+                + "\"b\":[[\"62709.4\",\"0.096404\"]],\"a\":[],"
+                + "\"u\":1,\"seq\":111416318490},\"cts\":1784027470192}")
+                        .getBytes(StandardCharsets.UTF_8);
+
+        RawOrderBookEvent event = parser.parse(delta).get(0).getEvent();
+
+        assertThat(event.getType()).isEqualTo("update");
+        assertThat(event.getSequenceId()).isEqualTo(1L);
+        assertThat(event.getSequenceJump()).isEqualTo(1L);
+    }
 }

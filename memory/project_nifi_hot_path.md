@@ -34,3 +34,17 @@ metadata:
 - **Redis connection pool sizing.** All Redis processors in all 9 groups share ONE `RedisDistributedMapCacheClientService` → one connection pool whose NiFi default is **Max Total 8, Block When Exhausted true, Max Wait 10 s**. The hot-path readers are gone, but `Wait`, the websocket-session `Put/FetchDistributedMapCache` and the conn-state keys still use it. If stalls recur, check that first.
 - **Queue swapping was a hypothesis, never confirmed.** `nifi.queue.swap.threshold` defaults to 20000 while back pressure was already 10000, so it should not have been reached — *unless* `ConnectWebSocket` creates FlowFiles from the Jetty callback thread and bypasses back pressure entirely (unverified). The observable test: if the stuck queue sits at ~10000 there is no swapping; if it climbs to 50k+ there is.
 - **NiFi has no thread-dump button in the UI** (Summary → System Diagnostics gives counts only). Use `docker exec <c> /opt/nifi/nifi-current/bin/nifi.sh dump /tmp/d.txt` (no filename ⇒ goes to `logs/nifi-bootstrap.log`), take 3 dumps ~5 s apart, and read only the `Timer-Driven Process Thread` entries. See [[project-nifi-https]] for the container setup.
+
+---
+
+**2026-09-08 — the ordering question this file never asked.** The 2026-08-31 work fixed
+THROUGHPUT on the bybit group; it did not consider ORDER. ex6/bybit is now dead-lettering
+`sequence_gap` in job 2, and bybit's `u` was measured straight off the exchange socket as **+1 on
+9213/9213 consecutive transitions** (20 symbols, one connection, 60 s) — so the exchange is
+contiguous and the disorder is ours. Suspect the publish path: this repo's own
+`docker-compose.yml` notes ~5-8 producer ids on `ex{id}-raw`, and a single partition orders
+*appends*, not FlowFiles, once N threads publish concurrently. Check, in order: `PublishKafka`
+Concurrent Tasks (must be 1 for an ordered feed), a `FirstInFirstOutPrioritizer` on every queue
+on the path, and `max.in.flight.requests.per.connection` on the producer. Note this trades
+throughput for order — the exact axis 2026-08-31 optimised the other way, so it needs a decision,
+not a reflex. See the 2026-09-08 § of [[project-pair-extractor]].

@@ -557,3 +557,57 @@ recognise that flake. Full artefacts: `/opt/data-collector/e2e-runs/20260907-174
 The only test-count change anywhere in the tree is −5 in `TypeValidateFunctionTest` (73 → 68),
 confirmed by diffing `@Test` counts per file against `main`. Two mutations confirm the surviving
 check bites: `seq >= expected` fails 25, and `expected = last + 1` fails 8.
+
+---
+
+## 2026-09-08 — `lastSeq.clear()` on re-anchor, and why the restart path is SILENT
+
+**One-line change with a real edge case behind it.** The null-seq branch now clears `lastSeq`
+alongside setting `baselinePending`. Reason: `baselinePending` is consumed **only by the update
+branch**, and `emit()` never touches `lastSeq` — so between a re-anchor and the next *update*,
+`lastSeq` still held the counter we had just declared non-comparable. A **snapshot** arriving in
+that window went to the snapshot branch, was ordered against the disowned counter, and was
+dead-lettered `stale_or_duplicate`, taking the market down with it. Clearing it makes that
+snapshot see `last == null` and be accepted, which is what "this stream is re-anchoring" already
+means everywhere else in the function.
+
+⚠ **CORRECTED — two claims in the first version of this note were wrong**, both fixed in the code
+comment as well:
+
+1. *"reachable on the REST resync path all along"* — **no.** The hole needs the counter to move
+   BACKWARDS across the re-anchor. On a plain REST resync the WS counter keeps climbing, so the
+   next WS snapshot outranks the old `lastSeq` and is accepted regardless. ex6's `u==1` restart is
+   what makes it bite, and e2e `65-ex6-restart-then-snapshot` is the only scenario that reaches it.
+2. *"the one behavioural cost: the reason now reads `no_baseline` instead of `sequence_gap`"* —
+   **that window is unreachable.** `resyncReason()` is only consulted from the three asking
+   branches, and between the re-anchor and the next adopted baseline none of them can run:
+   `baselinePending` short-circuits the update branch before the `last == null` test,
+   `resyncTrusted()` has just cleared the pending flag, and the gap branch needs a non-null
+   `lastSeq`. The change costs nothing in reject reasons.
+
+Mutation-checked twice: at unit level, commenting out `lastSeq.clear()` fails
+`snapshotAfterReAnchorIsNotStaleAgainstTheDisownedCounter` and **nothing else**; at e2e level it
+fails `65` with "got 4 records, want 5".
+
+**The control plane stays silent on this path, by construction, and that is now asserted.** The
+user's requirement (2026-09-08) was that an exchange-side reset must fire NO control command.
+It already could not: there is exactly **one** `ctx.output(CONTROL, …)` site, inside
+`askForSnapshot`, with four callers — `no_baseline`, `awaiting_snapshot` and `sequence_gap`, all
+three in the *update* branch, plus `onTimer`. The null-seq branch reaches none of them, and its
+`resyncTrusted()` **clears** an outstanding request rather than adding one. Handling the restart
+correctly also *removes* control traffic that happens today: the old `stale_or_duplicate` wedge
+stopped `lastAcceptedMs` advancing, so `onTimer` eventually fired a `NO_PROGRESS` ask. Pinned by
+`serviceRestartReAnchorsWithoutAskingForAnything` (empty rejects AND empty control) and e2e
+`64-ex6-service-restart`, whose `WantControlCommands: []` is a real expectation, not a skip.
+
+⚠ **Only a scenario starting from a HEALTHY stream can test "does not ask."** `askForSnapshot` is
+rate-limited by `snapshotRetryMs`, so in any scenario where something already asked inside that
+window a spurious ask is SUPPRESSED and the command count is unchanged. Proven by mutation:
+adding an `askForSnapshot` to the null-seq branch fails `64` (control-plane got 1, want 0) and
+leaves `66-ex6-restart-answers-pending-resync` PASSING, even though 66 is the scenario that looks
+like it is about control commands. 66 guards the other half — that the restart un-wedges a
+resync-pending stream — and is mutation-checked by deleting the null-seq `resyncTrusted()`.
+
+**Job 2 stayed exchange-agnostic.** "u==1 means restart" is bybit knowledge and lives in
+`BybitParser`, which expresses it the only way job 2 understands: `sequence_id = null`. No
+exchange id is named in this function; see the 2026-09-08 § of [[project-pair-extractor]].

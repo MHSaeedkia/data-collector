@@ -984,3 +984,859 @@ var Ex6RestSnapshotResync = Scenario{
 		},
 	},
 }
+
+// Ex6ServiceRestart — bybit's documented service restart (added 2026-09-08). The exchange
+// re-sends a full snapshot with `u == 1` and says, in the v5 orderbook reference: "Occasionally,
+// you'll receive "u"=1, which is a snapshot data due to the restart of the service. So please
+// overwrite your local orderbook."
+//
+// Two things have to be true at once, and they pull in opposite directions.
+//
+// The counter restarted, so `u` is no longer comparable to the running one — source 03 carries
+// u=1 against a live feed sitting at 250644437. Sequenced, job 2 orders 1 against that and dead-
+// letters it `stale_or_duplicate`, and then every following delta (u=2, u=3) is `<= lastSeq` too:
+// the market goes dark until the no-progress timer notices, minutes later. So job 1 stamps it
+// NULL-SEQ and it re-anchors through the same baselinePending bootstrap the REST body uses
+// (Ex6RestSnapshotResync).
+//
+// But it is still a FULL BOOK, and the instruction is to overwrite. So it stays `type: "snapshot"`
+// and keeps its levels — job 5 replaces both sides wholesale. Emitting it as an empty `reset`
+// instead would clear the book and leave only the deltas that follow, which carry just the
+// changed levels, to refill it: source 03's 77500.3 ask and 77499.7 bid would be missing from
+// every book after it. That is why the asserted books after 03 are the restart's own, not empty.
+//
+// **The load-bearing assertion is the empty control stream.** A restart needs no
+// `snapshot_request`: the exchange has already sent the snapshot a resync would have asked for.
+// Asking anyway would put a command on `control-plane` for every bybit restart on every
+// subscribed market and have the collector answer each with a REST call it did not need. Job 2's
+// null-seq branch reaches no `askForSnapshot`, and its `resyncTrusted()` CLEARS an outstanding
+// request rather than adding one — so this scenario asserts both empty rejects and empty
+// commands, and a regression in either direction shows up here rather than on the live feed.
+var Ex6ServiceRestart = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline, on a counter in the hundreds of millions
+		`{
+	"id": "9a1c4e77-2b60-4f83-91d5-6e0a37c4b812",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000000006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.9", "3"], ["77499.8", "4"]],
+		"a": [["77500.1", "1"], ["77500.2", "2"]],
+		"u": 250644436,
+		"seq": 112975848012
+	},
+	"cts": 1800000000000
+}`,
+		// 02 WS delta, contiguous — the best ask is re-sized
+		`{
+	"id": "b47f0d92-8c15-4a2e-bd60-51e9a7f30c46",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.1", "1.25"]],
+		"u": 250644437,
+		"seq": 112975848022
+	},
+	"cts": 1800000001000
+}`,
+		// 03 THE SERVICE RESTART — u drops to 1, and the frame is a full book. Null-seq, so it
+		// re-anchors instead of being ordered against 250644437. Its levels differ from 01/02 on
+		// BOTH sides so that a wholesale replace is distinguishable from a merge.
+		`{
+	"id": "f2e8b350-7d41-46c9-a0b7-3c95e1d86a07",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.7", "5"], ["77499.6", "6"]],
+		"a": [["77500.3", "7"], ["77500.4", "8"]],
+		"u": 1,
+		"seq": 112975848035
+	},
+	"cts": 1800000002000
+}`,
+		// 04 WS delta on the RESTARTED counter — baselinePending adopts u=2 unconditionally
+		`{
+	"id": "0c63a1f8-9e27-4b5d-8f14-2a70d9c65b3e",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.5", "9"]],
+		"a": [["77500.3", "0"]],
+		"u": 2,
+		"seq": 112975848041
+	},
+	"cts": 1800000003000
+}`,
+		// 05 WS delta — contiguity resumed from the adopted baseline, so u=3 is not a gap
+		`{
+	"id": "5b90d24c-6f38-4e71-b3a9-84c15e7d02f6",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000004006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.4", "8.5"]],
+		"u": 3,
+		"seq": 112975848050
+	},
+	"cts": 1800000004000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 02 — the empty "b" merged nothing
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 03 — the restart REPLACES both sides. Not empty: nothing from 01/02 survives,
+			// and nothing from 03 is missing. This is the assertion an empty `reset` would break.
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.3", Quantity: "7"},
+				{Price: "77500.4", Quantity: "8"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.7", Quantity: "5"},
+				{Price: "77499.6", Quantity: "6"},
+			},
+		},
+		{ // after 04 — accepted on baselinePending: 77500.3 deleted by quantity "0", 77499.5 inserted
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:03Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.4", Quantity: "8"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.7", Quantity: "5"},
+				{Price: "77499.6", Quantity: "6"},
+				{Price: "77499.5", Quantity: "9"},
+			},
+		},
+		{ // after 05 — u=3 is contiguous from the adopted baseline, so it merges rather than gapping
+			ExchangeID: 6,
+			PairID:     1,
+			Simulation: 1,
+			EventTime:  "2027-01-15T08:00:04Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.4", Quantity: "8.5"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.7", Quantity: "5"},
+				{Price: "77499.6", Quantity: "6"},
+				{Price: "77499.5", Quantity: "9"},
+			},
+		},
+	},
+	// BOTH empty, and both are real expectations. A restart costs no dead letter and asks the
+	// collector for nothing. Sequence the u=1 frame instead and this fails three ways at once:
+	// three `stale_or_duplicate` rejects, two snapshots instead of five, and a book frozen at 02.
+	WantRejects:         []string{},
+	WantControlCommands: []events.ControlCommand{},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77500.4", Quantity: "8.5"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77499.7", Quantity: "5"},
+			{ExchangeID: 6, Simulation: 1, Price: "77499.6", Quantity: "6"},
+			{ExchangeID: 6, Simulation: 1, Price: "77499.5", Quantity: "9"},
+		},
+	},
+}
+
+// Ex6RestartThenSnapshot — the e2e for job 2's `lastSeq.clear()` (added 2026-09-08). Scenario 64
+// covers the restart followed by a DELTA, which is the common case and the one `baselinePending`
+// was built for. This covers the restart followed by another SNAPSHOT, which took a different
+// branch and was broken.
+//
+// `baselinePending` is consumed only by the update branch, and `emit()` never writes `lastSeq`.
+// So before the fix, source 04 — a perfectly good snapshot on the restarted counter — reached the
+// snapshot branch, was ordered against the pre-restart 250644437 that source 03 had just
+// disowned, and was dead-lettered `stale_or_duplicate`. Clearing `lastSeq` on the re-anchor makes
+// the branch see `last == null` and accept.
+//
+// This is the only shape that reaches the bug: it needs the counter to move BACKWARDS across the
+// re-anchor. A plain REST resync (Ex6RestSnapshotResync) cannot, because the WS counter keeps
+// climbing there and the next WS snapshot outranks the old `lastSeq` anyway.
+//
+// Source 05 also pins a harmless untidiness worth knowing about: the snapshot branch does NOT
+// clear `baselinePending`, so 05 is adopted by the bootstrap rather than jump-checked against 04.
+// It lands on the same value either way (5 -> 6 is contiguous), so nothing observable depends on
+// which branch took it.
+var Ex6RestartThenSnapshot = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline, counter in the hundreds of millions
+		`{
+	"id": "1e7d4a09-3f52-4c86-b7d1-90a6c25e4831",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000000006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.9", "3"], ["77499.8", "4"]],
+		"a": [["77500.1", "1"], ["77500.2", "2"]],
+		"u": 250644436,
+		"seq": 112975848012
+	},
+	"cts": 1800000000000
+}`,
+		// 02 WS delta, contiguous
+		`{
+	"id": "7c0b6e13-5a94-42df-8e35-b1f70c94d26a",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.1", "1.25"]],
+		"u": 250644437,
+		"seq": 112975848022
+	},
+	"cts": 1800000001000
+}`,
+		// 03 THE RESTART — null-seq, re-anchors, and DISOWNS 250644437
+		`{
+	"id": "a3f81c05-6b2e-4d97-90a4-7e35b8f10d62",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.7", "5"], ["77499.6", "6"]],
+		"a": [["77500.3", "7"], ["77500.4", "8"]],
+		"u": 1,
+		"seq": 112975848035
+	},
+	"cts": 1800000002000
+}`,
+		// 04 A SECOND SNAPSHOT on the restarted counter, BEFORE any update. This is the record
+		// the bug ate: 5 is far below the disowned 250644437.
+		`{
+	"id": "d9b25f74-8c31-4a60-bf28-06e94a7c153b",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.5", "10"]],
+		"a": [["77500.5", "9"]],
+		"u": 5,
+		"seq": 112975848047
+	},
+	"cts": 1800000003000
+}`,
+		// 05 WS delta — the stream carries on normally from there
+		`{
+	"id": "6f4e0a82-1d75-49b3-a5c0-38b71e6d942f",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000004006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.6", "11"]],
+		"u": 6,
+		"seq": 112975848055
+	},
+	"cts": 1800000004000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 02
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 03 — the restart replaces both sides
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.3", Quantity: "7"},
+				{Price: "77500.4", Quantity: "8"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.7", Quantity: "5"},
+				{Price: "77499.6", Quantity: "6"},
+			},
+		},
+		{ // after 04 — THE ASSERTION: accepted, not stale_or_duplicate, and it replaces wholesale
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:03Z",
+			Asks:      []events.PriceLevel{{Price: "77500.5", Quantity: "9"}},
+			Bids:      []events.PriceLevel{{Price: "77499.5", Quantity: "10"}},
+		},
+		{ // after 05
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:04Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.5", Quantity: "9"},
+				{Price: "77500.6", Quantity: "11"},
+			},
+			Bids: []events.PriceLevel{{Price: "77499.5", Quantity: "10"}},
+		},
+	},
+	WantRejects:         []string{},
+	WantControlCommands: []events.ControlCommand{},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77500.5", Quantity: "9"},
+			{ExchangeID: 6, Simulation: 1, Price: "77500.6", Quantity: "11"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77499.5", Quantity: "10"},
+		},
+	},
+}
+
+// Ex6RestartAnswersPendingResync — the control plane's half of the restart (added 2026-09-08).
+// This is the scenario that pins the user's requirement of 2026-09-08 directly: an exchange-side
+// reset must fire NO control command of its own, and must SILENCE one already outstanding.
+//
+// The sequence is the awkward one: a gap has already emptied the book (source 03) and put a
+// `snapshot_request` on `control-plane`, so job 2 is holding every update as `awaiting_snapshot`
+// (source 04) — and then the answer that arrives is not the requested WS snapshot but bybit
+// restarting (source 05). Two things must happen at once. The restart has to be ACCEPTED even
+// though the null-seq branch's out-of-order guard is live (it is skipped while a resync is
+// pending, which is why an event time behind the gap would still land — see
+// Ex6RestartOutOfOrder for the case where no resync is pending and it does not). And its
+// `resyncTrusted()` has to CLEAR the outstanding request rather than leave it, so the retry
+// stops.
+//
+// What this scenario actually guards is the ANSWER half: that the restart is accepted while the
+// stream is untrusted, and that clearing the pending state lets source 06 through as a normal
+// delta instead of another `awaiting_snapshot`. Mutation-checked by deleting the null-seq
+// branch's `resyncTrusted()` — the run then fails.
+//
+// ⚠ It does NOT guard the "restart must not ask" half, despite the single expected command, and
+// the distinction is worth knowing before trusting this file. `askForSnapshot` is rate-limited by
+// `snapshotRetryMs`, and the gap at source 03 already asked, so a spurious ask added to the
+// null-seq branch would be SUPPRESSED here and the count would still read one. Verified by
+// mutation, not assumed: adding an `askForSnapshot` to that branch leaves this scenario PASSING
+// and fails Ex6ServiceRestart instead, which starts from a healthy stream and so has an empty
+// window. **Ex6ServiceRestart is the guard for "the restart is silent"; this one is the guard for
+// "the restart un-wedges".** Do not delete 64 on the grounds that 66 covers it.
+var Ex6RestartAnswersPendingResync = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline
+		`{
+	"id": "4b18e6c3-72a0-4f95-8d13-e0a74c92b568",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000000006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.9", "3"], ["77499.8", "4"]],
+		"a": [["77500.1", "1"], ["77500.2", "2"]],
+		"u": 800,
+		"seq": 112975848012
+	},
+	"cts": 1800000000000
+}`,
+		// 02 WS delta, contiguous
+		`{
+	"id": "e70c9d45-1a83-4b26-95f7-2d61b04e8a37",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.1", "1.25"]],
+		"u": 801,
+		"seq": 112975848022
+	},
+	"cts": 1800000001000
+}`,
+		// 03 WS delta with a hole — 900 against an expected 802. Gap: book emptied by a reset,
+		// ONE snapshot_request raised.
+		`{
+	"id": "38a5f109-6c74-4e02-b8d9-71304e5ca69b",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.4", "12"]],
+		"a": [],
+		"u": 900,
+		"seq": 112975848090
+	},
+	"cts": 1800000002000
+}`,
+		// 04 WS delta while untrusted — awaiting_snapshot, and NO second command inside the
+		// retry window
+		`{
+	"id": "c26b8047-9f31-4d5a-a017-6b83e5f2907c",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.2", "2.5"]],
+		"u": 901,
+		"seq": 112975848099
+	},
+	"cts": 1800000003000
+}`,
+		// 05 THE RESTART arrives instead of the requested snapshot. Null-seq, accepted, and its
+		// resyncTrusted() answers the outstanding request.
+		`{
+	"id": "9d3170be-4a68-42c1-b5e7-08f42c6d931a",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000004006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.7", "5"], ["77499.6", "6"]],
+		"a": [["77500.3", "7"], ["77500.4", "8"]],
+		"u": 1,
+		"seq": 112975848110
+	},
+	"cts": 1800000004000
+}`,
+		// 06 WS delta on the restarted counter — baselinePending adopts it, the stream is trusted
+		// again, and 77500.3 is deleted by quantity "0"
+		`{
+	"id": "5a04c7f2-8e19-4360-9b7d-13c60ae428d5",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000005006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.5", "9"]],
+		"a": [["77500.3", "0"]],
+		"u": 2,
+		"seq": 112975848120
+	},
+	"cts": 1800000005000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 02
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // the reset job 2 emitted for 03 — empty, carrying the gap event's own time
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:02Z",
+			Asks:      []events.PriceLevel{},
+			Bids:      []events.PriceLevel{},
+		},
+		{ // after 05 — the restart re-seeds the book from empty
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:04Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.3", Quantity: "7"},
+				{Price: "77500.4", Quantity: "8"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.7", Quantity: "5"},
+				{Price: "77499.6", Quantity: "6"},
+			},
+		},
+		{ // after 06 — trusted again: the delta merges instead of being held
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:05Z",
+			Asks:      []events.PriceLevel{{Price: "77500.4", Quantity: "8"}},
+			Bids: []events.PriceLevel{
+				{Price: "77499.7", Quantity: "5"},
+				{Price: "77499.6", Quantity: "6"},
+				{Price: "77499.5", Quantity: "9"},
+			},
+		},
+	},
+	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
+	// ONE. The gap asked; the restart answered and did not ask again.
+	WantControlCommands: []events.ControlCommand{
+		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
+	},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77500.4", Quantity: "8"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77499.7", Quantity: "5"},
+			{ExchangeID: 6, Simulation: 1, Price: "77499.6", Quantity: "6"},
+			{ExchangeID: 6, Simulation: 1, Price: "77499.5", Quantity: "9"},
+		},
+	},
+}
+
+// Ex6UOneOnADeltaIsNotARestart — the guard on the restart rule (added 2026-09-08). `BybitParser`
+// keys the null-seq re-anchor on `"snapshot".equals(type) && u == 1`, not on the value alone, and
+// this is the half of that condition scenario 64 cannot show.
+//
+// Bybit documents `u == 1` as SNAPSHOT data. A delta claiming it is undocumented, and treating it
+// as a restart would hand any stray or replayed frame the power to re-anchor the sequence and
+// re-seed the book — the opposite of what gap detection is for. So source 03 is sequenced
+// normally, which at u=1 against a baseline of 801 means `stale_or_duplicate`: dropped, book
+// untouched, and no control command, because `stale_or_duplicate` is not one of the three asking
+// reasons. Source 04 then continues from 801 as if 03 had never arrived.
+//
+// Drop the `"snapshot".equals(type)` half of the guard and this fails: 03 becomes a null-seq
+// UPDATE, which job 2 accepts and job 5 merges (it clears a side only for a snapshot), so the
+// suite sees four snapshots and no reject instead of three and one.
+var Ex6UOneOnADeltaIsNotARestart = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline
+		`{
+	"id": "2c7a5b41-90e6-4d38-8f52-a17b04e9c63d",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000000006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.9", "3"], ["77499.8", "4"]],
+		"a": [["77500.1", "1"], ["77500.2", "2"]],
+		"u": 800,
+		"seq": 112975848012
+	},
+	"cts": 1800000000000
+}`,
+		// 02 WS delta, contiguous
+		`{
+	"id": "8e13f0a7-4c95-42b6-9d70-53e8a2c17f04",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.1", "1.25"]],
+		"u": 801,
+		"seq": 112975848022
+	},
+	"cts": 1800000001000
+}`,
+		// 03 a DELTA claiming u == 1. Not a restart: sequenced, and 1 <= 801 is stale. Its levels
+		// are deliberately unlike anything else here, so if it ever leaked into the book the
+		// wrong 77500.9 level would show up in every assertion below.
+		`{
+	"id": "f5906d28-7b34-41ae-a069-4c2317bd8e5f",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.1", "88"]],
+		"a": [["77500.9", "99"]],
+		"u": 1,
+		"seq": 112975848030
+	},
+	"cts": 1800000002000
+}`,
+		// 04 WS delta — contiguity is measured from 801, not from the rejected 03
+		`{
+	"id": "b0472e93-5da8-4610-8c37-9f15e6a48d20",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.2", "2.5"]],
+		"u": 802,
+		"seq": 112975848040
+	},
+	"cts": 1800000003000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 02
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:01Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		// 03 produces NO snapshot at all — it was dead-lettered.
+		{ // after 04 — note 77500.9 and 77499.1 are absent, so 03 never touched the book
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:03Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2.5"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+	},
+	WantRejects: []string{"stale_or_duplicate"},
+	// stale_or_duplicate is not an asking reason, so a stray frame costs the collector nothing.
+	WantControlCommands: []events.ControlCommand{},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77500.1", Quantity: "1.25"},
+			{ExchangeID: 6, Simulation: 1, Price: "77500.2", Quantity: "2.5"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77499.9", Quantity: "3"},
+			{ExchangeID: 6, Simulation: 1, Price: "77499.8", Quantity: "4"},
+		},
+	},
+}
+
+// Ex6RestartOutOfOrder — the restart's ONE failure mode, pinned deliberately (added 2026-09-08).
+//
+// Going null-seq buys the re-anchor but it also opts the frame into the null-seq branch's
+// out-of-order guard, which orders by EVENT TIME. So a restart snapshot whose `cts` is behind the
+// last accepted event is dead-lettered `out_of_order` — source 03 here, 1 s behind source 02.
+// The guard is skipped while a resync is pending (Ex6RestartAnswersPendingResync relies on that);
+// this is the case where none is, so it fires.
+//
+// ⚠ This is the current behaviour, asserted so it is visible, NOT a claim that it is the right
+// behaviour. The guard exists to stop a replayed REST snapshot overwriting a newer book, and it
+// cannot tell that apart from a matching engine that came back with a slightly stale clock. When
+// it misfires the frame is dropped silently — `out_of_order` is not an asking reason — and
+// recovery waits on job 2's no-progress timer. Whether a restart should be exempt is a product
+// decision; if it ever is taken, this scenario is the one to invert.
+var Ex6RestartOutOfOrder = Scenario{
+	ExchangeID: 6,
+	PairID:     1,
+	Sources: []string{
+		// 01 WS snapshot — the baseline, at 08:00:00
+		`{
+	"id": "6d29b4f7-108c-4e35-b7a6-92f430c85d1e",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000000006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.9", "3"], ["77499.8", "4"]],
+		"a": [["77500.1", "1"], ["77500.2", "2"]],
+		"u": 800,
+		"seq": 112975848012
+	},
+	"cts": 1800000000000
+}`,
+		// 02 WS delta at 08:00:02 — this is the event time 03 has to beat
+		`{
+	"id": "31c8e07b-9245-4fa6-b83d-70e51c4a29d6",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000002006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.1", "1.25"]],
+		"u": 801,
+		"seq": 112975848022
+	},
+	"cts": 1800000002000
+}`,
+		// 03 THE RESTART, but with a cts of 08:00:01 — one second BEHIND 02. Null-seq, no resync
+		// pending, so the out-of-order guard rejects it and the book is left alone.
+		`{
+	"id": "af6023d1-7e58-4c94-90b2-5d1378ea6c4f",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000001006,
+	"type": "snapshot",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [["77499.7", "5"], ["77499.6", "6"]],
+		"a": [["77500.3", "7"], ["77500.4", "8"]],
+		"u": 1,
+		"seq": 112975848035
+	},
+	"cts": 1800000001000
+}`,
+		// 04 WS delta — the pre-restart counter is intact, so 802 is contiguous from 801
+		`{
+	"id": "5e94a12c-063b-4d78-af51-2c8069b4e73a",
+	"simulation": 1,
+	"topic": "orderbook.50.BTCUSDT",
+	"ts": 1800000003006,
+	"type": "delta",
+	"data": {
+		"s": "BTCUSDT",
+		"b": [],
+		"a": [["77500.2", "2.5"]],
+		"u": 802,
+		"seq": 112975848040
+	},
+	"cts": 1800000003000
+}`,
+	},
+	WantSnapshots: []events.OrderbookSnapshot{
+		{ // after 01
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:00Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		{ // after 02
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:02Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+		// 03 produces NO snapshot — dropped by the out-of-order guard.
+		{ // after 04 — the stale restart left no trace
+			ExchangeID: 6, PairID: 1, Simulation: 1,
+			EventTime: "2027-01-15T08:00:03Z",
+			Asks: []events.PriceLevel{
+				{Price: "77500.1", Quantity: "1.25"},
+				{Price: "77500.2", Quantity: "2.5"},
+			},
+			Bids: []events.PriceLevel{
+				{Price: "77499.9", Quantity: "3"},
+				{Price: "77499.8", Quantity: "4"},
+			},
+		},
+	},
+	WantRejects: []string{"out_of_order"},
+	// Silent: out_of_order does not ask either, which is exactly why a misfire here is only
+	// caught by the no-progress timer.
+	WantControlCommands: []events.ControlCommand{},
+	WantAggregated: &AggregatedBook{
+		Asks: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77500.1", Quantity: "1.25"},
+			{ExchangeID: 6, Simulation: 1, Price: "77500.2", Quantity: "2.5"},
+		},
+		Bids: []events.AggregatedLevel{
+			{ExchangeID: 6, Simulation: 1, Price: "77499.9", Quantity: "3"},
+			{ExchangeID: 6, Simulation: 1, Price: "77499.8", Quantity: "4"},
+		},
+	},
+}

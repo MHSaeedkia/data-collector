@@ -986,3 +986,137 @@ Settle it by watching `pseq` across a longer capture and, ideally, across a real
 If the second reading holds, the parser should surface it and job 2 should re-anchor on it, with
 the timer demoted to a safety net. Note the seq/pseq CHAIN wording in the docs is about the
 *incremental* channel, which is what argues for the first reading.
+
+---
+
+## 2026-09-08 — ex6/bybit "sequence gap storm": the parser and job 2 are CORRECT, the loss is upstream
+
+**Trigger:** the server was dead-lettering large numbers of `sequence_gap` on ex6, and the
+suspicion was job 2's validation. It is not job 2.
+
+**Measured live, not inferred** (direct WS connection to `wss://stream.bybit.com/v5/public/spot`,
+bypassing NiFi entirely — a throwaway node script, node 22 has a global `WebSocket`):
+
+- **`orderbook.50` `u` is +1 on 100.0% of transitions.** 582/582 on BTCUSDT alone (25 s), then
+  **9213/9213 across 20 symbols multiplexed on ONE connection (60 s)** — zero non-contiguous
+  transitions, including the snapshot → first-delta hop.
+- `cts` present on 100% of 9233 frames (so the parser's `isIntegralNumber()` guard on `cts`
+  never silently eats a live spot frame).
+- No `u == 1` frame in that window; no mid-stream snapshot.
+
+⇒ **`sequence_id = data.u` / `sequence_jump = 1` is right, and job 2's gap rule is right.** The
+gaps are introduced BETWEEN bybit's socket and job 2. This retro-explains the 2026-07-14 note in
+`sample-raw-data.md` ("the discarded capture showed gaps between ~30% of consecutive records —
+DECIDED: skip the NiFi investigation; job 2's gap rule absorbs it"). That decision is the bug:
+job 2 does not absorb it, it faithfully reports it, once per episode, forever.
+
+**Prime suspect — concurrent NiFi publishers reorder a single partition.** `docker-compose.yml`
+records ~5-8 producer ids on `ex{id}-raw`. A single Kafka partition guarantees the order of
+*appends*, NOT that appends happen in FlowFile order when N threads publish concurrently; NiFi
+queues are also not FIFO without an explicit `FirstInFirstOutPrioritizer`. bybit is the
+highest-rate feed (the ~5000 msg/s group in [[project-nifi-hot-path]]), which is why it shows
+this and the slower feeds do not. **Reordering and loss need different fixes**, so measure first:
+a reorder leaves the `u` SET complete (sort by `u` ⇒ no holes) and produces backwards steps;
+loss leaves real holes. Script kept out of the repo — regenerate it: consume `ex6-raw`, group by
+`data.s`, compare `max(u)-min(u)+1` against `len(set(u))`.
+
+**Why one gap costs so much:** `sequence_gap` fires ONCE per episode (`resyncPending()` latches),
+then every following update is `awaiting_snapshot` until an accepted snapshot. So a HIGH
+`sequence_gap` count means many *completed* resyncs each followed by a fresh gap — a resync loop,
+not one wedge.
+
+**Documented bybit behaviour we do NOT handle (real, but rare — not the cause of the storm):**
+
+- **`u == 1` = service restart.** Docs: *"Occasionally, you'll receive `u`=1, which is a snapshot
+  data due to the restart of the service. So please overwrite your local orderbook."* Job 2's
+  snapshot branch rejects it `stale_or_duplicate` (`1 <= lastSeq`) — the one frame bybit says you
+  MUST apply — and then every delta at u=2,3,… is `<= lastSeq` too. `stale_or_duplicate` does
+  **not** `askForSnapshot`, so the market is dark until the `NO_PROGRESS` timer fires: one full
+  staleness window of loss per bybit restart. Fixing it means letting a snapshot re-anchor
+  BACKWARDS, which contradicts the 2026-08-23 user-stated invariant ("a snapshot is ORDERED"), so
+  it is a user decision, not a bug fix. Open.
+- **Level-1 topics would break the same rule**: docs say level 1 is *snapshot-only* and re-pushes
+  every 3 s with **the same `u`** ⇒ `stale_or_duplicate` on every quiet repeat. Safe only because
+  we subscribe `orderbook.50`. Never subscribe ex6 at depth 1 without changing job 2 first.
+- **The parser ignores `topic`.** `u` is scoped PER DEPTH TOPIC. If `ex6-raw` ever carries two
+  depths for one symbol, or the same symbol from both the `spot` and `linear` endpoints
+  (`BTCUSDT` exists in both, with independent `u`), job 1 folds them onto one key and job 2 sees
+  two interleaved counters ⇒ a permanent gap storm. Cheap to rule out: count distinct `topic`
+  values per `data.s` in `ex6-raw`.
+
+**Documented confirmation of the REST null-seq call (upgrades the 2026-08-24 arithmetic proof):**
+the REST reference states `result.u` *"corresponds to `u` in the **1000-level** WebSocket
+orderbook stream"* — for spot and contract alike. We subscribe `orderbook.50`, so the REST body's
+counter belongs to a stream we do not consume. `BybitParser`'s javadoc now cites this instead of
+saying "the reason is unconfirmed". Behaviour unchanged; the null-seq/`baselinePending` design
+was already right.
+
+**Operational trap found while testing:** bybit rejects a subscribe carrying **more than 10 args**
+(`{"success":false,"ret_msg":"args size >10"}`) and then sends NOTHING. With 27 seeded bybit
+markets the collector must batch subscriptions in groups of ≤10 (or split connections); an
+oversized subscribe is a silent total outage for the feed, not a partial one.
+
+### 2026-09-08 (same day, follow-up) — `u == 1` IMPLEMENTED: null-seq, not an empty reset
+
+The "open" item above is closed. Bybit's service-restart frame is now stamped **null-seq / jump 0**
+by `BybitParser` and re-anchors through job 2's `baselinePending` bootstrap.
+
+**The design question the user raised, and why the answer changed shape.** The proposal was to
+have job 1 emit a `type: "reset"` with empty asks/bids — the marker job 2 already emits on a gap
+— and let job 2 reset the book and the sequence on it. The plumbing was sound and needed no job-2
+change at all: `reset` is a valid symbol in the raw event enum, and a null-seq event of ANY type
+lands in job 2's null-seq branch. **The payload was the problem.** The `u==1` frame is a full
+50-level book and bybit's instruction is *overwrite*, not *clear*; an empty reset makes job 5
+clear the book ([[project-book-builder]] `BookBuildFunction`) and leaves only the following
+deltas — which carry just the CHANGED levels — to refill it. That is a partial book for as long
+as the quiet levels take to churn. Keeping `type: "snapshot"` with its levels and setting only
+`sequence_id = null` takes the identical path through job 2 and replaces both sides wholesale in
+job 5. **Null-seq buys the re-anchoring; it costs no data.** Do not "simplify" this back to a
+reset.
+
+**Guarded on the type too** — `"snapshot".equals(type) && u == 1`. Bybit documents `u==1` as
+snapshot data only; a *delta* claiming it is undocumented, and re-anchoring on one would let a
+stray frame reset the book. Pinned by `uOneOnADeltaIsSequencedNormally`.
+
+**It required a job-2 fix** — `lastSeq` was not cleared on re-anchor, so a snapshot arriving
+before the next update was ordered against the disowned counter. ⚠ **CORRECTION to the first
+version of this note:** it is NOT reachable on a plain REST resync. The hole needs the counter to
+move BACKWARDS across the re-anchor; on a REST resync the WS counter keeps climbing, so the next
+WS snapshot outranks the old `lastSeq` and would have been accepted anyway. The restart is what
+makes it bite. See the 2026-09-08 § of [[project-type-validator]].
+
+**Verified:** 208 Java tests green (BybitParserTest 8→10, TypeValidateFunctionTest 68→70);
+mutation-checked by removing `lastSeq.clear()` — exactly one test fails and no other. e2e
+**`64-ex6-service-restart`** added (appended, not slotted — the 48/60/61/62/63 convention),
+builds/vets/gofmts clean. **RUN LIVE and MUTATION-CHECKED 2026-09-08** on the laptop stack
+(`cd e2e && SCENARIO=64 go run . -provision-stack=false`, ~40 s): PASS, and with the
+`serviceRestart` branch stubbed to `false` it fails exactly as predicted — **2 snapshots, want
+5**, the book frozen at the pre-restart state. So the scenario is proven to BITE, not merely to
+pass. Regression sweep over the other null-seq feeds (job 2's `lastSeq.clear()` is
+exchange-agnostic): **48, 61, 49 and 55 all PASS**.
+
+**Coverage gap CLOSED same day — e2e 64-68, all RUN LIVE and each MUTATION-CHECKED:**
+
+| # | covers | mutation that fails it |
+| --- | --- | --- |
+| 64 | restart -> DELTA; the restart is SILENT | stub `serviceRestart` -> 2 snapshots want 5. Also the ONLY scenario that catches a spurious ask (adding `askForSnapshot` to the null-seq branch -> control-plane got 1 want 0) |
+| 65 | restart -> SNAPSHOT; job 2's `lastSeq.clear()` | remove `lastSeq.clear()` -> 4 records want 5 |
+| 66 | restart arriving while a resync is PENDING; it un-wedges the stream | remove the null-seq `resyncTrusted()` -> FAIL |
+| 67 | a DELTA claiming u==1 is NOT a restart | drop the `"snapshot".equals(type)` half -> 4 records want 3 |
+| 68 | a restart with a cts behind the last accepted is dropped `out_of_order` | stub `serviceRestart` -> FAIL (reason becomes stale_or_duplicate) |
+
+⚠ **Do not delete 64 thinking 66 subsumes it.** 66 expects exactly one control command and still
+PASSES with a spurious ask added, because `askForSnapshot` is rate-limited by `snapshotRetryMs`
+and 66's gap already asked inside that window. 64 starts from a healthy stream, so its empty
+window is what makes "the restart is silent" testable. Verified by mutation, not reasoned.
+
+⚠ **68 pins current behaviour, not desired behaviour.** Going null-seq opts the restart into the
+null-seq branch's event-time out-of-order guard, so a restart whose `cts` is behind the last
+accepted event is dead-lettered `out_of_order` — silently, since that reason does not ask, leaving
+recovery to the no-progress timer. Whether a restart should be exempt is an open product question.
+
+Regression sweep after every change: **48, 61, 49, 55 PASS** (job 2's `lastSeq.clear()` is
+exchange-agnostic and touches every null-seq feed).
+
+⚠ **This does NOT address the gap storm** in the § above — `u==1` was 0 occurrences in the 9233-
+frame live sample. It closes a rare, silent correctness hole. The storm is still upstream.
