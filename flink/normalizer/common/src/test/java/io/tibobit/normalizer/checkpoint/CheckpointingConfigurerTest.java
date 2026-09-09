@@ -1,5 +1,7 @@
 package io.tibobit.normalizer.checkpoint;
 
+import java.time.Duration;
+
 import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.ExternalizedCheckpointRetention;
 import org.apache.flink.configuration.StateBackendOptions;
@@ -81,11 +83,17 @@ class CheckpointingConfigurerTest {
     }
 
     @Test
-    @DisplayName("leaves unaligned checkpoints off")
-    void unalignedCheckpointsOff() {
+    @DisplayName("runs unaligned checkpoints in hybrid mode, not forced")
+    void unalignedCheckpointsHybrid() {
+        // Both halves matter and neither is meaningful alone: ENABLE_UNALIGNED on its own with a
+        // zero timeout is FULL unaligned (every checkpoint persists in-flight buffers), which is
+        // not what was decided on 2026-09-09 — see the comment on this pair in the configurer.
         CheckpointingConfigurer.configure(env);
 
-        assertThat(env.getConfiguration().get(CheckpointingOptions.ENABLE_UNALIGNED)).isFalse();
+        assertThat(env.getConfiguration().get(CheckpointingOptions.ENABLE_UNALIGNED)).isTrue();
+        assertThat(env.getConfiguration().get(CheckpointingOptions.ALIGNED_CHECKPOINT_TIMEOUT))
+                .isEqualTo(Duration.ofMillis(CheckpointingConfigurer.ALIGNED_CHECKPOINT_TIMEOUT_MS));
+        assertThat(env.getConfiguration().get(CheckpointingOptions.FORCE_UNALIGNED)).isFalse();
     }
 
     @Test

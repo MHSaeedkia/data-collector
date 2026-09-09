@@ -1420,3 +1420,123 @@ both passed after the equivalent 2026-09-02 edit, so confirm before deploy rathe
 `PatternTopicSelector` is a previously-diagnosed cure re-applied from this file's or
 [[project_kafka_broker_memory]]'s own record; `PatternTopicSelector` itself is new engineering,
 exercised only by `mvn test` and `go build`/`go vet`, not by a running cluster.
+
+## 2026-09-09 — Source-only back-pressure after EXACTLY_ONCE; hybrid unaligned checkpoints turned on
+
+**The observation** (user-supplied, from the live `backPressuredTimeMsPerSecond` series — the exact
+metric the 2026-09-07 `ENABLE_UNALIGNED=false` decision named as its own revisit trigger):
+
+| Job | Back-pressured task | ms/s |
+| --- | --- | --- |
+| `normalizer_aggregator` | `Source -> split_sides` | 792–909 |
+| `normalizer_book_builder` | `Source -> applied_precision` | 517–673 |
+| `normalizer_type_validator` | `raw_flink_source` | 220–227 |
+| the other three | — | 0 |
+
+**The structural finding that makes the pattern legible, and that nothing in this file had written
+down before.** The three affected jobs are *exactly* the three that have a `keyBy`:
+`TypeValidatorJob` (`keyBy(exchange_id,pair_id)`), `BookBuilderJob` (same key), `AggregatorJob`
+(`keyBy(pair_id,side)`). `PairExtractorJob`, `RebaserJob` and `PrecisionJob` are
+`source -> map/process -> sink` with **no `keyBy` at all**, so they chain into a single task, have
+**no network exchange**, and therefore no barrier can be delayed and no alignment can occur in them.
+Their 0 ms/s is a property of their topology, not evidence that they are healthier — do not read it
+as "the problem is confined to three jobs". In each of the three, the back-pressured task is the one
+immediately **upstream of that single exchange**, which is what makes "checkpoint cost, not
+throughput bottleneck" the leading hypothesis: a real bottleneck inside `split_sides` /
+`applied_precision` would have to show up as growing Kafka lag, and would propagate from the slow
+stage upward rather than appearing on Sources first.
+
+**⚠ The observation does NOT actually discriminate between the checkpoint-cost mechanisms, and this
+was flagged before the change was applied, not after.** Those same three jobs are also (a) the only
+three with keyed state and (b) the three with the largest output records (`AggregatorJob` emits a
+full unioned book, `BookBuilderJob` emits the FULL book on every event per [[project_book_builder]],
+`TypeValidatorJob` emits per-event records) — and the back-pressure *ranking* matches state size and
+record size just as well as it matches anything about barriers. Three explanations all fit the data
+as given:
+
+1. **Barrier travel delay** — the barrier queues behind full output buffers on its way to the keyed
+   task. Unaligned checkpointing **fixes** this.
+2. **Snapshot cost** — the keyed task's own `snapshotState`. Unaligned does **not** fix it.
+3. **Transactional sink commit** — every EXACTLY_ONCE sink flushes and commits a Kafka transaction
+   on the task thread each checkpoint; the sink is chained to the keyed function, so that blocks the
+   whole downstream task and back-pressures the source. Unaligned does **not** fix it, and adds
+   in-flight bytes to a checkpoint whose cost is already in the write path.
+
+⚠ Also note **every job runs at parallelism 1**, so each exchange has exactly ONE input channel.
+Classic multi-channel alignment *waiting* (a fast channel blocked while a slow one catches up) is
+structurally near-zero here. What unaligned actually buys at parallelism 1 is letting the barrier
+**overtake** buffered records rather than queue behind them — mechanism (1) only. Anyone reasoning
+about this later should not carry over the textbook "alignment = waiting on the slow channel"
+picture; it does not apply to this topology yet.
+
+**The falsifiable arithmetic to settle it** (cheap, and it is why the change is safe to apply before
+confirming): with max-concurrent 1, back-pressure that is 100% checkpoint-induced predicts
+`lastCheckpointDuration = (ms/s / 1000) x interval`, i.e. **aggregator ~7.9-9.1s, book_builder
+~5.2-6.7s, type_validator ~2.2-2.3s**. If the real durations match, checkpointing accounts for
+essentially all of it; if `lastCheckpointDuration` is a few hundred ms while back-pressure is
+900 ms/s, the cause is elsewhere and this change should be reverted rather than kept "just in case".
+Corollary worth its own line: **at 8-9s per checkpoint plus the 5s min-pause, the aggregator's
+effective checkpoint cadence is already ~13-14s, not 10s**, which quietly inflates §11's
+`hops x interval / 2` end-to-end latency arithmetic — §11 assumes the interval is achieved.
+
+⚠ **A 15s Prometheus scrape cannot resolve a 10s checkpoint cycle** (aliasing), so do not try to
+eyeball periodicity in the back-pressure series to prove this. Use the duty-cycle arithmetic above,
+or drop the scrape interval for the flink job temporarily. Queries + the metric-name confirmation
+step are in `todo.md`.
+
+**What was applied** — `CheckpointingConfigurer` only, two files, deliberately not bundled with
+anything else (this is the third attempt at checkpointing on this pipeline; the previous two were
+reverted after live incidents, so a change that can be reverted alone was the explicit requirement):
+
+- `ENABLE_UNALIGNED` `false -> true`, with the comment above it rewritten to carry the table, the
+  keyBy/no-keyBy finding, and the "confirm before trusting" caveat.
+- New `ALIGNED_CHECKPOINT_TIMEOUT_MS = 10_000` + `CheckpointingOptions.ALIGNED_CHECKPOINT_TIMEOUT`.
+  **Hybrid, not full unaligned.** 10s = exactly one checkpoint interval, chosen as the largest value
+  that still guarantees the aligned->unaligned switch happens inside the cycle that triggered it,
+  before its own successor is due; a larger value (the 30s end of the range considered) lets a
+  struggling checkpoint hold the source back-pressured *past* the next scheduled checkpoint, which
+  is the symptom being removed. It is also 1/12 of the 120s hard timeout, so the switch itself can
+  never push a checkpoint into `CHECKPOINT_TIMEOUT_MS`. `FORCE_UNALIGNED` deliberately left default
+  `false`.
+- Both keys re-verified against the real jars before use, per this file's standing practice:
+  `CheckpointingOptions.ENABLE_UNALIGNED` (Boolean) and `ALIGNED_CHECKPOINT_TIMEOUT` (**Duration**)
+  in `flink-core-2.2.0.jar`; `CheckpointConfig.enableUnalignedCheckpoints` /
+  `setAlignedCheckpointTimeout` / `configure(ReadableConfig)` in **`flink-runtime-2.2.0.jar`** —
+  ⚠ note `CheckpointConfig` is NOT in `flink-streaming-java-2.2.0.jar`; it moved to `flink-runtime`
+  in 2.x, which will waste a few minutes for the next person who tries to `javap` it where the
+  imports imply it lives.
+- Test `unalignedCheckpointsOff` became `unalignedCheckpointsHybrid`, asserting all three of
+  enable/timeout/force — because `ENABLE_UNALIGNED=true` with the timeout left at its default is
+  FULL unaligned, a materially different decision that the old single-value assertion would not
+  have caught.
+
+**Scope: applied uniformly to all 6 jobs, NOT scoped to the three.** Reasons, in order: (1) it is a
+runtime **no-op** on the other three — no `keyBy` means no exchange means no in-flight data to
+persist and no barrier that could ever be delayed, so this is dead config there, not added risk;
+(2) `CheckpointingConfigurer.configure(env)` is a single no-arg static call from all 6 job mains,
+and splitting it needs a parameter that exists solely to express this one split; (3) their 0 ms/s is
+topology, not health — if any of them later gains a `keyBy`, or parallelism rises above 1 (which
+`MAX_PARALLELISM=128`/S2 was set up specifically to allow), a 3-of-6 scoping would silently leave
+the new exchange on the old behaviour: the same shape as PR #11's `read_committed` gap, where a
+setting was applied up to a module boundary and not past it; (4) one uniform pair of lines reverts
+more cleanly than a 3-of-6 split, which is the whole point on attempt three.
+
+**State size / recovery — assessed as not a concern here, with the bound rather than a guess.**
+Unaligned checkpoints persist in-flight buffers, so the added bytes are bounded by **network buffer
+memory, not by throughput**: per the 2026-09-06 entry the dev TaskManager's network memory is
+**158.7 MB total, shared by all 8 jobs**, and at parallelism 1 each job has one channel — a couple
+of exclusive buffers plus a floating share, at the 32 KB default segment size. That is hundreds of
+KB to a few MB per job per checkpoint, against keyed state that holds a full order book for every
+subscribed market. The `hashmap` backend already writes **full, non-incremental** snapshots every
+10s, so the in-flight delta is noise next to the baseline. ⚠ Buffer counts are Flink defaults, not
+read off this cluster — confirm empirically with `lastCheckpointSize` before/after rather than
+trusting the arithmetic. Recovery time is likewise not the constraint: `DELETE_ON_CANCELLATION` plus
+the standing "restart at `latest`, re-baseline from a snapshot" decision means the recovery path is
+dominated by Kafka re-read, not by checkpoint size. ⚠ Unverified for 2.2.0 and worth checking before
+any rescale: rescaling **from** an unaligned checkpoint is supported in recent Flink but was not
+always, and this interacts with S2/`MAX_PARALLELISM`.
+
+**Not deployed, not observed.** `mvn -o test` across all 7 modules green (exit code 0 checked, not
+the console tail — the JaCoCo-on-JDK25 `major version 69` noise this file already documents is
+still there). ⚠ **Requires `JAVA_HOME` pointed at the JDK 25 install** — the shell default here is
+Temurin 17 and maven fails with `invalid target release: 21` under it.

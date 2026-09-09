@@ -212,6 +212,61 @@ M2a, M2b, S5, M4, M3, S4, M9 and S7 all applied; M8 dropped. Nothing deployed or
 `docker-compose.prod.yml` and the dev file restored — see "Dev/prod compose split" below.** Full report in
 [[project_flink_production]] — every item below has its config block there under the same ref.
 
+### Unaligned checkpoints (2026-09-09) — APPLIED, NOT YET CONFIRMED
+
+- [x] **Hybrid unaligned turned on in `CheckpointingConfigurer`** — `ENABLE_UNALIGNED` `false -> true`
+      plus a new `ALIGNED_CHECKPOINT_TIMEOUT_MS = 10_000` (one checkpoint interval; the largest value
+      that still forces the aligned->unaligned switch inside the cycle that triggered it, and 1/12 of
+      the 120s hard timeout). Applied uniformly to all 6 jobs, not scoped to the 3 back-pressured
+      ones — it is a runtime no-op on `job-pair-extractor`/`job-rebaser`/`job-precision`, which have
+      no `keyBy` and therefore no network exchange at all. Two files, nothing else bundled, so it
+      reverts alone. `mvn -o test` all 7 modules green (exit code 0; needs `JAVA_HOME` on JDK 25).
+      See [[project_flink_production]] § 2026-09-09.
+
+- [ ] **⚠ CONFIRM THE CAUSE BEFORE TRUSTING THE CHANGE — it was applied on a hypothesis the data
+      cannot yet distinguish.** The 3 back-pressured jobs are the only 3 with a `keyBy`, but they are
+      also the only 3 with keyed state and the 3 with the largest output records, so the observed
+      ranking fits barrier-travel delay (which unaligned fixes) *and* snapshot cost *and*
+      transactional-sink-commit cost (which it does not). Run, in this order:
+
+      1. **Confirm the metric names exist on THIS build first** — the standing trap in this repo is a
+         rule that is silently dead because the name is wrong (`records_lag_max`, still unverified):
+
+             curl -s localhost:9250/metrics | grep -iE 'checkpointStartDelay|checkpointAlignmentTime|busyTime|lastCheckpointSize'
+
+      2. **Duty-cycle test (decides checkpoint-vs-throughput).** 100%-checkpoint-induced back-pressure
+         predicts `lastCheckpointDuration = (ms/s / 1000) x 10000ms`, i.e. aggregator ~7.9-9.1s,
+         book_builder ~5.2-6.7s, type_validator ~2.2-2.3s. Ratio near 1 = checkpointing; ratio far
+         below 1 = something else.
+      3. **`busyTimeMsPerSecond` on the task DOWNSTREAM of the exchange** (`aggregate`, `build-book`,
+         `type-validate`). Near 1000 = a real CPU bottleneck in the operator and unaligned is the
+         wrong fix. Low, while its upstream source is 900 ms/s back-pressured = the operator is
+         blocked, not working.
+      4. **Kafka lag slope.** A genuine throughput deficit grows lag monotonically; checkpoint cost
+         does not (the source catches up between checkpoints). Cheapest single discriminator.
+      5. **`checkpointStartDelayNanos` vs `checkpointAlignmentTime`** on the keyed task. High start
+         delay = the barrier is queued behind full buffers = unaligned helps. Both small while
+         `lastCheckpointDuration` is large = the cost is snapshot + sink commit = **revert this
+         change rather than keep it "just in case"**.
+
+      ⚠ **Do not try to prove periodicity by eyeballing the back-pressure graph** — the scrape
+      interval is 15s and the checkpoint cycle is 10s, so the series is aliased. Use the arithmetic.
+
+- [ ] **Record `lastCheckpointSize` / `lastCheckpointFullSize` before and after** on the 3 jobs. The
+      predicted added in-flight bytes are hundreds of KB to a few MB (bounded by network buffer
+      memory: 158.7 MB shared across all 8 jobs, one channel per job at parallelism 1, 32 KB
+      segments) against full non-incremental hashmap snapshots — but the buffer counts are Flink
+      defaults, not read off this cluster.
+
+- [ ] **Re-measure `pipeline_timings` after this lands.** At 8-9s checkpoints plus the 5s min-pause
+      the aggregator's effective cadence is already ~13-14s, not the configured 10s, so §11's
+      `hops x interval / 2` latency arithmetic is optimistic. If unaligned shortens checkpoints, this
+      moves too — in the good direction, and it is the one user-visible payoff worth quantifying.
+
+- [ ] **`promtool check rules` / `amtool check-config`** still not run since 2026-09-02 (no binaries
+      in this environment). Unchanged by this edit — no rule files were touched — but confirm before
+      deploy, as the 2026-09-07 entry already says.
+
 **Two standing decisions (2026-08-29):**
 
 - **Checkpointing POSTPONED** (not rejected). Flink has no cross-job checkpoint coordination, so a

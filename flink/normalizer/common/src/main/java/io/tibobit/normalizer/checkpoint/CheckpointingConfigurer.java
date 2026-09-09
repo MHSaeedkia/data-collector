@@ -43,6 +43,20 @@ public final class CheckpointingConfigurer {
     /** Generous relative to the interval; a slow checkpoint should fail, not hang the job. */
     public static final long CHECKPOINT_TIMEOUT_MS = 120_000L;
 
+    /**
+     * How long Flink attempts an ALIGNED checkpoint before switching the in-flight barrier to
+     * unaligned (see the {@code ENABLE_UNALIGNED} block in {@link #configure}). Sized at exactly
+     * one {@link #CHECKPOINT_INTERVAL_MS}: the largest value that still guarantees the switch
+     * happens inside the cycle that triggered it, before its own successor is due. Larger (the 30s
+     * end of the range considered) would let a struggling checkpoint hold the source
+     * back-pressured past the next scheduled checkpoint, which is the symptom this is meant to
+     * remove; smaller would spend in-flight state on checkpoints that were about to align anyway.
+     * It is also 1/12 of {@link #CHECKPOINT_TIMEOUT_MS}, so a switch to unaligned leaves 110s of
+     * headroom for the in-flight write and can never itself push a checkpoint into the hard
+     * timeout.
+     */
+    public static final long ALIGNED_CHECKPOINT_TIMEOUT_MS = 10_000L;
+
     /** Guarantees the next checkpoint request never overlaps a slow one, given max-concurrent=1. */
     public static final long MIN_PAUSE_BETWEEN_CHECKPOINTS_MS = 5_000L;
 
@@ -95,11 +109,40 @@ public final class CheckpointingConfigurer {
         config.set(CheckpointingOptions.EXTERNALIZED_CHECKPOINT_RETENTION,
                 ExternalizedCheckpointRetention.DELETE_ON_CANCELLATION);
 
-        // Unaligned checkpoints trade complexity for faster checkpointing under sustained
-        // back-pressure. Nothing observed on this pipeline shows sustained back-pressure today
-        // (see monitoring's backPressuredTimeMsPerSecond rule); revisit if that alert fires, not on
-        // a schedule.
-        config.set(CheckpointingOptions.ENABLE_UNALIGNED, false);
+        // 2026-09-09: flipped false -> true, in HYBRID mode (paired with
+        // ALIGNED_CHECKPOINT_TIMEOUT_MS above). The condition the previous value was set on
+        // 2026-09-07 — "nothing observed shows sustained back-pressure; revisit if
+        // backPressuredTimeMsPerSecond fires, not on a schedule" — has now fired. Measured on the
+        // live pipeline after EXACTLY_ONCE went in, avg backPressuredTimeMsPerSecond:
+        //
+        //     normalizer_aggregator      Source -> split_sides        792-909 ms/s
+        //     normalizer_book_builder    Source -> applied_precision  517-673 ms/s
+        //     normalizer_type_validator  raw_flink_source             220-227 ms/s
+        //     the other three jobs                                          0 ms/s
+        //
+        // Those three are exactly the three jobs that have a keyBy, i.e. the only three with a
+        // network exchange a barrier can be delayed in at all; job-pair-extractor, job-rebaser and
+        // job-precision are source->map/process->sink chained into a single task, where there is no
+        // exchange and alignment is structurally impossible. Their 0 ms/s is a property of their
+        // topology, not evidence that they are healthier. In each of the three, the back-pressured
+        // task is the one immediately UPSTREAM of that exchange, and it shows up on Sources rather
+        // than propagating gradually up from a slow downstream stage — the signature of checkpoint
+        // cost, not of a throughput bottleneck.
+        //
+        // Hybrid, not full unaligned: aligned stays the default path and keeps the smaller
+        // snapshots, and only a checkpoint that has not aligned within ALIGNED_CHECKPOINT_TIMEOUT_MS
+        // pays to persist in-flight buffers. FORCE_UNALIGNED is deliberately left at its default
+        // false.
+        //
+        // ⚠ NOT yet confirmed by a metric that separates barrier-travel delay (which this fixes)
+        // from snapshot + transactional-sink-commit cost (which it does NOT fix, and would slightly
+        // worsen). The three affected jobs are also the only three with keyed state and the three
+        // with the largest output records, so the ranking above is consistent with either cause.
+        // See todo.md for the confirming queries; revert this rather than keep it if they show the
+        // cost is in the snapshot, not the barrier.
+        config.set(CheckpointingOptions.ENABLE_UNALIGNED, true);
+        config.set(CheckpointingOptions.ALIGNED_CHECKPOINT_TIMEOUT,
+                Duration.ofMillis(ALIGNED_CHECKPOINT_TIMEOUT_MS));
 
         // hashmap keeps every book on heap, which is appropriate while state is a handful of small
         // per-market MapStates/ValueStates. Incremental checkpointing is RocksDB-only and does not
