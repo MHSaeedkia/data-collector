@@ -39,15 +39,19 @@ var Scenarios = []struct {
 	{"23-ex4-rebase-toman", Ex4RebaseToman},
 	{"24-ex4-rebase-scaled-unit", Ex4RebaseScaledUnit},
 
-	// Bitget — a snapshot/update delta feed since 2026-08-22, and the only exchange
-	// whose sequence is a millisecond clock rather than a counter (jump 600 ± 10).
-	{"25-ex5-snapshot-then-updates", Ex5SnapshotThenUpdates},
-	{"26-ex5-update-before-snapshot", Ex5UpdateBeforeSnapshot},
-	{"27-ex5-jump-tolerance", Ex5JumpTolerance},
+	// Bitget — snapshot-only again since 2026-09-07, back on the `books50` channel with a
+	// real `seq` counter (jump 0). 26 (ex5-update-before-snapshot), 27 (ex5-jump-tolerance)
+	// and 31 (ex5-rest-snapshot-resync) were REMOVED with that change: ex5 sends no updates
+	// and has no second REST stream, so none of those code paths is reachable through it any
+	// more. (27's subject went further — ex5 was the only feed that ever stamped a jump
+	// tolerance, so the field itself was deleted from the schema on 2026-09-07 and job 2's
+	// contiguity check is a plain equality again.) Numbers left retired rather than renumbered,
+	// per the convention below. Ex5StaleSeq — the snapshot ordering rule that replaces all
+	// three — is appended as 62. See data_ex5.go.
+	{"25-ex5-snapshot-stream", Ex5SnapshotStream},
 	{"28-ex5-multi-book-frame", Ex5MultiBookFrame},
 	{"29-ex5-noise-frames", Ex5NoiseFrames},
 	{"30-ex5-precision-dust", Ex5PrecisionDust},
-	{"31-ex5-rest-snapshot-resync", Ex5RestSnapshotResync},
 
 	// Bybit
 	{"32-ex6-snapshot-then-deltas", Ex6SnapshotThenDeltas},
@@ -124,4 +128,18 @@ var Scenarios = []struct {
 	// for a delta feed. ex5 (31) and ex6 (48) already had this scenario; ex8 did not.
 	// See data_ex8.go.
 	{"61-ex8-rest-snapshot-resync", Ex8RestSnapshotResync},
+
+	// Bitget's snapshot ordering rule (added 2026-09-07). Appended as 62 rather than slotted
+	// into 25-30, for the same reason 48, 49, 60 and 61 were. With ex5 snapshot-only, job 2's
+	// snapshot branch is the ONLY branch it can reach, so this is the whole of ex5's validation
+	// coverage: a repeated or older `seq` is stale_or_duplicate, a forward one is accepted
+	// however far it jumps, and the control stream stays empty. See data_ex5.go.
+	{"62-ex5-stale-seq", Ex5StaleSeq},
+
+	// The ex5 DEPLOY hazard (added 2026-09-07, PR #1 review). Job 2 keeps `lastSeq` in keyed
+	// state and is not resubmitted by this change, so at deploy time it still holds the `depth`
+	// channel's millisecond sequence — about a trillion above any `books50` seq. Every frame off
+	// the new channel is then dead-lettered stale_or_duplicate with no control command and no way
+	// back. Resubmit job-type-validator alongside job-pair-extractor. See data_ex5.go.
+	{"63-ex5-seq-carried-over-from-depth", Ex5SeqCarriedOverFromDepth},
 }

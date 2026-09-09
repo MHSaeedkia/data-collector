@@ -10,6 +10,7 @@ import (
 
 // Config holds everything the harness needs from the environment.
 type Config struct {
+<<<<<<< HEAD
 	SchemaRegistryURL   string
 	SchemasDir          string
 	KafkaBroker         string
@@ -17,6 +18,18 @@ type Config struct {
 	NormalizerDir       string
 	ComposeFile         string
 	TaskManagerServices []string
+=======
+	SchemaRegistryURL string
+	SchemasDir        string
+	KafkaBroker       string
+	FlinkAPI          string
+	NormalizerDir     string
+	ComposeFile       string
+
+	// Scenario selects a single case from the compiled-in list instead of
+	// running all of them. Empty means run everything.
+	Scenario string
+>>>>>>> 0578b7e961c498e9ac7eeda2269dcc9e33e04c34
 }
 
 // Load reads envFile (if present) into the process environment, then builds the
@@ -33,10 +46,14 @@ func Load(envFile string) (Config, error) {
 		FlinkAPI:          env("FLINK_API", "http://localhost:7070"),
 		NormalizerDir:     env("NORMALIZER_DIR", "../flink/normalizer"),
 		ComposeFile:       env("COMPOSE_FILE", "../docker-compose.yml"),
+<<<<<<< HEAD
 		// The dev compose file (the default ComposeFile above) runs ONE TaskManager
 		// service named "taskmanager"; the prod file runs four, "taskmanager-1".."-4".
 		// Comma-separated so a prod run can override with all four in one var.
 		TaskManagerServices: splitCSV(env("TASKMANAGER_SERVICES", "taskmanager")),
+=======
+		Scenario:          env("SCENARIO", ""),
+>>>>>>> 0578b7e961c498e9ac7eeda2269dcc9e33e04c34
 	}
 
 	if cfg.SchemaRegistryURL == "" {

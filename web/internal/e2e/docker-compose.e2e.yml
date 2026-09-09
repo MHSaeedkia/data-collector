@@ -1,0 +1,72 @@
+# A throwaway stack for the e2e tests: one Kafka and the web app, nothing else.
+# It is deliberately NOT a copy of the real docker-compose.yml — it exists to be
+# destroyed, so it keeps only what the tests actually exercise.
+#
+# Three things keep it from touching the real stack, and all three matter:
+#
+#   1. It runs under its own compose project name (`-p`, set by the test), so the
+#      network, the volumes and the container names are all namespaced.
+#   2. There is NO `container_name:` anywhere. The real compose files pin `kafka`
+#      and `orderbook-web`; repeating those here would either refuse to start or,
+#      far worse, silently drive the real containers. Leaving it out gives
+#      `<project>-kafka-1` and `<project>-web-1`, which the test resolves with
+#      `compose ps -q`.
+#   3. Nothing is published to the host. No `9092:9092`, no `3000:3000`, so this
+#      can run while the real stack is up. The tests never need host access: they
+#      drive Kafka with `docker exec` and read results with `docker logs`.
+#
+# postgres and the schema registry are deliberately absent. The web app starts and
+# serves without them (it logs the failed lookups and carries on), and these tests
+# produce junk bytes that fail on the Avro magic byte long before the registry is
+# consulted. Adding them would only make the stack slower to boot. Tests that
+# assert on market/exchange NAMES would need postgres — add it then, not now.
+
+services:
+    kafka:
+        image: confluentinc/cp-kafka:7.8.0
+        hostname: kafka
+        environment:
+            # Required in KRaft mode — the broker refuses to start without it.
+            # Deliberately NOT the real stack's id: these are unrelated clusters and
+            # nothing should ever make them look like the same one.
+            CLUSTER_ID: nuzHfIQNQnmzyjznnDkMmQ==
+            KAFKA_NODE_ID: 1
+            KAFKA_PROCESS_ROLES: broker,controller
+            KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:9092
+            KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+            KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+            KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+            KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+            KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+            KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+            KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+            # OFF on purpose: the tests decide when a topic exists. With
+            # auto-create on, producing to a deleted topic would quietly bring it
+            # back and the test would be asserting against an accident.
+            KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+            # Small: this broker holds a handful of junk records, not a pipeline.
+            KAFKA_HEAP_OPTS: "-Xmx512m -Xms256m"
+        healthcheck:
+            test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+            interval: 5s
+            timeout: 10s
+            retries: 24
+            start_period: 10s
+
+    web:
+        # ../.. is web/ — the same context and Dockerfile the real image uses, so
+        # these tests run the artefact that actually ships.
+        build:
+            context: ../..
+        depends_on:
+            kafka:
+                condition: service_healthy
+        environment:
+            PORT: 3000
+            KAFKA_BROKER: kafka:29092
+            # Deliberately unreachable. Neither is needed here, and pointing them
+            # at nothing makes that visible in the logs instead of accidental.
+            DATABASE_URL: postgres://unused:unused@127.0.0.1:1/unused
+            SCHEMA_REGISTRY_URL: http://127.0.0.1:1

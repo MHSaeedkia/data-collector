@@ -55,10 +55,22 @@ Module path is `orderbook-e2e`, so internal imports are `orderbook-e2e/<pkg>`.
 - `e2e/main.go` — `main()` plus `runServer`: load config, make a context, `stack.Provision`, then
   either serve (`-serve`) or loop the `scenarios` list calling `scenario.Run` on each.
 
-**Build `e2e/` with `-mod=mod`, against the module cache. Do NOT run `go mod vendor`** (user's
-call, 2026-08-03). There is an untracked `e2e/vendor/` tree with no `modules.txt`, which makes a
-bare `go build` fail with "inconsistent vendoring" — the fix is the flag, not repopulating vendor.
-`swag` needs it too: `GOFLAGS=-mod=mod ./swagger-update.sh`.
+⚠ **CORRECTED 2026-09-07 — the paragraph below is WRONG and cost a wasted build cycle on the dev
+server.** `e2e/vendor/` is **TRACKED in git (515 files) and DOES contain `modules.txt`**, so Go
+selects vendor mode automatically and `go build` works offline with no module cache at all. On the
+**dev server this is the only thing that works**: it cannot reach `proxy.golang.org` (403
+Forbidden), so `-mod=mod` fails outright on any dependency not already in `~/go/pkg/mod`. Build
+there with **`go build -mod=vendor`**. The prebuilt `e2e/e2e-linux` binary in the tree exists for
+the same reason.
+
+> ~~**Build `e2e/` with `-mod=mod`, against the module cache. Do NOT run `go mod vendor`** (user's
+> call, 2026-08-03). There is an untracked `e2e/vendor/` tree with no `modules.txt`, which makes a
+> bare `go build` fail with "inconsistent vendoring" — the fix is the flag, not repopulating
+> vendor.~~ The "do not run `go mod vendor`" half still stands as a user preference; the claim that
+> vendor is untracked and unusable does not.
+
+`swag` may still need `GOFLAGS=-mod=mod ./swagger-update.sh` (it resolves packages differently) —
+unverified since the correction.
 
 Verified 2026-07-28 against the live stack: 4 subjects (ids 1–4) and the 9 `ex1-p1-*` / `ex1-raw` /
 `p1-asks` / `p1-bids` topics, retentions confirmed via `kafka-topics --describe`; with `Delete`
@@ -360,7 +372,8 @@ the 6 from the first (all reach CANCELED) before deleting the topics and resubmi
   were new capabilities ex5 could not have as a snapshot-only feed: it has a cold start
   (`no_baseline` + a control command) and it can gap. `27-ex5-jump-tolerance` is the ONLY scenario
   anywhere that exercises `sequence_jump_tolerance`: both window edges (+590, +610) accepted, +611
-  a real gap.
+  a real gap. ⚠ **Both the scenario and the FIELD are gone** — 27 was retired 2026-09-07 and the
+  schema field was deleted the same day, precisely because retiring 27 left it with no coverage.
 - **`31-ex5-rest-snapshot-resync` (2026-08-23)** — bitget's REST depth body, the second stream on
   `ex5-raw` ([[project_pair_extractor]]). It is run where the REST body actually appears: a WS gap
   empties the book and asks the control plane, and the REST snapshot is what answers, after which
@@ -861,3 +874,161 @@ since each scenario's meaning lives in whether the chain holds:
 still implementing its side, so `ex8-raw` on the dev server still carries `books-grouped` and all
 7 would fail against it today. Run them once NiFi's change lands — that is the real verification,
 and `Ex8RestSnapshotResync`'s one-reject/one-command count is the assertion most worth watching.
+
+---
+
+## 2026-09-07 — the ex5 block shrinks 7 → 5, and 62 is appended
+
+ex5/bitget went snapshot-only on `books50` (see [[project_pair_extractor]]), which deletes three
+scenarios outright and rewrites the wire of every survivor.
+
+**Numbers RETIRED, not reused or renumbered** (the standing convention — grep the Go identifiers,
+never the numbers):
+
+| # | identifier | why it is gone |
+| - | ---------- | -------------- |
+| 26 | `Ex5UpdateBeforeSnapshot` | ex5 sends no updates, so it has no cold start and can reach `no_baseline` never |
+| 27 | `Ex5JumpTolerance` | ex5 stamps tolerance 0 now, and it was the ONLY scenario in the suite exercising `sequence_jump_tolerance` — **that feature now has NO e2e coverage at all**, by design, because no exchange stamps it. ⚠ **That absence of coverage became a reason to DELETE the feature: the field was removed 2026-09-07** — see [[project_type_validator]] |
+| 31 | `Ex5RestSnapshotResync` | `ex5-raw` has one stream again; the REST poller is off |
+
+**Current ex5 block: 25, 28, 29, 30, and 62.**
+
+- `25-ex5-snapshot-stream` (was `25-ex5-snapshot-then-updates`, `Ex5SnapshotThenUpdates` →
+  `Ex5SnapshotStream`) — wholesale replacement, and a qty-`"0"` level that rests nowhere. On this
+  channel `"0"` is an empty level, NOT a delete marker.
+- `28`/`29`/`30` keep their identifiers; only the wire shape and the prices changed.
+- `29-ex5-noise-frames` grew to 10 sources and is where the revision is made testable: source 02
+  is `action: "update"` (first-class before, noise now), source 05 is the **retired REST depth
+  body** (recognised before, unrecognised now), source 09 is a **half book** (a legal one-sided
+  delta before, dropped now because it would wipe a live side on a snapshot feed).
+- `62-ex5-stale-seq` (`Ex5StaleSeq`) — **appended, not slotted in.** Restored from the
+  pre-2026-08-22 suite. With ex5 snapshot-only this is the whole of its job-2 coverage: a repeated
+  or older `seq` is `stale_or_duplicate`, a forward one is accepted however far it jumps. Sources
+  02 and 03 deliberately carry LATER event times than 01 and are still rejected — with a non-null
+  sequence id, `seq` is the whole ordering test and `ts` is not consulted.
+
+**Every ex5 scenario now asserts an EMPTY control stream** (nil `WantControlCommands`, which the
+harness treats as "assert nothing was requested"). ex5 cannot reach a branch that asks for a
+snapshot, so a command appearing there is a real bug, not a flake.
+
+⚠ **NOT RUN LIVE.** Docker was down. `go build` / `go vet` / `gofmt` / `go test ./...` are clean
+and the expected books are reasoned from the scenarios they replace (only prices and sequencing
+changed), but nothing was observed and no mutation check was done.
+
+⚠ Stale cross-references fixed while here: `data_ex6.go` and `data_ex8.go` both described ex5's
+two-stream discriminator in the present tense, `data_ex9.go` claimed ex5 and ex8 are
+timestamp-sequenced (neither is any more), and `lineage.go` listed ex5 among the JSON-NUMBER
+payloads that must not round-trip through float64 — that is ex3 and ex4 now.
+
+---
+
+## 2026-09-07 (PR #1 review) — ex5 block RUN LIVE, and `63-ex5-seq-carried-over-from-depth`
+
+**The ex5 block no longer rests on reasoning: 25, 28, 29, 30, 62 and the new 63 all PASS** against
+a freshly provisioned stack. The "NOT RUN LIVE" caveat on this change is discharged for e2e; what
+is still unverified is the dev server's actual `ex5-raw` wire.
+
+**`63-ex5-seq-carried-over-from-depth` (new, appended — 62 was the previous tail).** It pins the
+DEPLOY hazard: job 2 carrying a `lastSeq` from the `depth` channel's millisecond clock while job 1
+starts stamping a `books50` `seq` a trillion lower. Sources 02–04 carry the REAL captured seqs
+moving forward and are all dead-lettered `stale_or_duplicate`; the control stream is asserted
+EMPTY, which is the load-bearing half — it proves the feed cannot ask its way out. See
+[[project_type_validator]] for why.
+
+⚠ **Why source 01 carries a millisecond value as its `seq`**: `warmup.Run` cancels and resubmits
+every job before each scenario, so **no scenario can inherit state from the one before it**. 01
+stands in for the state a live job 2 holds at deploy time. Job 2 does not care how `lastSeq` got
+there. Any future "the pipeline carried bad state across a deploy" case has to be written this
+way.
+
+**Mutation-checked** (the convention 31 established): lowering ONLY 01's `seq` to 500 makes the run
+fail `ex5-p1-orderbook-snapshot-flink: got 4 records, want 1` — all four frames accepted, zero
+rejects. One value, opposite outcome, so the assertion is causal rather than incidental.
+
+**The control experiment is the rest of the block**: warmup gives every other ex5 scenario an EMPTY
+job 2, and the same low seq values are accepted there immediately.
+
+**Running one scenario:** there is no filter flag — `main.go` runs the whole compiled list. For the
+review it was patched with a temporary `E2E_ONLY` env check and reverted afterwards; `-serve` +
+`POST /scenarios/run` is the supported way to run one case. `-provision-stack=false` reuses an
+already-running stack and saves the `down -v`/`up --wait`. On a machine with only JDK 26, `mvn`
+needs `-Djacoco.skip=true` (the harness's own build passes `-DskipTests`, so it is unaffected).
+
+---
+
+## 2026-09-07 — full 58-scenario LIVE run on the dev server; the durable-run pattern
+
+First full-suite live run of `chore/remove-sequence-jump-tolerance` (`82f7dd4`) on
+`developer-1.internal.tibobit.ir`. **NET RESULT: 58/58 pass** — 56 in the main run, plus the 2 that
+flaked re-run green. Full artefacts kept on the server at
+`/opt/data-collector/e2e-runs/20260907-174815/` (`e2e-runs/latest` symlink), `FINAL_REPORT.txt`
+first. Whole suite ≈ 36 min at ~25–42 s/scenario.
+
+**⚠ `NoResourceAvailableException` is an INFRASTRUCTURE flake, not a test failure — learn the
+signature.** `35-ex6-no-baseline` and `36-ex6-noise-frames` failed with
+`NoResourceAvailableException: Could not acquire the minimum required resources`. Tells:
+
+- **Duration collapses to ~15 s** (vs the normal 25–42 s). The job never ran; submission failed.
+- **A different job each time** (`job-pair-extractor`, then `job-precision`) — a real code fault
+  reproduces on the SAME job, a cluster fault hits whatever submits next.
+- It coincided exactly with a **`taskmanager` container restart** (`RestartCount=1`,
+  `OOMKilled=false`, host had 9G/15G free — so not host memory).
+- **The suite self-recovers**: the very next scenario passed at full 42 s.
+
+Root trigger not conclusively pinned — the TM exited 0 with no `FATAL`/OOM/SIGTERM logged. Its JVM
+runs `-XX:MaxMetaspaceSize=256m` and a full run submits ~350 jobs (one warmup per scenario), which
+is a plausible metaspace-pressure story but was **not evidenced in the logs**. Treat as a known
+flake of this box; re-run before believing it.
+
+**Re-running individual scenarios: there is still no filter flag, and `-serve` needs the scenario
+as a JSON body.** The cheap route that avoids both: a throwaway `e2e/cmd/rerun/main.go` that ranges
+over `scenario.Scenarios`, skips any name not given on argv, and calls the SAME `scenario.Run` —
+identical code path, no stack re-provision, no edit to any tracked file. Build
+`go build -mod=vendor -o rerun-bin ./cmd/rerun`, run it **from `e2e/`** (config paths are relative),
+then delete both. Took 66 s for two scenarios versus ~36 min for a full re-run.
+
+**The durable-run pattern (reuse this for any long server run).** A run dir holding `meta.txt`,
+`run.log`, `status`, `exit_code`, `started_at`/`finished_at`, and a **stateless `report.sh` that
+derives everything from `run.log`** — no second process to keep alive, so nothing is lost if the
+connection drops. Launch with `setsid nohup ./run.sh </dev/null &`; verify detachment by checking
+the process shows **PPID 1** with no TTY. Reconnecting and running `e2e-runs/latest/report.sh`
+reproduces the full state at any time.
+
+⚠ **The server tree was 120 commits / 503 files behind `main`** before this run (clean ancestor, no
+divergence), so this run also exercised all that drift, not just the branch's 2 commits. Worth
+saying out loud when attributing any failure.
+
+---
+
+## 2026-09-08 — `SCENARIO=` env var: running ONE case without a temp binary
+
+The gap the two sections above kept hitting ("there is still no filter flag") is closed. `SCENARIO`
+in the environment (or in `e2e/.env`) makes `main.go` run exactly one case from
+`scenario.Scenarios` instead of the whole list. The value is either the **full name** or just its
+**leading number** — `SCENARIO=62` and `SCENARIO=62-ex5-stale-seq` are the same thing — because the
+numbers are what memory/, `todo.md` and the run logs quote.
+
+```
+cd e2e && SCENARIO=62 go run . -provision-stack=false
+```
+
+**Why this and not the alternatives:** `-serve` + `POST /scenarios/run` needs the whole scenario as
+a JSON body, and the throwaway `cmd/rerun` binary (2026-09-07) meant building and deleting an
+untracked file every time. This is the same `scenario.Run` call path as a full run — the list is
+sliced, nothing else changes — so a green single run means what a green full run would mean for
+that case.
+
+**Design decisions worth not re-deriving:**
+
+- It is an **env var, not a flag**, so it rides `config.Load`'s existing `.env`-then-environment
+  precedence (a real env var wins over the file) and works unchanged in a docker/CI invocation.
+  It is read into `config.Config.Scenario`; empty means run everything.
+- **Prefix matching is segment-exact** — `strings.HasPrefix(name, want+"-")`, so `SCENARIO=6` does
+  NOT match `62-ex5-stale-seq`. It errors instead. A loose prefix would silently run the wrong case.
+- **An unmatched value is fatal (exit 1), not an empty run.** A typo that "passes" is the one
+  failure mode this feature could plausibly introduce, so it cannot happen.
+- `-serve` mode ignores it: the request body already names the scenario.
+
+Verified live against a running local stack: `SCENARIO=62` and `SCENARIO=44-control-ex6-gap-resync-gap`
+each ran alone and PASSED (27 s / 23 s), `SCENARIO=nope` and `SCENARIO=6` exit 1 with a readable
+message before touching the stack. Build/vet/gofmt clean, `scenario` tests pass.

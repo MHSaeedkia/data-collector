@@ -7,8 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * ex8 okx — TWO raw streams share the {@code ex8-raw} topic (sample-raw-data.md § ex8), exactly
- * as on ex5/bitget:
+ * ex8 okx — TWO raw streams share the {@code ex8-raw} topic (sample-raw-data.md § ex8), the same
+ * REST+WS split ex1, ex2 and ex6 have:
  *
  * <ul>
  *   <li><b>WebSocket {@code books} feed</b> ({@code wss://ws.okx.com:8443/ws/v5/public}):
@@ -24,10 +24,10 @@ import java.util.List;
  *       (the REST body carries no symbol of its own). Same four-element levels.</li>
  * </ul>
  *
- * <p><b>The discriminator is {@code arg}, NOT the shape of {@code data}.</b> ex5 can tell its two
- * streams apart because its REST {@code data} is an object while its WS {@code data} is an array;
- * here {@code data} is an ARRAY on both, and {@code action} reads {@code "snapshot"} on both. Only
- * the WS frame has an {@code arg}.
+ * <p><b>The discriminator is {@code arg}, NOT the shape of {@code data}.</b> ex6 can tell its two
+ * streams apart because its REST book sits under {@code result} and its WS book under
+ * {@code data}; here {@code data} is an ARRAY on both, and {@code action} reads
+ * {@code "snapshot"} on both. Only the WS frame has an {@code arg}.
  *
  * <p><b>The jump is DYNAMIC — {@code seqId - prevSeqId} per message, the ex7 pattern.</b> okx
  * chains every {@code books} frame to its predecessor: {@code prevSeqId} is the {@code seqId} of
@@ -54,7 +54,7 @@ import java.util.List;
  * counter the WS frames now use. It is that a snapshot's {@code seqId} is not any later update's
  * {@code prevSeqId} — the counter advances between NiFi's fetch and the next WS frame, so seeding
  * {@code lastSeq} from it would break the very next chain check and gap immediately. Null instead
- * hands job 2 the {@code baselinePending} bootstrap ex1/ex2/ex5/ex6 already take: order this body
+ * hands job 2 the {@code baselinePending} bootstrap ex1/ex2/ex6 already take: order this body
  * by EVENT TIME, then let the first WS update after it adopt its own {@code seqId} as the
  * baseline. {@code data.ts} is still the event time — a real timestamp, just not a comparable
  * sequence.
@@ -64,8 +64,8 @@ import java.util.List;
  * re-seeds {@code lastSeq} exactly and the next update chains to it — no baseline gap at all. The
  * REST branch is kept as the fallback for however NiFi chooses to answer.
  *
- * <p>{@code checksum} is okx's CRC32 book-integrity value. It is ignored here, as ex5's is: job 5
- * builds the book and nothing in the platform verifies a checksum.
+ * <p>{@code checksum} is okx's CRC32 book-integrity value. It is ignored: job 5 builds the book
+ * and nothing in the platform verifies a checksum.
  *
  * <p><b>Why the REST branch existing at all is the fix (found live 2026-09-05).</b> Without it
  * job 1 dropped the resync answer on the floor: no {@code arg} means {@code arg.instId} is null,

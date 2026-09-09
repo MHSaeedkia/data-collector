@@ -1097,14 +1097,14 @@ var Ex8NoiseFrames = Scenario{
 //
 // 40-ex8-sequence-gap passed the whole time it was broken, because its resync answer is a WS
 // snapshot. On a delta feed NiFi answers by REST, so that scenario tested a frame production never
-// sends. That is the coverage gap this closes, and it is the same gap ex5 (31) and ex6 (48) had
-// already been given scenarios for.
+// sends. That is the coverage gap this closes, and it is the same gap ex6 (48) had already been
+// given a scenario for. (ex5 had one too, 31, retired 2026-09-07 when its REST stream went away.)
 //
-// Three ways the REST shape differs from ex5's and ex6's, each of which the sources exercise:
+// Three ways the REST shape differs from ex6's, each of which the sources exercise:
 //
 //   - there is NO `arg`, and that absence is the discriminator. `data` is an ARRAY on both okx
-//     streams and `action` reads "snapshot" on both, so neither can separate them (ex5 splits on
-//     `data` being an object, ex6 on the book sitting under `result` — neither works here).
+//     streams and `action` reads "snapshot" on both, so neither can separate them (ex6 splits on
+//     the book sitting under `result` — which does not work here).
 //   - levels are FOUR-element arrays, `[price, qty, "0", orderCount]`, where the WS frame sends
 //     two. Only elements 0 and 1 are read.
 //   - the body carries `seqId` but no `prevSeqId`, so it cannot be chained. Since the move to the

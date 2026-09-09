@@ -53,15 +53,12 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * interval since the last update is the collector's choice, not the exchange's
  * cadence. Contiguity therefore has exactly two sites, both in the update
  * branch below — snapshot → next update, and update → update.</li>
- * <li><b>Update</b> ({@code type == "update"}, delta feeds ex5/ex6/ex8 —
- * ex1/ex2 REVISED 2026-09-02 out of this group, see above): needs a baseline
- * and a contiguous sequence. No baseline yet → {@code no_baseline}; still
- * waiting to re-sync after a gap → {@code awaiting_snapshot};
- * {@code sequence_id} within {@code sequence_jump_tolerance} of
- * {@code lastSeq + sequence_jump} → valid (the tolerance is 0 for every
- * exchange but ex5/bitget, whose sequence is a millisecond clock — see the
- * window comment in {@code processElement});
- * {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
+ * <li><b>Update</b> ({@code type == "update"}, delta feeds ex6/ex7/ex8 —
+ * ex1/ex2 REVISED 2026-09-02 out of this group and ex5 REVISED 2026-09-07 out
+ * of it, see above): needs a baseline and a contiguous sequence. No baseline
+ * yet → {@code no_baseline}; still waiting to re-sync after a gap →
+ * {@code awaiting_snapshot}; {@code sequence_id == lastSeq + sequence_jump} →
+ * valid; {@code sequence_id <= lastSeq} → {@code stale_or_duplicate}; any other
  * forward jump is a gap → {@code sequence_gap}, and the stream is marked
  * untrusted (every update rejected until the next snapshot re-syncs).</li>
  * </ul>
@@ -101,8 +98,9 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * State per key: {@code lastSeq} (last accepted sequence id),
  * {@code lastEventTime} (ordering for null-seq snapshots),
  * {@code baselinePending} (the null-seq REST resync bootstrap, e.g. ex6),
- * {@code resyncRequestedAt}, and for silence {@code lastArrivalMs},
- * {@code lastSimulation} and {@code stalenessTimerAt}. Topics are
+ * {@code resyncRequestedAt}, and for the health timer {@code lastArrivalMs},
+ * {@code lastAcceptedMs}, {@code lastSimulation} and
+ * {@code stalenessTimerAt}. Topics are
  * single-partition so per-key order holds; no checkpointing configured
  * (cold-start gap shared with the rest of the platform — book is unvalidated
  * until the first snapshot after a restart, which on a delta feed means every
@@ -147,6 +145,34 @@ public class TypeValidateFunction
      * was never wired up.
      */
     static final String STALE = "stale";
+
+    /**
+     * Control-plane reason for a market that is ARRIVING but not PROGRESSING:
+     * frames keep coming and job 2 has accepted none of them for longer than
+     * the market's {@code staleness_threshold_seconds}. Like {@link #STALE} it
+     * is raised by the timer, never by an event, so it appears only on
+     * {@code control-plane}.
+     *
+     * <p>
+     * The condition it exists for is a sequence counter that RE-BASED: a
+     * snapshot-only feed whose {@code sequence_id} restarts lower than the one
+     * job 2 already accepted (ex2/ex4 Centrifugo {@code pub.offset} when the
+     * channel history is recreated, ex5 {@code seq} if it turns out to be
+     * per-connection). Every frame then fails the snapshot branch's
+     * {@code seq <= lastSeq} test forever. Such a feed reaches none of the
+     * three reject sites that ask for a snapshot — they are all in the update
+     * branch — and {@link #STALE} never fires either, because the market is
+     * not silent. Without this the key stays dead-lettered until an operator
+     * restarts the job.
+     *
+     * <p>
+     * It is deliberately measured on ACCEPTANCE rather than on the reject
+     * count: one duplicate, or a burst of them, is normal and must stay
+     * {@code stale_or_duplicate}. Only the absence of any accepted event for a
+     * whole threshold says the stream has moved somewhere this key cannot
+     * follow.
+     */
+    static final String NO_PROGRESS = "no_progress";
 
     /**
      * Event {@code type} of the synthetic reset marker emitted onto the main
@@ -197,6 +223,15 @@ public class TypeValidateFunction
      * itself only exists once an event has arrived and set it.
      */
     private transient ValueState<Long> lastArrivalMs;
+
+    /**
+     * Processing time of the last event this key ACCEPTED, or null when it has
+     * never accepted one. The companion to {@link #lastArrivalMs}: together
+     * they separate "nothing is coming" from "everything that comes is
+     * refused", which are the same thing to every consumer downstream and need
+     * opposite diagnoses. See {@link #NO_PROGRESS}.
+     */
+    private transient ValueState<Long> lastAcceptedMs;
 
     /**
      * Timestamp of the ONE outstanding silence timer for this key, or null when
@@ -270,6 +305,8 @@ public class TypeValidateFunction
                 new ValueStateDescriptor<>("resyncRequestedAt", Long.class));
         lastArrivalMs = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("lastArrivalMs", Long.class));
+        lastAcceptedMs = getRuntimeContext().getState(
+                new ValueStateDescriptor<>("lastAcceptedMs", Long.class));
         stalenessTimerAt = getRuntimeContext().getState(
                 new ValueStateDescriptor<>("stalenessTimerAt", Long.class));
         lastSimulation = getRuntimeContext().getState(
@@ -298,6 +335,12 @@ public class TypeValidateFunction
         // verdict, because staleness here means "nothing arrived", not "nothing was
         // accepted": a key rejecting every update is alive and already re-asking on the
         // rejection path, and calling it stale as well would double-ask for one fault.
+        //
+        // "Already re-asking" is true only of the UPDATE branch, though — that is where all
+        // three asking rejects live. A snapshot-only feed that starts refusing everything
+        // (its sequence counter re-based below lastSeq) is alive by this measure, silent by
+        // no measure, and asking by no measure. lastAcceptedMs is the second clock that
+        // catches exactly that case; see NO_PROGRESS and onTimer.
         long arrivedAt = ctx.timerService().currentProcessingTime();
         lastArrivalMs.update(arrivedAt);
         lastSimulation.update(event.getSimulation());
@@ -324,7 +367,7 @@ public class TypeValidateFunction
             }
             baselinePending.update(true);
             resyncTrusted(); // this resync answers any outstanding request
-            emit(event, out);
+            emit(event, out, arrivedAt);
             return;
         }
 
@@ -339,7 +382,7 @@ public class TypeValidateFunction
             }
             lastSeq.update(seq);
             resyncTrusted(); // the requested snapshot has arrived
-            emit(event, out);
+            emit(event, out, arrivedAt);
             return;
         }
 
@@ -351,7 +394,7 @@ public class TypeValidateFunction
             lastSeq.update(seq);
             baselinePending.update(false);
             resyncTrusted(); // baseline established, any request is moot
-            emit(event, out);
+            emit(event, out, arrivedAt);
             return;
         }
         // The two untrustworthy conditions. Both ask, and both keep asking on the retry
@@ -369,17 +412,20 @@ public class TypeValidateFunction
             reject(event, AWAITING_SNAPSHOT, ctx);
             return;
         }
-        // Contiguity, as a WINDOW rather than an equality: the expected next sequence is
-        // last + jump, and sequence_jump_tolerance is how far either side of it still counts as
-        // contiguous. Every exchange but ex5 stamps tolerance 0, which collapses this back to the
-        // exact `seq == last + jump` check it has always been (ex6 jump 1, ex8 jump 300 — real
-        // counters and a real fixed cadence). ex5/bitget stamps 600 +/- 10 because its sequence
-        // is a millisecond clock, not a counter, so it never lands on an exact multiple.
+        // Contiguity: the expected next sequence is exactly last + jump. The jump is either a
+        // constant from the exchange's cadence (ex6 = 1) or stamped per message from a frame
+        // that names its own predecessor (ex7 `u - U`, ex8 `seqId - prevSeqId`), where this
+        // reduces to "the predecessor it names is the last one we accepted".
+        //
+        // This was briefly a WINDOW (`expected ± sequence_jump_tolerance`), added 2026-08-22 for
+        // ex5/bitget when its sequence was a millisecond clock that never landed on an exact
+        // multiple of the cadence. ex5 went back to a real `seq` counter and snapshot-only on
+        // 2026-09-07, leaving the window with no user, and the field was dropped from the schema
+        // on 2026-09-07. A future timestamp-sequenced feed would have to re-add it.
         long expected = last + event.getSequenceJump();
-        long tolerance = event.getSequenceJumpTolerance();
-        if (seq >= expected - tolerance && seq <= expected + tolerance) {
+        if (seq == expected) {
             lastSeq.update(seq);
-            emit(event, out);
+            emit(event, out, arrivedAt);
         } else if (seq <= last) {
             reject(event, STALE_OR_DUPLICATE, ctx);
         } else {
@@ -445,24 +491,52 @@ public class TypeValidateFunction
         }
 
         long now = ctx.timerService().currentProcessingTime();
-        if (now - lastArrival < market.thresholdMs()) {
-            // It spoke after this timer was armed. Arriving events deliberately do not
-            // cancel and re-register the timer, so this is where the deadline is moved
-            // instead — detection still lands exactly on lastArrival + threshold.
-            armSilenceTimerAt(lastArrival + market.thresholdMs(), ctx);
+        long threshold = market.thresholdMs();
+
+        // Two clocks, two ways to be unhealthy, ONE deadline: whichever comes first.
+        //
+        //   arrival  — nothing has come in.               STALE.
+        //   progress — things come in and none is ever accepted.  NO_PROGRESS.
+        //
+        // The progress clock is consulted only when the key is NOT already asking. A delta
+        // feed holding updates as `awaiting_snapshot` is refusing everything for a cause it
+        // has already reported and is already retrying on; re-diagnosing it here would
+        // double-ask for one fault, which is the very thing the arrival clock was chosen to
+        // avoid. Skipping it also keeps the deadline in the FUTURE — a key that has been
+        // resync-pending for an hour has a progress clock an hour stale, and arming a timer
+        // on it would fire instantly and spin.
+        long arrivalDeadline = lastArrival + threshold;
+        Long lastAccepted = lastAcceptedMs.value();
+        long progressFrom = lastAccepted != null ? lastAccepted : lastArrival;
+        long deadline = resyncPending() ? arrivalDeadline
+                : Math.min(arrivalDeadline, progressFrom + threshold);
+
+        if (now < deadline) {
+            // It spoke, and it is still getting somewhere, after this timer was armed.
+            // Arriving events deliberately do not cancel and re-register the timer, so this
+            // is where the deadline is moved instead — detection still lands exactly on it.
+            armSilenceTimerAt(deadline, ctx);
             return;
         }
+
+        // Silence outranks no-progress when both are true: "nothing is arriving" is the
+        // stronger statement and the one an operator should read first.
+        boolean silent = now >= arrivalDeadline;
 
         // Captured BEFORE asking, because asking is what opens the episode. Only the
         // first deadline past the threshold empties the book; the rest just re-ask.
         boolean firstOfEpisode = !resyncPending();
-        askForSnapshot(STALE, market.getExchangeId(), market.getPairId(),
+        askForSnapshot(silent ? STALE : NO_PROGRESS, market.getExchangeId(), market.getPairId(),
                 simulationOfLastEvent(), List.of(), ctx);
         if (firstOfEpisode) {
             emitSilenceReset(market.getExchangeId(), market.getPairId(), now, out);
         }
-        // Still silent, so keep watching: the ask repeats until something arrives.
-        armSilenceTimerAt(now + market.thresholdMs(), ctx);
+        // Still unhealthy, so keep watching. Note what the ask has just done to a
+        // no-progress key: `resyncRequestedAt` is now set, so the snapshot branch's
+        // `!resyncPending()` guard opens and the NEXT snapshot is accepted whatever its
+        // sequence id, re-anchoring `lastSeq` on the counter's new base. The recovery is
+        // the resync path that already existed; all this adds is the way in.
+        armSilenceTimerAt(now + threshold, ctx);
     }
 
     /**
@@ -758,11 +832,16 @@ public class TypeValidateFunction
         out.collect(reset);
     }
 
-    private void emit(RawOrderBookEvent event, Collector<RawOrderBookEvent> out) throws Exception {
+    private void emit(RawOrderBookEvent event, Collector<RawOrderBookEvent> out, long acceptedAt)
+            throws Exception {
         // Track the event time of the last accepted event so a later null-seq snapshot
         // can be
         // ordered against it (the out-of-order guard above).
         lastEventTime.update(event.getEventTime());
+        // And the PROCESSING time of it, which is what the no-progress check reads. It is
+        // stamped here rather than in each branch so that a future accept path cannot
+        // forget it and silently make the key look stuck.
+        lastAcceptedMs.update(acceptedAt);
         Lineage.restamp(event);
         event.getPipelineTimings().setTypeValidateOut(System.currentTimeMillis());
         out.collect(event);

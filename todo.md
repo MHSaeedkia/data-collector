@@ -154,6 +154,10 @@
 - [ ] **Verify the fix on the server** — restart the `web` container and confirm: the book paints within a second or two of the next live record (no 6h replay), the aggregated view keeps showing every exchange over a long session, and leaving a tab open/asleep for an hour no longer kills the page for other viewers. A frozen hub used to show as **huge non-moving lag** on the `orderbook-web-agg-*` consumer group; that number should now stay near zero
 - [ ] **`hub.Publish` has no ordering guard** — `latest[key]` is overwritten unconditionally. Deliberately left alone: an `event_time` monotonicity check would drop good records (job 6 unions across exchanges, so its `event_time` is not monotonic per topic) and would *cause* the stale-book symptom it looks like it prevents. The topics are 1 partition, so a single consumer already sees them in order; if the partition count is ever raised, the fix belongs in the producer's partition key
 - [x] **Logging** (2026-09-06, user request "add more log", same branch) — the app was nearly silent, which is most of why the freeze took so long to find. Added, all **low-volume and state-changing, never per record**: per-client lifecycle lines with a sequential client id and a disconnect **reason** (browser closed / half-open, no pong / write failed / ping failed); an explicit "`ws select` … NOTHING HELD for it yet" line, which is the fastest answer to "the page shows nothing"; a 30s hub heartbeat reporting clients, books held and the arrival **rate** (a stalled consumer and a quiet market look identical without a rate) plus a line naming any client that is falling behind; per-consumer startup/pattern/group lines, a "first record from {topic}" line answering "is my regex matching anything?", and an explicit "**NO records in the last 30s**" instead of ambiguous silence; the decoder naming each schema id the first time it is fetched; and the registry reporting stale/recovered **on the transition only** — postgres being down used to repeat a multi-line pgx error every 10s forever, which buries everything else. Verified by running the binary with Kafka, postgres and the registry all unreachable while driving a real websocket at it. See [[project_orderbook_web]]
+- [x] **`UNKNOWN_TOPIC_ID` — a recreated Kafka topic stalled the consumer forever** (2026-09-08, user bug report, branch `fix/kafka-unknown-topic-id-recovery`) — `kafka[ex]: fetch error ex8-p1-orderbook-snapshot-flink[0]: UNKNOWN_TOPIC_ID` repeating while `--describe` showed the topic perfectly healthy; only a container restart fixed it. franz-go pins `cursor.topicID` at cursor creation and **deliberately never re-adopts** a new ID for the same name (`source.go:121` — adopting blind is unsafe because `OffsetForLeaderEpoch` carries no topic ID). It self-heals the ordinary case by purging a topic **absent** from metadata for 15s (`metadata.go:477`), which is why a plain `kafka-topics --delete` does NOT reproduce it — **the repro needs `docker pause` on the web container** so the client never sees the gap, which is what a broker outage does (fits the 2026-09-05 OOM: Kafka lost its data, `warmup.sh` recreated the topics with new IDs, web was blind throughout). **Reproduced and confirmed live on the dev server before writing the fix.** Fix: `handleFetchErr` calls `PurgeTopicsFromClient` on that error — the same escape hatch, triggered by the error instead of by absence — rate-limited to once a minute per topic and run off the poll loop because the purge blocks. 6 new tests on the extracted `shouldPurge` rule (the reason `internal/kafka` has tests at all now), all 3 mutations confirmed caught. Suite green under `-race -count=3`. **Not yet deployed.** See [[project_orderbook_web]]
+- [x] **e2e test for the topic-ID recovery** (2026-09-08, user request, branch `fix/kafka-unknown-topic-id-recovery`) — `web/internal/e2e/`, behind the `e2e` build tag, plus a `web/Makefile` holding the commands (`make test|race|vet|fmt|check|e2e|e2e-clean`). Builds its **own throwaway kafka+web stack** rather than using the real one (user's call): own compose project, **no `container_name:`**, **no published ports**, so it runs beside the live stack and can never drive it. Two containers only — postgres and the schema registry are not needed. Reproduces the outage exactly: create topic → start web → prove it is consuming → `docker pause` → delete+recreate → `docker unpause` → assert it recovers with NO restart. **Mutation-tested: FAILS with the purge removed, PASSES in ~64s with it.** That mattered — the first version passed against a build with the fix removed, because the purge log line quoted its own hint text and the test matched that line instead of a real recovery. Both the log line and the assertion were fixed; see [[project_orderbook_web]] for the two rules. Also found and fixed while building it: `PurgeTopicsFromClient` does not trigger a metadata refresh, so the fix needed a following `ForceMetadataRefresh()` or recovery waited up to 5 minutes. **Uncommitted.**
+- [ ] **Verify the purge fix on the server** — redo the `docker pause` repro after deploying. Expect: the `UNKNOWN_TOPIC_ID` line appears once, then `purging it so the regex re-discovers it`, then `first record from {topic}` within a minute — and no container restart needed
+- [ ] **Find out what recreated the topics in the first place** — nothing in this repo deletes topics (`purge-topics.sh` only truncates via `kafka-delete-records`, `warmup.sh` uses `--create --if-not-exists`), so it was a manual delete or a Kafka volume loss. `auto.create.topics.enable` is unset in `docker-compose.prod.yml`, so it defaults to **true**: a deleted topic gets silently recreated by the Flink producer with **broker defaults** (7-day retention instead of the intended 1h). Worth deciding whether to turn auto-create off
 - [ ] **`public/index.html` hardcodes `ws://`** — fine behind plain HTTP, but the page cannot connect if it is ever served over HTTPS (mixed content). One-line fix (`location.protocol === "https:" ? "wss:" : "ws:"`) when that day comes; not touched now because nothing serves it over TLS today
 
 ## flink/normalizer (job 1 parsers)
@@ -1030,6 +1034,7 @@ stack** — see the same memory section for the run and what it did not cover.
       dev file cannot simply grow (it runs on 5+ boxes and must stay host-agnostic), so the dev
       server may want a `docker-compose.override.yml` of its own.
 
+<<<<<<< HEAD
 ## Checkpointing re-added, third time, on `fix/checkpointing` (2026-09-07)
 
 User's call after reviewing the 2026-09-02/05 history (two prior incidents: the producer-id-churn
@@ -1154,3 +1159,125 @@ change regardless of who checkpoints — same rule PR #11 established).
       starved and lost the JobManager under 6 jobs checkpointing every 10s on a 1.688 GB default).
       Confirm the dev box's TaskManager `process.size` is enough before assuming this deploy is safe
       on every dev/test environment, not just wherever this gets tried first.
+=======
+## ex5/bitget back to `books50` — snapshot-only, one stream (2026-09-07)
+
+Branch `feat/ex5-bitget-books50-snapshot-only`. The collector moved off the `depth` channel and
+the REST depth poller was switched off, so the 2026-08-22 and 2026-08-23 reworks are undone. See
+the dated § in `memory/project_pair_extractor.md`.
+
+- [x] **`BitgetParser` rewritten to the snapshot-only `books50` shape** — `seq` (integral) as the
+      sequence id at jump 0, event time = inner STRING `ts`, BOTH sides required, `pseq` ignored.
+      Effectively the parser from `git show b1bbf96^`, with a javadoc that says what changed.
+- [x] **REST branch DELETED** (not left as dead code, user decision). `ex5-rest-snapshot.json` and
+      `ex5-update.json` fixtures removed; `BitgetParserTest` rewritten (4 tests) with explicit
+      cases proving `action:"update"`, a half book and the retired REST body are all dropped.
+- [x] **Job 2 unchanged in behaviour** — only comments. The snapshot branch already handled this.
+- [x] **`sequence_jump_tolerance` kept as a no-op** across the schema, `RawOrderBookEvent` and
+      `TypeValidateFunction`; every claim that ex5 uses it was corrected. `TypeValidateFunctionTest`'s
+      `bitget(...)` helper is now `tolerantJump(...)` on synthetic exchange id 99, same assertions.
+- [x] **e2e: 26/27/31 deleted (numbers retired), 25 renamed to `Ex5SnapshotStream`, 28/29/30 rewired,
+      `62-ex5-stale-seq` appended.** Every ex5 scenario asserts an empty control stream.
+- [x] **`sample-raw-data.md` § ex5 rewritten**, with the retired `depth`+REST shape kept at the end
+      of the section as history (it is why ex6/ex8 REST snapshots are null-seq).
+- [x] **292 normalizer tests green; e2e build/vet/gofmt/`go test ./...` clean.** Use
+      `JAVA_HOME=$(/usr/libexec/java_home -v 21)` — the repo's jacoco cannot instrument JDK 25.
+
+- [x] **RUN LIVE 2026-09-07 (PR #1 review) — the whole ex5 block PASSES**: 25, 28, 29, 30, 62 and
+      the new 63, against a freshly provisioned stack (`docker compose down -v` + `up --wait`, all
+      six jobs resubmitted per scenario by `warmup.Run`). 63 was mutation-checked as well, see
+      below. Local `mvn` needs `-Djacoco.skip=true` on this machine — only Temurin 26 is installed
+      and jacoco cannot instrument it either, so the "use JDK 21" note above does not work as
+      written.
+- [ ] **⚠ Still unverified on the dev server**: that `ex5-raw` actually carries `books50` frames
+      with `seq`. The wire shape still rests on one sample plus the user's word.
+- [x] **FIXED IN CODE 2026-09-07 — the no-progress clock.** The lockout below is no longer
+      permanent for ANY feed: job 2 now also measures health on the last ACCEPTED event, so a key
+      that is arriving but accepting nothing for one `staleness_threshold_seconds` asks for a
+      snapshot with the new reason `no_progress`, and the existing `!resyncPending()` hatch lets
+      the next snapshot re-anchor `lastSeq`. This was NOT an ex5 problem — **ex2 and ex4 sequence
+      their snapshots by Centrifugo `pub.offset`, which restarts when the channel history is
+      recreated**, and both were exposed to exactly the same dead end. See
+      [[project_type_validator]]. 294 normalizer tests green; 7 e2e scenarios PASS live including
+      44 and 46, the two control-plane ones most likely to regress.
+- [ ] **⚠ DEPLOY ORDER — resubmit `job-type-validator` alongside `job-pair-extractor`.** Job 2 keeps
+      `lastSeq` in keyed state and this change does not touch its code, so a job-1-only deploy
+      leaves it holding the `depth` channel's MILLISECOND sequence (~1.8e12) while job 1 starts
+      stamping a `books50` `seq` (~7.9e11, about a trillion lower). Every ex5 frame then hits
+      `seq <= lastSeq` in the snapshot branch and is dead-lettered `stale_or_duplicate` — with NO
+      control command, because `askForSnapshot` is reachable only from the update branch and from
+      the silence timer, and a feed whose frames keep ARRIVING is never silent. It does not clear
+      itself as `seq` climbs. Proven live by `63-ex5-seq-carried-over-from-depth`, and
+      mutation-checked: lowering ONLY that carried-over `seq` to 500 turns the run into 4 accepted
+      snapshots and 0 rejects (the run then FAILS `got 4 records, want 1`). No checkpointing is
+      configured, so resubmitting job 2 simply clears the state — the cost is one cold start for
+      ex6/ex7/ex8, which emit `no_baseline` + one `snapshot_request` and re-baseline normally.
+      Detection if it is missed: the staleness exporter alarms on `ex5-p*-type-validated-raw-flink`
+      while `ex5-raw` looks healthy; `ex5-p*-rejected-flink` is deliberately unmonitored.
+      **REVISED — this is now belt-and-braces, not a blocker.** Every Makefile deploy target
+      (`refresh-normalizer`, `run-normalizer-jobs`, `prod-deploy`) runs `cancel-flink-jobs.sh`
+      first, which cancels EVERY running job, and `run-job.sh` cancels nothing — so there is no
+      supported single-job resubmit path that could leave job 2 running with stale state. And
+      since the no-progress fix above, even if one appeared the market would recover on its own
+      after one staleness threshold instead of needing an operator. Keep `63-ex5-…` as the
+      regression test for both.
+- [ ] **Deploy note for the no-progress fix:** it changes `job-type-validator`, so that job must be
+      rebuilt and resubmitted for it to take effect — no schema re-registration needed
+      (`control_command.reason` is a plain string; only its `doc` changed).
+- [ ] **⚠ NiFi must stop polling bitget's REST depth endpoint, if it has not already.** Job 1 has no
+      branch for that shape now and will drop every such body silently (`dropped-no-parser` does not
+      even fire — the parser returns empty). Same for answering an ex5 `snapshot_request` with REST:
+      the only valid ex5 resync is a resubscribe on `books50`.
+- [x] **`seq` monotonicity CONFIRMED on 5 consecutive live frames** (BTCUSDT, 2026-09-07), run
+      through the built parser: strictly increasing, all five accepted by job 2 as forward
+      snapshots. The step is **2816–11122** between frames only **97–351 ms** apart, which settles
+      the design — `seq` is a fast underlying counter these snapshots are SAMPLED from, so jump 0
+      is the only possibility and no jump rule could ever fit. Silent deletes confirmed too (no
+      qty-"0" marker anywhere), so wholesale replacement is mandatory.
+- [x] **CORRECTED from the captures: `pseq` is NOT a predecessor pointer** — it reads 0 on every
+      frame. The first draft of this branch documented it as ex8/okx-style `prevSeqId` chaining.
+      Fixed in the parser javadoc, `sample-raw-data.md`, `BitgetParserTest` and every e2e source.
+      **Never build a chain rule on it.**
+- [ ] **Still worth a longer run:** 5 frames covers ~750 ms of one market. Watch `seq` across a
+      reconnect and across several markets before treating per-market monotonicity as proven.
+- [ ] **Two ex5 capabilities are supported but UNOBSERVED** and marked defensive in the tests: the
+      multi-element `data` fan-out (all 5 frames carry exactly 1 element) and a qty-"0" level (0 in
+      500 captured levels). Drop the tests only with evidence, not on a hunch.
+- [x] **REMOVE `sequence_jump_tolerance` — DONE 2026-09-07** on branch
+      `chore/remove-sequence-jump-tolerance`, cut after the ex5 branch merged. Job 2's contiguity
+      is a plain `seq == last + jump` equality again; zero behaviour change, since every feed
+      stamped 0. 14 files: both `.avsc` + both `_example.json`, `RawOrderBookEvent`, the raw
+      serializer/deserializer (the rejected serializer delegates, so no change),
+      `TypeValidateFunction`, `TypeValidateFunctionTest`, the `isZero()` assertions in the bitget /
+      okx / lbank parser tests, and the `BitgetParser` / `data_ex5.go` comments.
+      **284 normalizer tests green, e2e Go build/vet/gofmt/test clean; 3 mutations bite.**
+      **RUN LIVE 2026-09-07 on the dev server: 58/58 e2e scenarios PASS** (fresh stack, `82f7dd4`).
+      2 failed on a taskmanager restart (`NoResourceAvailableException`, an infra flake — see
+      [[project_e2e_harness]]) and re-ran green. Report kept at
+      `/opt/data-collector/e2e-runs/20260907-174815/FINAL_REPORT.txt`. ⚠ The server tree was 120
+      commits behind `main` beforehand, so the run covered that drift too.
+      ⚠ Two things the estimate got wrong, both recorded in memory: (a) the `tolerantJump` group
+      could NOT just be deleted — `restResyncDoesNotSeedTheWindow` is the 2026-08-23 live
+      resync-loop regression test and was PORTED to ex6 as
+      `restResyncOnAnotherClockDoesNotGapTheNextUpdate`, mutation-checked; (b) re-registering the
+      subjects is NOT required and was deliberately NOT done — code-first is safe because the
+      field had `default: 0`, while registry-first would NPE every running job's deserializer.
+      `sequence_jump` itself STAYS (ex6/ex7/ex8). See the follow-up item below.
+- [ ] **Register the trimmed `raw-order-book-event` + `rejected-order-book-event`** whenever the
+      next real schema change goes out. No longer doc-only: as of 2026-09-07 the committed `.avsc`
+      also DROPS `sequence_jump_tolerance`. Still Avro compatible (removing a field that carried
+      `default: 0` is BACKWARD, the registry's default level) and still not urgent — the
+      serializers read the registry, never the bundled copy, so production runs correctly on the
+      old registered version while the code ignores the field.
+      ⚠ **ORDER MATTERS, and it is the opposite of an ADD.** Deploy all 6 jobs first, register
+      second. Registering while a job still runs old code makes its reader schema lose the field,
+      so `record.get("sequence_jump_tolerance")` returns null and the `(long)` cast NPEs in
+      `RawOrderBookEventDeserializer`. See the last dated § of `memory/project_avro_schema.md`.
+- [ ] **Re-answer the open question above** ("Audit the other delta feeds for the same hole") — ex5
+      is no longer one of the "known good" delta feeds it lists, because it is not a delta feed.
+- [x] **`SCENARIO=` env var to run a single e2e case** (2026-09-08). `cd e2e && SCENARIO=62 go run .
+      -provision-stack=false` runs one scenario by number or full name; an unknown value exits 1
+      rather than running nothing. Closes the "there is still no filter flag" note from the
+      2026-09-07 live run — no more throwaway `cmd/rerun` binary. Verified live: 62 and 44 each
+      passed alone. See [[project_e2e_harness]].
+>>>>>>> 0578b7e961c498e9ac7eeda2269dcc9e33e04c34

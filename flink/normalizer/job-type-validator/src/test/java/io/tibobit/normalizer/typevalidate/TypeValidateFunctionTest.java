@@ -90,25 +90,11 @@ class TypeValidateFunctionTest {
 
     /**
      * Delta-feed message (snapshot or update) with a nonzero jump. Usually a per-exchange
-     * constant (ex6=1, ex5=650), but ex7 and ex8 stamp it PER MESSAGE — see
+     * constant (ex6=1), but ex7 and ex8 stamp it PER MESSAGE — see
      * {@link #dynamicJumpChainsEachMessageToItsNamedPredecessor()}.
      */
     private static RawOrderBookEvent delta(int ex, int pair, String type, long seq, long jump) {
         return new RawOrderBookEvent(ex, pair, type, seq, jump, seq, List.of(), List.of());
-    }
-
-    /**
-     * ex5/bitget WS message: the sequence is a millisecond CLOCK on a VARIABLE
-     * cadence, so the event carries a wide jump tolerance and job 2 checks a
-     * window instead of an equality. The 650 ± 110 band is fitted to the live
-     * feed (see BitgetParser); ex5's REST snapshot is null-seq and uses
-     * {@link #nullSeqSnapshot} instead.
-     */
-    private static RawOrderBookEvent bitget(int pair, String type, long ts) {
-        RawOrderBookEvent event
-                = new RawOrderBookEvent(5, pair, type, ts, 650L, ts, List.of(), List.of());
-        event.setSequenceJumpTolerance(110L);
-        return event;
     }
 
     private void send(RawOrderBookEvent e) throws Exception {
@@ -274,100 +260,45 @@ class TypeValidateFunctionTest {
                         TypeValidateFunction.STALE_OR_DUPLICATE);
     }
 
-    @Test
-    @DisplayName("tolerant jump (ex5): both edges of the last+jump±tolerance window are contiguous")
-    void toleranceWindowEdgesAccepted() throws Exception {
-        long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 540)); // low edge  -> ok
-        send(bitget(1, "update", t0 + 540 + 760)); // high edge -> ok
-        send(bitget(1, "update", t0 + 540 + 760 + 650)); // dead centre -> ok
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0, t0 + 540, t0 + 1300, t0 + 1950);
-        assertThat(rejects()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("tolerant jump (ex5): one millisecond outside the window is still a gap")
-    void toleranceWindowIsNotUnbounded() throws Exception {
-        long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 761)); // 1 ms past the high edge -> gap
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0);
-        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
-                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
-    }
-
     /**
      * The live resync loop, reproduced and shown fixed (dev server,
-     * 2026-08-23). ex5's WS feed sends NO snapshots — the REST endpoint is its
-     * only baseline — and the REST {@code ts} runs on a different clock, BEHIND
-     * the last WS update 57% of the time. When that body was sequenced by its
-     * own {@code ts} it seeded the update window from the wrong clock, so the
-     * next update gapped ~90% of the time: accept → gap → empty the book →
-     * request another snapshot → repeat, 22 times a minute. Null-seq breaks the
-     * cycle by never comparing the two clocks: the REST body is ordered by
-     * event time, and the next update re-anchors the baseline.
+     * 2026-08-23, on ex5 as it then was). A delta feed whose only baseline is a
+     * REST snapshot on a DIFFERENT clock — behind the last update 57% of the
+     * time — gapped ~90% of its resyncs when that body was sequenced by its own
+     * {@code ts}: accept → gap → empty the book → request another snapshot →
+     * repeat, 22 times a minute. Null-seq breaks the cycle by never comparing
+     * the two clocks: the REST body is ordered by event time, and the next
+     * update re-anchors the baseline.
+     *
+     * <p>ex5 no longer has that shape (snapshot-only since 2026-09-07), so this
+     * is pinned on ex6/bybit, which still does — as does ex8/okx. It is the
+     * regression test for the PATTERN, not for the exchange, and it is the only
+     * one that starts from a cold update rather than from the snapshot: the
+     * REST answer arrives with an event time BEHIND the update that provoked
+     * it, and the ask must still fire exactly once.
      */
     @Test
-    @DisplayName("ex5 resync: a REST snapshot on the other clock no longer gaps the next update")
-    void bitgetRestResyncDoesNotSeedTheWindow() throws Exception {
-        long t0 = 1787404282000L;
-        send(bitget(1, "update", t0)); // cold start -> no_baseline, asks for a snapshot
-        send(nullSeqSnapshot(5, 1, t0 - 40)); // the REST answer, ts BEHIND the update it follows
-        send(bitget(1, "update", t0 + 600)); // baselinePending adopts this unconditionally
-        send(bitget(1, "update", t0 + 1200)); // +600 -> inside the window
-        send(bitget(1, "update", t0 + 1950)); // +750 -> the live cluster the old window rejected
+    @DisplayName("resync: a REST snapshot on the other clock no longer gaps the next update")
+    void restResyncOnAnotherClockDoesNotGapTheNextUpdate() throws Exception {
+        send(delta(6, 1, "update", 500L, 1L)); // cold start -> no_baseline, asks for a snapshot
+        send(nullSeqSnapshot(6, 1, 499L)); // the REST answer, event time BEHIND the update it follows
+        send(delta(6, 1, "update", 600L, 1L)); // baselinePending adopts this unconditionally
+        send(delta(6, 1, "update", 601L, 1L)); // contiguous from the adopted baseline
+        send(delta(6, 1, "update", 602L, 1L)); // and again -- no gap cascade
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(null, t0 + 600, t0 + 1200, t0 + 1950);
+                .containsExactly(null, 600L, 601L, 602L);
         assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
                 .containsExactly(TypeValidateFunction.NO_BASELINE);
         assertThat(controlCommands()).hasSize(1); // ONE ask, not one per snapshot
     }
 
-    /**
-     * The band is widened, not removed: a genuinely missed tick is ~2x the
-     * cadence and still lands outside [540, 760]. Without this the widening
-     * would have quietly disabled ex5 gap detection.
-     */
     @Test
-    @DisplayName("tolerant jump (ex5): a missed tick (~1200 ms) is still a gap")
-    void bitgetStillDetectsAMissedTick() throws Exception {
-        long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 750)); // the upper live cluster -> accepted
-        send(bitget(1, "update", t0 + 750 + 1200)); // one tick lost -> gap
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0, t0 + 750);
-        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
-                .containsExactly(TypeValidateFunction.SEQUENCE_GAP);
-    }
-
-    @Test
-    @DisplayName("tolerant jump (ex5): a backwards ts is stale_or_duplicate, not a gap")
-    void toleranceWindowStillRejectsStale() throws Exception {
-        long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 600)); // ok
-        send(bitget(1, "update", t0 + 600)); // duplicate ts
-        send(bitget(1, "update", t0 + 100)); // older
-
-        assertThat(rejects()).extracting(RejectedOrderBookEvent::getRejectReason)
-                .containsExactly(TypeValidateFunction.STALE_OR_DUPLICATE,
-                        TypeValidateFunction.STALE_OR_DUPLICATE);
-    }
-
-    @Test
-    @DisplayName("tolerance 0 (every other exchange) keeps the exact seq == last + jump check")
-    void zeroToleranceIsTheExactCheck() throws Exception {
+    @DisplayName("delta feed: contiguity is an EQUALITY -- +2 on a jump-1 feed is a gap, not a near miss")
+    void exactJumpCheckRejectsAnOvershoot() throws Exception {
         send(delta(6, 1, "snapshot", 10L, 1L));
         send(delta(6, 1, "update", 11L, 1L)); // exact -> ok
-        send(delta(6, 1, "update", 13L, 1L)); // +2 with tolerance 0 -> gap, not accepted
+        send(delta(6, 1, "update", 13L, 1L)); // +2 -> gap, not accepted
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(10L, 11L);
@@ -409,22 +340,6 @@ class TypeValidateFunctionTest {
 
         assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
                 .containsExactly(1000L, 1300L, 1307L, 1607L);
-        assertThat(rejects()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("snapshot after updates (ex5): a resync ts off the 600 ms grid re-anchors the window")
-    void bitgetResyncSnapshotIsNotWindowChecked() throws Exception {
-        // Shape of ex5's REST depth resync, which carries the same jump/tolerance as the WS
-        // snapshot (see BitgetParser) and arrives whenever the collector answered, not on a tick.
-        long t0 = 1787404282000L;
-        send(bitget(1, "snapshot", t0));
-        send(bitget(1, "update", t0 + 650));
-        send(bitget(1, "snapshot", t0 + 1500)); // 190 ms past the window end -> still accepted
-        send(bitget(1, "update", t0 + 2150)); // 650 after the SNAPSHOT, not after t0 + 650
-
-        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
-                .containsExactly(t0, t0 + 650, t0 + 1500, t0 + 2150);
         assertThat(rejects()).isEmpty();
     }
 
@@ -1186,9 +1101,22 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.STALE);
     }
 
+    /**
+     * Given a key whose only recent traffic was REJECTED, When the threshold passes, Then it
+     * is not called {@code stale} — the arrival clock did its job — but it IS called
+     * {@code no_progress}, because nothing has been accepted for a whole threshold.
+     *
+     * <p>REVISED 2026-09-07: this test used to assert NO command at all, on the rationale
+     * that "a key rejecting everything is already re-asking on the rejection path". That
+     * rationale only covers the UPDATE branch, where the three asking rejects live. The
+     * event rejected here is a stale SNAPSHOT, which asks for nothing, so the key was
+     * refusing every frame while telling nobody — see {@link TypeValidateFunction#NO_PROGRESS}.
+     * The reason assertion is the point: {@code no_progress} rather than {@code stale} proves
+     * the arrival clock still counted the rejected frame as the feed being alive.
+     */
     @Test
-    @DisplayName("staleness: a REJECTED event still counts as arriving - the feed is alive")
-    void rejectedEventsCountAsArrival() throws Exception {
+    @DisplayName("staleness: a rejected event counts as ARRIVING, but not as PROGRESS")
+    void rejectedEventsCountAsArrivalButNotAsProgress() throws Exception {
         withRetryInterval(600_000L, EX8);
         send(delta(8, 1, "snapshot", 1000L, 300L));
         harness.setProcessingTime(50_000L);
@@ -1197,10 +1125,74 @@ class TypeValidateFunctionTest {
         harness.setProcessingTime(100_000L);
 
         assertThat(rejects()).hasSize(1);
-        // Silence means nothing ARRIVED. A key rejecting everything is alive and is
-        // already re-asking on the rejection path; calling it stale too would be one
-        // fault asking twice.
-        assertThat(controlCommands()).isEmpty();
+        assertThat(controlCommands()).hasSize(1);
+        // Not STALE: it spoke 50s ago and the threshold is 60s.
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.NO_PROGRESS);
+    }
+
+    /**
+     * Given a SNAPSHOT-ONLY feed whose sequence counter re-based below the last accepted one
+     * (ex2/ex4 Centrifugo {@code pub.offset} recreated, ex5 {@code seq} on a reconnect, or a
+     * job-1 change to what the sequence MEANS), When a whole threshold passes with frames
+     * arriving and none accepted, Then job 2 asks for a snapshot and the NEXT frame is
+     * accepted whatever its sequence id, re-anchoring {@code lastSeq} on the new base.
+     *
+     * <p>Before 2026-09-07 this key stayed dead-lettered until an operator restarted the job:
+     * a snapshot-only feed reaches none of the three asking rejects (all in the update
+     * branch), and the silence timer never fires while frames keep arriving. The recovery
+     * itself is not new — it is the {@code !resyncPending()} escape hatch the resync path has
+     * always had. All that was missing was a way in.
+     */
+    @Test
+    @DisplayName("no-progress: a re-based sequence counter asks, then re-anchors on the next frame")
+    void rebasedSequenceCounterRecovers() throws Exception {
+        withRetryInterval(600_000L, new WatchedMarket(5, 1, 60));
+        send(snapshotFeed(5, 1, 1_800_000_000_000L)); // the pre-rebase counter
+        harness.setProcessingTime(10_000L);
+        send(snapshotFeed(5, 1, 787_944_892_031L)); // re-based: a trillion lower
+        assertThat(rejects()).hasSize(1);
+        assertThat(controlCommands()).isEmpty(); // still inside the threshold
+
+        harness.setProcessingTime(61_000L);
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.NO_PROGRESS);
+
+        // The way back in: the next frame is accepted despite still being below lastSeq,
+        // and the one after it chains forward from the NEW base.
+        send(snapshotFeed(5, 1, 787_944_903_153L));
+        send(snapshotFeed(5, 1, 787_944_916_487L));
+        assertThat(validBusiness()).hasSize(3);
+        assertThat(rejects()).hasSize(1); // no new dead letters
+        assertThat(controlCommands()).hasSize(1); // and it did not ask twice
+    }
+
+    /**
+     * Given a delta feed already holding updates as {@code awaiting_snapshot}, When the
+     * threshold passes, Then the no-progress clock stays quiet: the key is refusing
+     * everything for a cause it has already reported and is already retrying on, and one
+     * fault must not ask twice. That gate is also what keeps the timer's deadline in the
+     * FUTURE — a key resync-pending for hours has a progress clock hours stale, and arming a
+     * timer on it would fire instantly and spin.
+     */
+    @Test
+    @DisplayName("no-progress: a key already awaiting a snapshot is not diagnosed again")
+    void awaitingSnapshotIsNotReDiagnosed() throws Exception {
+        withRetryInterval(600_000L, EX8);
+        send(delta(8, 1, "snapshot", 1000L, 300L));
+        harness.setProcessingTime(10_000L);
+        send(from(delta(8, 1, "update", 99000L, 300L), "job1-gap")); // GAP — opens the episode
+        assertThat(controlCommands()).hasSize(1);
+
+        // The feed keeps talking and every frame is held. Well past the 60s threshold
+        // measured from the last ACCEPTED event, which was at t=0.
+        harness.setProcessingTime(50_000L);
+        send(from(delta(8, 1, "update", 99300L, 300L), "job1-held-1"));
+        harness.setProcessingTime(100_000L);
+        send(from(delta(8, 1, "update", 99600L, 300L), "job1-held-2"));
+        harness.setProcessingTime(150_000L);
+
+        assertThat(controlCommands()).hasSize(1);
+        assertThat(controlCommands().get(0).getReason()).isEqualTo(TypeValidateFunction.SEQUENCE_GAP);
     }
 
     @Test

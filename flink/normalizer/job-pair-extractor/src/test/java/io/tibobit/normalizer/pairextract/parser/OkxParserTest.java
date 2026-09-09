@@ -37,7 +37,6 @@ class OkxParserTest {
         assertThat(event.getType()).isEqualTo("snapshot");
         assertThat(event.getSequenceId()).isEqualTo(4429784547L);
         assertThat(event.getSequenceJump()).isZero();
-        assertThat(event.getSequenceJumpTolerance()).isZero();
         assertThat(event.getEventTime()).isEqualTo(1788613464301L); // data.ts, not the seq
         assertThat(event.getAsks()).hasSize(3);
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("1012.6");
@@ -58,7 +57,6 @@ class OkxParserTest {
         assertThat(event.getType()).isEqualTo("update");
         assertThat(event.getSequenceId()).isEqualTo(4429784551L);
         assertThat(event.getSequenceJump()).isEqualTo(4L); // seqId - prevSeqId
-        assertThat(event.getSequenceJumpTolerance()).isZero();
         assertThat(event.getEventTime()).isEqualTo(1788613464401L);
         assertThat(event.getAsks()).hasSize(2);
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("1013.67");
@@ -174,7 +172,6 @@ class OkxParserTest {
         assertThat(event.getType()).isEqualTo("snapshot");
         assertThat(event.getSequenceId()).isNull();
         assertThat(event.getSequenceJump()).isZero();
-        assertThat(event.getSequenceJumpTolerance()).isZero();
         assertThat(event.getEventTime()).isEqualTo(1788605352151L); // data.ts
         assertThat(event.getAsks()).hasSize(3);
         assertThat(event.getAsks().get(0).getPrice()).isEqualTo("1011.99");

@@ -85,6 +85,16 @@ module proxy; run `go mod vendor` after changing dependencies.
   `update`s as records arrive. Both dropdowns are filled from a `catalog` message (every market
   and exchange in postgres, re-sent only when it changes) — with server-side filtering the
   client can no longer infer the lists from the data it receives.
+- **A recreated Kafka topic is purged and re-discovered, not stalled on.** franz-go pins a
+  topic's ID when it first creates the cursor and never adopts a new one, so a topic that is
+  deleted and recreated returns `UNKNOWN_TOPIC_ID` forever. It has an escape hatch — purge a
+  topic that has been *absent* from metadata for 15s — but that only fires while the client can
+  still see metadata. If the broker is away for the whole delete/recreate window (a crash that
+  loses its data, then `warmup.sh` recreating the topics), the client never sees the gap and that
+  pair or exchange silently vanishes from the UI until the container is restarted. So the
+  consumer calls `PurgeTopicsFromClient` itself on that error, rate-limited to once a minute per
+  topic; the regex then re-discovers the topic with its current ID, and the `first record from
+  {topic}` line is the confirmation it recovered.
 - **Websocket writes never happen under the hub's lock.** Each client has its own writer
   goroutine and a small outbound queue that *coalesces* — every message carries a complete book
   or a complete catalog, so a newer one replaces the older one for the same slot instead of

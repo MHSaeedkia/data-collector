@@ -57,7 +57,6 @@ class LBankParserTest {
 
         assertThat(event.getSequenceId()).isNull();
         assertThat(event.getSequenceJump()).isZero();
-        assertThat(event.getSequenceJumpTolerance()).isZero();
     }
 
     /**

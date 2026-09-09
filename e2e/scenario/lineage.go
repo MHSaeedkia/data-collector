@@ -65,7 +65,7 @@ func newUUID() string {
 // array envelope.
 //
 // The payload is edited textually rather than being unmarshalled and
-// re-marshalled: ex3 and ex5 carry prices as JSON NUMBERS, and a round trip
+// re-marshalled: ex3 and ex4 carry prices as JSON NUMBERS, and a round trip
 // through float64 would silently reformat them (see
 // memory/project_bigdecimal_rules.md). Object roots get a field spliced in after
 // the opening brace; array roots are split into raw elements so the levels array
