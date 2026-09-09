@@ -571,6 +571,20 @@ Parsing notes (job 1):
   capture a real qty-"0" delta frame to confirm.
 - **Two timestamps**, both JSON numbers: `ts` (outer, likely gateway send time) and `cts`
   (earlier — likely matching-engine time). Metadata.
+- **`u == 1` is a SERVICE RESTART, handled 2026-09-08.** Bybit: *"Occasionally, you'll receive
+  `"u"=1`, which is a snapshot data due to the restart of the service. So please overwrite your
+  local orderbook."* The counter restarted, so job 1 stamps that frame **null-seq / jump 0** and
+  it re-anchors through job 2's `baselinePending` bootstrap — the same route the REST body takes.
+  It KEEPS its levels and its `snapshot` type, because it is a full book and the instruction is
+  to overwrite: emitting an empty `reset` instead would clear the book and leave only the
+  following deltas, which carry just the changed levels, to refill it. **No control command is
+  emitted** — the exchange has already sent the snapshot a resync would have asked for.
+  Pinned by `BybitParserTest.serviceRestartSnapshotIsNullSeq`,
+  `TypeValidateFunctionTest.serviceRestartReAnchorsWithoutAskingForAnything` and e2e
+  `64-ex6-service-restart`. ⚠ Guarded on `type == "snapshot"` as well as the value: a *delta*
+  claiming `u == 1` is undocumented and is sequenced normally.
+- **⚠ Never subscribe ex6 at depth 1.** Bybit's level-1 feed is snapshot-only and re-pushes every
+  3 s with **the same `u`**, which job 2 orders as `stale_or_duplicate` on every quiet repeat.
 - **Still to capture**: a qty-"0" delete delta frame.
 
 **Re-confirmed 2026-08-24** against a fresh WS snapshot + delta pair (`u` 210920912 → 210920913,

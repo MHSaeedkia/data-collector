@@ -366,6 +366,27 @@ public class TypeValidateFunction
                 return;
             }
             baselinePending.update(true);
+            // The running counter has just been declared non-comparable, so DROP it. Without
+            // this, `lastSeq` keeps its pre-resync value and only the update branch below can
+            // consume `baselinePending` — so a SNAPSHOT arriving before the next update gets
+            // ordered against a counter we have already disowned and is dead-lettered
+            // `stale_or_duplicate`. Clearing it makes the snapshot branch see `last == null` and
+            // accept, which is what "this stream is re-anchoring" already means everywhere else
+            // in this function.
+            //
+            // It bites precisely when the counter moves BACKWARDS across the re-anchor, which is
+            // ex6's u==1 service restart: its own snapshot re-anchors here, and a second snapshot
+            // on the restarted counter would then be refused. A plain REST resync does NOT reach
+            // it — the WS counter keeps climbing there, so the next WS snapshot outranks the old
+            // `lastSeq` and would have been accepted anyway.
+            //
+            // Silent, like the rest of this branch: no askForSnapshot on any path out of here,
+            // and resyncTrusted() below CLEARS an outstanding request rather than adding one.
+            // Clearing `lastSeq` costs nothing in reject reasons either: `resyncReason()` can
+            // only be consulted from the three asking branches, and between here and the next
+            // adopted baseline none of them is reachable — `baselinePending` short-circuits the
+            // update branch, and the gap branch needs a non-null `lastSeq`.
+            lastSeq.clear();
             resyncTrusted(); // this resync answers any outstanding request
             emit(event, out, arrivedAt);
             return;

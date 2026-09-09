@@ -142,4 +142,30 @@ var Scenarios = []struct {
 	// the new channel is then dead-lettered stale_or_duplicate with no control command and no way
 	// back. Resubmit job-type-validator alongside job-pair-extractor. See data_ex5.go.
 	{"63-ex5-seq-carried-over-from-depth", Ex5SeqCarriedOverFromDepth},
+
+	// Bybit's documented service restart (added 2026-09-08). `u` drops to 1 mid-stream on a
+	// full snapshot; job 1 stamps it null-seq so it re-anchors through baselinePending instead
+	// of being ordered against a counter in the hundreds of millions. Appended as 64 rather
+	// than slotted into 32-37, for the same reason 48, 49, 60, 61 and 62 were. The assertion
+	// that matters is that BOTH the reject and the control streams stay empty: a restart is the
+	// one discontinuity that needs no snapshot_request, because the exchange already sent the
+	// snapshot. See data_ex6.go.
+	{"64-ex6-service-restart", Ex6ServiceRestart},
+
+	// The rest of the ex6 restart surface (added 2026-09-08). 64 covers restart -> delta, the
+	// common case; these four cover every other branch the change touches.
+	//   65 restart -> SNAPSHOT, the path `baselinePending` does not reach and that job 2's
+	//      `lastSeq.clear()` fixes. The only shape where the counter moves backwards across a
+	//      re-anchor, which is what makes the bug reachable at all.
+	//   66 restart arriving while a resync is already PENDING — one control command in total,
+	//      because the restart answers the outstanding request instead of adding to it. This
+	//      is the direct e2e for the "an exchange reset must be silent" requirement.
+	//   67 a DELTA claiming u == 1 is NOT a restart — pins the type half of the parser guard.
+	//   68 a restart whose cts is behind the last accepted event is dropped `out_of_order`.
+	//      Current behaviour, asserted so it is visible; see the header on data_ex6.go.
+	// See data_ex6.go.
+	{"65-ex6-restart-then-snapshot", Ex6RestartThenSnapshot},
+	{"66-ex6-restart-answers-pending-resync", Ex6RestartAnswersPendingResync},
+	{"67-ex6-u1-delta-is-not-a-restart", Ex6UOneOnADeltaIsNotARestart},
+	{"68-ex6-restart-out-of-order", Ex6RestartOutOfOrder},
 }

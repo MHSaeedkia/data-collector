@@ -293,6 +293,55 @@ class TypeValidateFunctionTest {
         assertThat(controlCommands()).hasSize(1); // ONE ask, not one per snapshot
     }
 
+    /**
+     * ex6/bybit's documented SERVICE RESTART: the exchange re-sends a full snapshot with
+     * {@code u == 1}. Job 1 stamps it null-seq (see {@code BybitParser}), so it lands in the
+     * null-seq branch here and re-anchors the stream mid-flight — while the running counter
+     * sits in the hundreds of millions.
+     *
+     * <p>The load-bearing assertion is the LAST one: the control stream must be <b>empty</b>.
+     * A restart is the one discontinuity that needs no command, because the exchange has
+     * already sent the snapshot a resync would have asked for. Asking anyway would put a
+     * request on the control plane for every bybit restart across every subscribed market, and
+     * the collector would answer each one with a REST call it did not need to make.
+     */
+    @Test
+    @DisplayName("ex6 restart: a null-seq snapshot re-anchors a live counter SILENTLY")
+    void serviceRestartReAnchorsWithoutAskingForAnything() throws Exception {
+        send(delta(6, 1, "snapshot", 250644436L, 1L)); // normal baseline, counter is huge
+        send(delta(6, 1, "update", 250644437L, 1L));
+        send(nullSeqSnapshot(6, 1, 250644438L)); // u==1 restart, arrives null-seq
+        send(delta(6, 1, "update", 2L, 1L)); // the restarted counter -- baselinePending adopts it
+        send(delta(6, 1, "update", 3L, 1L)); // contiguous from there
+        send(delta(6, 1, "update", 4L, 1L));
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(250644436L, 250644437L, null, 2L, 3L, 4L);
+        assertThat(rejects()).isEmpty();
+        assertThat(controlCommands()).isEmpty();
+    }
+
+    /**
+     * The same restart, but the next frame is a SNAPSHOT rather than an update — bybit
+     * re-subscribing, say. {@code baselinePending} is consumed only by the update branch, so
+     * before {@code lastSeq.clear()} this snapshot was ordered against the disowned pre-restart
+     * counter and dead-lettered {@code stale_or_duplicate}, taking the whole market down with
+     * it. Mutation check: drop the {@code lastSeq.clear()} and the second assertion fails.
+     */
+    @Test
+    @DisplayName("ex6 restart: a SNAPSHOT after the re-anchor is not ordered against the old counter")
+    void snapshotAfterReAnchorIsNotStaleAgainstTheDisownedCounter() throws Exception {
+        send(delta(6, 1, "snapshot", 250644436L, 1L));
+        send(nullSeqSnapshot(6, 1, 250644437L)); // re-anchor: the old counter is disowned
+        send(delta(6, 1, "snapshot", 5L, 1L)); // a fresh snapshot on the RESTARTED counter
+        send(delta(6, 1, "update", 6L, 1L));
+
+        assertThat(validBusiness()).extracting(RawOrderBookEvent::getSequenceId)
+                .containsExactly(250644436L, null, 5L, 6L);
+        assertThat(rejects()).isEmpty();
+        assertThat(controlCommands()).isEmpty();
+    }
+
     @Test
     @DisplayName("delta feed: contiguity is an EQUALITY -- +2 on a jump-1 feed is a gap, not a near miss")
     void exactJumpCheckRejectsAnOvershoot() throws Exception {

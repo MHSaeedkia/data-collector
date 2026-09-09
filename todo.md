@@ -1154,3 +1154,47 @@ the dated § in `memory/project_pair_extractor.md`.
       rather than running nothing. Closes the "there is still no filter flag" note from the
       2026-09-07 live run — no more throwaway `cmd/rerun` binary. Verified live: 62 and 44 each
       passed alone. See [[project_e2e_harness]].
+- [ ] **ex6/bybit `sequence_gap` storm — find where the disorder is introduced (NOT job 2)**
+      (opened 2026-09-08). Bybit's `u` was measured direct off `wss://stream.bybit.com/v5/public/spot`:
+      **+1 on 9213/9213 consecutive transitions**, 20 symbols multiplexed on one connection, 60 s,
+      snapshot → first delta included; `cts` on 100% of 9233 frames. So `sequence_jump = 1` and job
+      2's gap rule are both correct and the loss/reordering is between the socket and job 2.
+      **Step 1 — measure, do not guess.** Consume `ex6-raw`, group by `data.s`, and compare
+      `max(u) - min(u) + 1` against `len(set(u))`:
+        - set complete + backwards steps ⇒ **REORDERING** → `PublishKafka` Concurrent Tasks must be
+          1, add `FirstInFirstOutPrioritizer` to every queue on the path, check
+          `max.in.flight.requests.per.connection`. ⚠ this trades throughput for order, the exact
+          axis the 2026-08-31 hot-path work optimised the other way — needs a decision.
+        - real holes ⇒ **LOSS** → backpressure / queue capacity on the ex6 group.
+      While there, count distinct `topic` values per `data.s`: >1 means two depth topics (or spot +
+      linear) are folded onto one key, which gaps forever by construction.
+- [x] **Bybit `u == 1` service restart — DONE 2026-09-08.** Resolved not by relaxing the "a
+      snapshot is ORDERED" invariant but by taking the frame OUT of the sequenced path: job 1
+      stamps it null-seq/jump 0, so it re-anchors through `baselinePending` exactly as the REST
+      body does, and the invariant is untouched. It KEEPS its levels and `snapshot` type — the
+      empty-`reset` payload that was proposed would clear the book and leave only the following
+      deltas (changed levels only) to refill it. Forced a pre-existing job-2 fix: the null-seq
+      branch now clears `lastSeq`, because `baselinePending` is consumed only by the update branch
+      and a snapshot arriving first was ordered against the disowned counter. Control plane stays
+      silent on the path and that is asserted. 208 Java tests green, mutation-checked. e2e
+      `64-ex6-service-restart` added. See [[project_pair_extractor]] / [[project_type_validator]].
+- [x] **Run e2e `64-ex6-service-restart` live — DONE 2026-09-08.** PASS in ~40 s on the laptop
+      stack, and mutation-checked: stubbing the `serviceRestart` branch to `false` fails it with
+      2 snapshots instead of 5 and the book frozen at the pre-restart state, so it bites. Also
+      swept the other null-seq feeds for regressions from job 2's exchange-agnostic
+      `lastSeq.clear()` — 48, 61, 49 and 55 all PASS.
+- [x] **Full e2e coverage for the ex6 restart — DONE 2026-09-08.** Scenarios 65-68 added on top of
+      64, ALL RUN LIVE and each MUTATION-CHECKED individually: 65 restart -> SNAPSHOT (the
+      `lastSeq.clear()` path, was unit-only), 66 restart while a resync is PENDING, 67 a delta
+      claiming u==1 is not a restart, 68 a restart with a stale `cts`. Regression sweep 48/61/49/55
+      green. No production code changed for any of them. Two claims from earlier in the day were
+      disproved while writing these and are corrected in code comments and memory: the
+      `lastSeq.clear()` hole is NOT reachable on a plain REST resync, and the `no_baseline` vs
+      `sequence_gap` "cost" is unreachable. See [[project_pair_extractor]].
+- [ ] **Decide whether a bybit restart should be exempt from the out-of-order guard** (opened
+      2026-09-08, pinned as current behaviour by e2e `68-ex6-restart-out-of-order`). Going
+      null-seq opts the restart into job 2's event-time ordering, so a restart whose `cts` is
+      behind the last accepted event is dead-lettered `out_of_order` — silently, since that reason
+      does not ask, leaving recovery to the no-progress timer. The guard is load-bearing for
+      replayed REST snapshots and cannot tell those apart from a matching engine that came back
+      with a stale clock. Unobserved so far; 68 is the scenario to invert if the call is made.

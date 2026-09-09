@@ -31,9 +31,11 @@ import java.util.List;
  * <p><b>The REST snapshot is null-seq, jump 0 — its {@code result.u} is NOT on the WS counter.</b>
  * Measured across the 2026-08-24 captures: the REST body is 24.3 hours LATER than the WS pair yet
  * its {@code u} is 171,928,550 LOWER (38992362 vs 210920912). A monotonic counter cannot go
- * backwards, so the two are separate counters — most likely because the REST endpoint's
- * {@code updateId} is scoped per request depth rather than to the {@code orderbook.50} topic
- * (the reason is unconfirmed; the incomparability is not). Sequencing the REST body by its own
+ * backwards, so the two are separate counters. <b>The reason is documented</b>, not merely
+ * inferred: bybit's own REST reference says {@code result.u} "corresponds to {@code u} in the
+ * <b>1000-level</b> WebSocket orderbook stream" (for spot and for contract alike), while this
+ * feed subscribes to {@code orderbook.50}. Each depth topic carries its OWN {@code u}, so the
+ * REST body's counter belongs to a stream we do not consume. Sequencing the REST body by its own
  * {@code u} would make the next WS delta read as a ~172M jump: instant false {@code sequence_gap}
  * → book emptied → snapshot requested → repeat. That is the live resync loop ex5 was burned by
  * (see {@link BitgetParser}), so ex6 takes the {@code baselinePending} bootstrap instead — job 2
@@ -47,8 +49,34 @@ import java.util.List;
  * reads, so both ex6 streams are on one event-time clock. The sibling {@code result.ts} (gateway)
  * and the top-level {@code time} (API round trip) are metadata.
  *
+ * <p><b>{@code data.u == 1} is a SERVICE RESTART, and it is null-seq too.</b> Bybit documents it
+ * outright: "Occasionally, you'll receive {@code "u"=1}, which is a snapshot data due to the
+ * restart of the service. So please overwrite your local orderbook." The counter restarted, so
+ * the frame's {@code u} is not comparable to the running one — sequencing it would make job 2
+ * order 1 against a {@code lastSeq} in the hundreds of millions and dead-letter it
+ * {@code stale_or_duplicate}, taking every following delta with it (u=2, 3, … are all
+ * {@code <= lastSeq}) until the no-progress timer notices. So it takes the SAME null-seq route
+ * the REST body takes: job 2's {@code baselinePending} bootstrap lets the next delta adopt its
+ * own {@code u} as the fresh baseline.
+ *
+ * <p><b>The levels are kept.</b> This frame is a full 50-level book and the exchange's
+ * instruction is to OVERWRITE with it, so it stays {@code type: "snapshot"} — job 5 replaces both
+ * sides wholesale. Emitting it as an empty {@code reset} instead would clear the book and leave
+ * only subsequent deltas, which carry just the changed levels, to refill it: a partial book for
+ * as long as the quiet levels take to churn. Null-seq buys the re-anchoring; it costs no data.
+ *
+ * <p><b>No control command is emitted on this path</b>, deliberately — the exchange has already
+ * sent the snapshot a resync would have asked for. Job 2's null-seq branch calls no
+ * {@code askForSnapshot}, and its {@code resyncTrusted()} clears an outstanding request, so a
+ * restart lands silently on the control plane instead of adding to it.
+ *
  * <p><b>Levels are string pairs on BOTH streams</b> — no JSON-number hazard anywhere on ex6,
  * unlike ex4, whose levels are numeric literals.
+ *
+ * <p><b>Never subscribe ex6 at depth 1.</b> Bybit's level-1 feed is snapshot-only and re-pushes
+ * every 3 s with <i>the same</i> {@code u}, which job 2 orders as {@code stale_or_duplicate} on
+ * every quiet repeat. The {@code orderbook.50} topic this parser is written against has no such
+ * behaviour.
  */
 public class BybitParser implements RawExchangeParser {
 
@@ -108,8 +136,14 @@ public class BybitParser implements RawExchangeParser {
                 || (!data.has("a") && !data.has("b"))) {
             return List.of();
         }
+        // The service-restart snapshot (see the class javadoc): its counter restarted, so it is
+        // stamped null-seq and re-anchors through job 2's baselinePending bootstrap. Guarded on
+        // the type as well as the value because bybit documents u==1 as snapshot data only; a
+        // delta claiming u==1 is undocumented and is left to the ordinary rules.
+        boolean serviceRestart = "snapshot".equals(type) && data.get("u").asLong() == 1L;
         RawOrderBookEvent event = new RawOrderBookEvent(0, 0, type,
-                data.get("u").asLong(), 1L,
+                serviceRestart ? null : data.get("u").asLong(),
+                serviceRestart ? 0L : 1L,
                 root.get("cts").asLong(),
                 data.has("a") ? Levels.fromStringPairs(data.get("a")) : null,
                 data.has("b") ? Levels.fromStringPairs(data.get("b")) : null);
