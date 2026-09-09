@@ -6,6 +6,7 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sort"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -21,6 +23,11 @@ import (
 // looks identical to a quiet market in any snapshot of state, and telling
 // those two apart by hand is what made the last outage expensive.
 const statsPeriod = 30 * time.Second
+
+// purgeCooldown is the minimum gap between two purges of the same topic.
+// UNKNOWN_TOPIC_ID repeats on every poll, so without a cooldown one
+// recreated topic would fire a purge several times a second.
+const purgeCooldown = time.Minute
 
 const (
 	// Aggregated output topics: p{pair_id}-{side} (e.g. p2-asks), plus the
@@ -49,6 +56,9 @@ type Consumer struct {
 	bytes     int64
 	perTopic  map[string]int64
 	lastCount int64
+	// purged is when each topic was last purged, so a repeating error
+	// does not purge on every poll.
+	purged map[string]time.Time
 }
 
 // NewAggregatedConsumer reads the aggregator's and the merger's output
@@ -95,7 +105,13 @@ func newConsumer(broker, group, pattern string, offset kgo.Offset) (*Consumer, e
 		return nil, err
 	}
 	log.Printf("kafka[%s]: consuming %s from the LATEST offset, group %s", group, pattern, name)
-	return &Consumer{client: cl, name: group, group: name, perTopic: map[string]int64{}}, nil
+	return &Consumer{
+		client:   cl,
+		name:     group,
+		group:    name,
+		perTopic: map[string]int64{},
+		purged:   map[string]time.Time{},
+	}, nil
 }
 
 // Run polls until ctx is cancelled, calling onRecord for each fetched
@@ -109,14 +125,79 @@ func (c *Consumer) Run(ctx context.Context, onRecord func(topic string, value []
 			log.Printf("kafka[%s]: consumer stopped: %v", c.name, ctx.Err())
 			return
 		}
-		fetches.EachError(func(t string, p int32, err error) {
-			log.Printf("kafka[%s]: fetch error %s[%d]: %v", c.name, t, p, err)
-		})
+		fetches.EachError(c.handleFetchErr)
 		fetches.EachRecord(func(rec *kgo.Record) {
 			c.count(rec)
 			onRecord(rec.Topic, rec.Value)
 		})
 	}
+}
+
+// handleFetchErr logs a fetch error and recovers from the one kind that
+// never recovers on its own.
+//
+// franz-go pins a topic's ID when it first creates the cursor and
+// deliberately never adopts a new one (see kgo's cursor.topicID: adopting
+// blind is unsafe because OffsetForLeaderEpoch carries no topic ID). So a
+// topic that is deleted and recreated stalls with UNKNOWN_TOPIC_ID
+// forever. franz-go has an escape hatch for this — it purges a topic that
+// has been ABSENT from metadata for 15s — but that only fires while the
+// client can still see metadata. If the broker itself is away for the
+// whole delete/recreate window (a crash that loses its data, then
+// warmup.sh recreating the topics), the client never observes the gap, so
+// it wakes to a new ID it will not take, and that pair or exchange
+// silently disappears from the UI until someone restarts the container.
+// That is exactly what happened on 2026-09-08.
+//
+// Purging the topic ourselves is the same escape hatch, triggered by the
+// error instead of by absence: it drops the stale cursor, and because we
+// subscribe by regex the topic is re-discovered on the next metadata
+// update with its current ID.
+func (c *Consumer) handleFetchErr(topic string, partition int32, err error) {
+	log.Printf("kafka[%s]: fetch error %s[%d]: %v", c.name, topic, partition, err)
+	if !c.shouldPurge(topic, err, time.Now()) {
+		return
+	}
+	// Deliberately does NOT quote the recovery line's wording. An earlier
+	// version spelled out "a 'first record from <topic>' line means it
+	// recovered", and the e2e test — which greps the logs for exactly that —
+	// matched THIS line instead and passed against a build with the fix
+	// removed. A log line that quotes another log line is a trap for anything
+	// reading the log.
+	log.Printf("kafka[%s]: %s was recreated with a new topic ID — purging it so the regex re-discovers it; "+
+		"it announces itself again once a record arrives", c.name, topic)
+	// PurgeTopicsFromClient issues a BLOCKING metadata call, so it must
+	// never run on the poll loop — that would stall consumption for every
+	// other topic this client serves.
+	go func() {
+		c.client.PurgeTopicsFromClient(topic)
+		// The purge only drops the caches. Nothing then asks for this topic
+		// again until the metadata max age elapses (5 minutes by default),
+		// because the purge also removed the cursor whose fetch errors were
+		// driving the refreshes. Without this the fix still works but takes
+		// minutes; with it, seconds.
+		c.client.ForceMetadataRefresh()
+	}()
+}
+
+// shouldPurge decides whether this error means the topic must be purged,
+// and records the decision. Split out from handleFetchErr so the rule is
+// testable without a broker: everything around it is a franz-go call.
+func (c *Consumer) shouldPurge(topic string, err error, now time.Time) bool {
+	if !errors.Is(err, kerr.UnknownTopicID) {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if last, seen := c.purged[topic]; seen && now.Sub(last) < purgeCooldown {
+		return false
+	}
+	c.purged[topic] = now
+	// Forget that we ever saw this topic, so the "first record from ..."
+	// line prints again when it recovers. That line is the confirmation
+	// that the purge worked.
+	delete(c.perTopic, topic)
+	return true
 }
 
 // count tallies one record and announces a topic the first time it is

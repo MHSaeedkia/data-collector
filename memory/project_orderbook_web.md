@@ -400,3 +400,109 @@ these rates would be thousands of lines a second and would bury the useful ones.
 Verified by running the binary with Kafka, postgres and the registry all unreachable and driving
 a real websocket at it (connect → select → junk message → disconnect): every line above appears
 once, in order, with no per-tick repetition.
+
+---
+
+## 2026-09-08 — `UNKNOWN_TOPIC_ID`: a recreated topic stalls the consumer forever
+
+Symptom: `kafka[ex]: fetch error ex8-p1-orderbook-snapshot-flink[0]: UNKNOWN_TOPIC_ID`, repeating,
+while `kafka-topics --describe` showed the topic perfectly healthy. It never recovered on its own;
+only restarting the container fixed it. **Reproduced deliberately on 2026-09-08 and confirmed.**
+
+### The mechanism (all of this is readable in `web/vendor/github.com/twmb/franz-go`)
+
+- `kgo`'s `cursor.topicID` (`pkg/kgo/source.go:121`) is **written once at cursor creation and
+  deliberately never re-adopted** if a delete+recreate hands back a new ID for the same name. This
+  is a design choice, not a bug: `OffsetForLeaderEpoch` has no TopicID field, so an adopted ID
+  cannot be validated against truncation (franz-go issue #908, PRs #391/#377 backed the
+  auto-adoption out). librdkafka and the Java client adopt and gamble; franz-go stalls loudly.
+- `pkg/kgo/source.go:1251` swallows the first 5 consecutive `UnknownTopicID` fetch failures
+  (Kafka returns it briefly for a genuinely new topic) and surfaces every one after that. That is
+  the repeating log line.
+- **franz-go already self-heals the ordinary case**: `pkg/kgo/metadata.go:477` — for a REGEX
+  consumer, a topic that is *absent* from a metadata response for longer than
+  `missingTopicDelete` (default **15s**) is auto-purged via `PurgeTopicsFromClient`, and the regex
+  then re-discovers it with the new ID. This is why a plain `kafka-topics --delete` **does not**
+  reproduce the bug — the client watches the topic disappear, purges, and re-adopts cleanly.
+
+### The condition that actually breaks it
+
+The client must **never observe a successful metadata response with the topic missing**. A broker
+outage does exactly that: while Kafka is unreachable metadata requests *fail*, which is not the
+same as "topic absent from a good response", so the 15s counter never starts. The client wakes to
+a topic that exists with a new ID, keeps its old cursor (`metadata.go:412` preserves the old
+mapping until an explicit purge), and stalls forever. Fits the 2026-09-05 broker OOM: Kafka died,
+lost its data, `warmup.sh` recreated the topics with new IDs, the web app was blind throughout.
+
+**Reproduce it with `docker pause`** — that is the whole trick, and a plain delete will mislead you:
+create a throwaway topic matching the regex, let the app discover it, `docker pause orderbook-web`,
+delete + recreate the topic, `docker unpause`. The error appears and never clears.
+
+### The fix
+
+`Consumer.handleFetchErr` calls `PurgeTopicsFromClient(topic)` on `UNKNOWN_TOPIC_ID` — the same
+escape hatch franz-go uses for absence, triggered by the error instead. Rate-limited to once per
+minute per topic (`purgeCooldown`), because the error repeats on every poll and the purge issues a
+**blocking** metadata call — which is also why it runs in a goroutine and never on the poll loop.
+`shouldPurge` is split out from the franz-go call purely so the rule is unit-testable without a
+broker; that is why `internal/kafka` now has tests when it deliberately had none before. The purge
+also `delete`s the topic from `perTopic` so the `first record from {topic}` line prints again —
+that line is how an operator sees the recovery worked.
+
+**Blast radius worth remembering:** this is not only an `ex*` problem. After any broker rebuild,
+every subscribed topic can be pinned to a dead ID, `p{id}-{side}` included — and a stalled
+`p1-asks` means the aggregated view for that pair silently shows nothing. It is a second,
+independent cause of the original "sometimes it shows one exchange / shows nothing" report, on top
+of the hub freeze.
+
+### e2e test for it (`web/internal/e2e/`, 2026-09-08)
+
+Black-box, behind the `e2e` build tag, run with `make e2e` from `web/`. `go test ./...` is
+untouched — still fast, offline, no docker.
+
+**It builds its own throwaway stack rather than using the real one** (user's call, and the right
+one). Three things keep it isolated, and all three matter: its own compose project name (`-p
+web-e2e`), **no `container_name:` anywhere** in `docker-compose.e2e.yml` — repeating the real
+`kafka`/`orderbook-web` would either refuse to start or silently drive production — and **no
+published ports**, so it runs happily alongside the real stack. The tests never need host access:
+they drive Kafka with `docker exec` and read results with `docker logs`, exactly as the manual
+reproduction did.
+
+Only **two containers**: Kafka and web. Not postgres, not the schema registry — the app starts and
+serves without them, and junk payloads fail on the Avro magic byte before the registry is ever
+consulted. Tests that assert on market/exchange NAMES would need postgres; add it then.
+
+Non-obvious things that cost time, in the order they bit:
+
+- **`CLUSTER_ID` is required** by `confluentinc/cp-kafka` in KRaft mode. Without it the broker
+  exits 1 immediately. The real compose sets it at `docker-compose.yml:185`.
+- **Create the topic BEFORE starting the web container.** A regex consumer only looks for new
+  topics on a metadata refresh, so a topic created after startup can take up to `MetadataMaxAge`
+  (5 min) to be noticed. Topic first, app second, and discovery is immediate.
+- **Produce the junk record repeatedly, not once.** The consumers read from the LATEST offset, so
+  a record written before the (rebuilt) cursor exists is never seen. `produceUntilLog` writes
+  every 2s until the expected line appears.
+- **Cleanup must never call `t.Fatal`.** The first run's real failure (the missing `CLUSTER_ID`)
+  was hidden behind a second failure from the log-dumper fataling on a container that did not
+  exist. Hence `containerIDErr` / `unpauseQuietly`.
+- **`PurgeTopicsFromClient` does not trigger a metadata refresh.** Without the
+  `ForceMetadataRefresh()` that now follows it, the purge works but recovery waits for the 5-minute
+  metadata age — the purge also removes the cursor whose fetch errors were driving the refreshes.
+
+### ⚠ The trap that made this test worthless for two runs — never repeat it
+
+The first version **passed against a build with the fix deliberately removed.** The cause: the
+purge log line spelled out its own hint, *"(a 'first record from <topic>' line means it
+recovered)"*, and the test grepped the logs for `first record from <topic>`. It matched **the purge
+line itself**. The test proved nothing, twice, and only mutation-testing it revealed that.
+
+Two rules came out of it, both now enforced in the code:
+
+1. **A log line must never quote another log line's wording.** Anything that greps the log — a
+   test, an operator, an alert — cannot tell the quote from the real thing.
+2. **Match log assertions on the full, distinctive prefix**, here
+   `kafka[ex]: first record from <topic> (partition`, not on a loose substring.
+
+**Always mutation-test an e2e test.** Confirmed: with the purge removed it FAILS (times out with
+the error repeating), with the purge present it PASSES in ~64s. An e2e test that has never been
+seen to fail is decoration.
