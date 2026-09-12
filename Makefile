@@ -7,13 +7,21 @@ NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job
 # adjustment and merger both read job 6's p{id}-{side}, so both are downstream of it and go first.
 ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)
 
+# Avro schemas + Kafka topics. warmup/ is a Go project, replacing the old scripts/warmup.sh: the
+# shell version spawned a JVM per topic through `docker exec kafka kafka-topics` and took about an
+# hour at ~3000 topics, where the admin API takes them in batches. Settings come from warmup/.env,
+# created from warmup/.env.example on the first run. Re-running is safe, and it rewrites
+# retention.ms on topics that already exist when .env no longer matches.
+warmup:
+	@$(MAKE) -C warmup run
+
 # Full raw pipeline: the 5 upstream normalizer jobs plus the terminal aggregator that unions their
 # per-exchange books, all on the one Flink cluster in docker-compose.yml.
 refresh-normalizer:
 	-git pull origin
 	docker compose -f docker-compose.yml down -v
 	docker compose -f docker-compose.yml up --build -d
-	./scripts/warmup.sh
+	@$(MAKE) --no-print-directory warmup
 	@for job in $(NORMALIZER_JOBS); do $(FLINK_RUN) $$job || exit 1; done
 
 run-normalizer-jobs:
@@ -47,7 +55,7 @@ prod-up:
 # Cancels first — HA (M3) resubmits the previous job graphs on its own, so submitting on top of a
 # recovered cluster would leave two of everything running.
 prod-deploy: prod-up
-	./scripts/warmup.sh
+	@$(MAKE) --no-print-directory warmup
 	./scripts/cancel-flink-jobs.sh
 	@for job in $(ALL_JOBS); do $(FLINK_RUN) $$job || exit 1; done
 	@$(MAKE) --no-print-directory prod-verify
@@ -65,4 +73,4 @@ prod-verify:
 prod-logs:
 	$(PROD_COMPOSE) logs -f --tail=200
 
-.PHONY: refresh-normalizer run-normalizer-jobs run-all-jobs prod-up prod-deploy prod-verify prod-logs
+.PHONY: warmup refresh-normalizer run-normalizer-jobs run-all-jobs prod-up prod-deploy prod-verify prod-logs

@@ -66,8 +66,9 @@ type Consumer struct {
 //
 // It used to start at the earliest offset so the book painted on page
 // load. That was a dev convenience and it became the app's worst failure
-// mode in production: warmup.sh keeps 6 hours on these topics, so every
-// restart replayed six hours of full order books at fetch speed and
+// mode in production: warmup kept 6 hours on these topics at the time
+// (1 hour since 2026-09-12), so every restart replayed six hours of
+// full order books at fetch speed and
 // pushed each one at the browser, which cannot render that fast. The
 // socket backed up and the whole server froze (see internal/hub). The
 // trade for reading live only is that a quiet pair shows nothing until
@@ -144,7 +145,7 @@ func (c *Consumer) Run(ctx context.Context, onRecord func(topic string, value []
 // has been ABSENT from metadata for 15s — but that only fires while the
 // client can still see metadata. If the broker itself is away for the
 // whole delete/recreate window (a crash that loses its data, then
-// warmup.sh recreating the topics), the client never observes the gap, so
+// warmup recreating the topics), the client never observes the gap, so
 // it wakes to a new ID it will not take, and that pair or exchange
 // silently disappears from the UI until someone restarts the container.
 // That is exactly what happened on 2026-09-08.

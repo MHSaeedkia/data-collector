@@ -132,5 +132,83 @@ Three bugs the first version shipped with, all worth not repeating (2026-08-19):
   with `make run-normalizer-jobs` for a true reset. The script prints this on exit.
 - `--dry-run` reports the plan and record counts; the interactive prompt is skipped with `--yes`.
 
+## 2026-09-12 — warmup is a Go project now (`warmup/`), configured by `.env`
+
+`scripts/warmup.sh` took the user **about an hour** at 9 exchanges × 50 markets, and is now
+**DELETED** (user, same day — "i do not need it any more"). The cause was never Kafka: ~3010 topics
+(1 control + 450×6 stage/rejected + 9 raw + 50×6 output) × one `docker exec` + a fresh JVM for
+`kafka-topics` ≈ 1.2 s each. **This is the exact lesson `purge-topics.sh` already learned on
+2026-08-19 — it was never carried back to warmup.** Rewritten in Go as `warmup/`:
+
+- **Top-level project, not a script.** It first landed under `scripts/warmup/` as a flat package;
+  the user rejected that ("why project structure is like high school project… use a better project
+  structure like web service"), so it moved to `warmup/` alongside the other Go projects and now
+  mirrors `web/`: `main.go` at the module root, `internal/{config,domain,postgres,topics,kafka,
+  registry}`, its own `Makefile` (help/test/vet/fmt/check/build/run) and `README.md`, and the same
+  `godotenv` + `testify` the web service uses. **When adding a Go project here, copy `web/`'s shape
+  — that is the house style, and a flat package will be sent back.**
+- Own module with a committed `vendor/` because the dev server cannot reach proxy.golang.org.
+- **Batching is the whole point.** One `ListTopics`, then `DescribeTopicConfigs`/`CreateTopics`/
+  `AlterTopicConfigs` in batches of `TOPIC_BATCH_SIZE` (500) grouped by retention value — a handful
+  of requests instead of 3000 process spawns.
+- **✅ VERIFIED LIVE 2026-09-12** on the laptop stack (352 `exchange_markets` rows, 9 exchanges,
+  54 markets → 2446 topics). Numbers, for the next person who wonders whether it is worth it:
+  **full reconcile of 2446 existing topics = 295 ms**; creating 6 new topics = 275 ms total;
+  **retuning 1765 topics = 374 ms total** (the alter itself ~140 ms, 4 batched requests). The shell
+  version's equivalent was ~1 hour. Three paths were each checked against the broker, not just the
+  log line: create (a temporary `exchange_markets` row → the 6 expected topics, 1 partition, RF 1,
+  `retention.ms=3600000`, row and topics removed afterwards), alter (`RETENTION_INPUT_MS=7200000`
+  → `kafka-configs --describe` shows 7200000 on a stage topic **and 3600000 still on `ex1-raw`**,
+  which is what proves the per-family grouping does not spray one value over everything, then
+  restored), and idempotence (a second run reports `to_create=0 to_retune=0` and does nothing).
+  Schema registration returned the EXISTING ids (1, 2, 4, 9, 11, 12, 13) — re-registering an
+  identical schema is idempotent in the registry and does NOT add a version.
+- **Runs from the HOST, no `docker exec` at all** — both compose files publish `9092` and `5432`,
+  and `pgx` replaces `docker exec postgres psql`. It needs no docker CLI and no container names.
+- **Retention is RECONCILED, not just set at creation.** This is the second half of the user's ask.
+  `--create --if-not-exists` left an existing topic on whatever retention it was born with forever,
+  so changing a retention used to mean deleting topics. The tool now compares the broker's
+  `retention.ms` against `.env` and issues IncrementalAlterConfigs for the difference.
+  ⚠ Lowering a retention deletes whatever is already past the new limit.
+  ⚠ A topic whose `retention.ms` the broker does not report is deliberately left alone, otherwise
+  every run would "change" it.
+- **⚠ ALL FIVE retentions are now 1 HOUR** (user, 2026-09-12: "change .env.example default values to
+  1 houre"), in `warmup/.env.example` **and** in the Go fallback defaults so the two can never
+  disagree. This REPLACES the values recorded above in this file: raw 2 d, rejected 2 d and output
+  6 h are gone. Note the knock-on — `web/`'s aggregated consumer reads `AtEnd()` since 2026-09-06,
+  so the 6 h→1 h output cut costs nothing there, but anything that expected 2 days of `ex{id}-raw`
+  for replay now has one hour.
+- `warmup/.env` is created from `.env.example` by `make warmup` on the first run (a Make file target
+  with no prerequisites, so an existing `.env` is never overwritten) and is gitignored. A real
+  environment variable beats the file: `RETENTION_INPUT_MS=600000 make warmup`. Retentions are
+  parsed as integers **before** anything is created, so a typo like `1h` fails immediately.
+- **Schemas: the whole `schemas/*.avsc` directory is registered** (subject = file name, `_` → `-`),
+  the same rule the e2e harness uses. That kills the trap recorded in [[avro-schema-orderbook]] and
+  [[control-plane]] — a missing `register_schema` line was invisible to a green e2e run and hid
+  `control-command` for two days. All 7 current files map exactly onto the 7 subjects; **a future
+  `.avsc` whose subject is not its file name would silently be registered under the wrong subject.**
+- ⚠ **`exchange_markets` is UNIQUE on `(exchange_id, market)` — the exchange's own symbol string —
+  NOT on `(exchange_id, market_id)`.** Two rows can therefore name the same exchange+pair, so the
+  plan must de-duplicate: a name appearing twice inside one `CreateTopics` batch is rejected by the
+  broker. The shell version never hit this because it created one topic at a time with
+  `--if-not-exists`. A mutation test pins it.
+- The subscription query still does **not** filter `exchange_markets.status`, so topics are created
+  for unsubscribed rows too. Kept identical to the shell version on purpose — flagged, not fixed.
+- With `warmup.sh` gone, the retention constants and `NORMALIZER_STAGES` survive in three more
+  places — `purge-topics.sh`, `e2e/topics/topics.go` and [[staleness-exporter]] — and `.env` is the
+  source of truth only for warmup. Nothing enforces the rest.
+- `scripts/diagnose-stuck-markets.sh` was deleted the same day on the same instruction; it had never
+  been run.
+- **Nothing else in the repo depended on the shell script** (checked 2026-09-12): `e2e` provisions
+  through its OWN `e2e/topics` + `schemaregistry` packages and only ever shells out to
+  `docker compose`, the exporter derives names itself, and the Flink jobs read `latest`. What the
+  deletion DID leave behind was dangling comments in `web/internal/kafka/consumer.go`,
+  `web/README.md`, `e2e/topics/topics.go` and `lpa-staleness-exporter/exporter.py` — one of them
+  ("warmup.sh keeps 6 hours on these topics") now factually wrong. All repointed.
+- ⚠ **e2e and warmup now set DIFFERENT retentions on the same topic names.** `e2e/topics/topics.go`
+  still hardcodes 1h/2d/6h/2d/1h and deletes+recreates its topics per scenario, so a scenario runs
+  against its own values and a later `make warmup` retunes them to 1h. Harmless for test outcomes,
+  but the two are no longer the same numbers — the file says so now.
+
 **Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.
 **How to apply:** Use this structure for all Kafka topic definitions, NiFi routing logic, and Flink source configurations in this project.

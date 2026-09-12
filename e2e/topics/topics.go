@@ -14,7 +14,11 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// Retentions, in milliseconds, as in scripts/warmup.sh.
+// Retentions, in milliseconds. These used to mirror scripts/warmup.sh; since
+// 2026-09-12 warmup/ reads its own from .env (1h everywhere by default), so the
+// two are no longer the same values and nothing keeps them in step. The harness
+// deletes and recreates its topics per scenario, so what it sets is what a
+// scenario runs against either way.
 const (
 	inputRetentionMS    = "3600000"   // 1 hour
 	rawRetentionMS      = "172800000" // 2 days
@@ -142,7 +146,7 @@ func plan(exchangeID, pairID int64) []topic {
 		topic{prefix + "-rejected-flink", rejectedRetentionMS},
 		// Control plane — job 2's snapshot requests to NiFi. Shared across every
 		// market rather than per pair, and created here rather than left to the
-		// broker's auto-create so it carries warmup.sh's retention and so the
+		// broker's auto-create so it carries a deliberate retention and so the
 		// previous run's commands are gone before this one starts.
 		topic{ControlTopic, controlRetentionMS},
 		// Raw topic for the exchange (NiFi publishes verbatim exchange payloads here).

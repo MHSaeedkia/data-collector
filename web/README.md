@@ -73,7 +73,7 @@ module proxy; run `go mod vendor` after changing dependencies.
   `^ex\d+-p\d+-orderbook-snapshot-flink$`. These topics carry a full book on every event, so
   replaying their retention window at startup costs far more than it is worth: the aggregated
   consumer used to start at the earliest offset (so the book painted on load) and with the 6h
-  retention `warmup.sh` sets, every restart replayed six hours of order books straight at the
+  retention warmup set then (1h since 2026-09-12), every restart replayed six hours of order books at the
   browser — which is what used to freeze the server (see the websocket note below). The
   trade-off is that a quiet pair or exchange shows nothing until its next event; the `snapshot`
   reply covers everything that has arrived since the process started. Both use a fresh consumer
@@ -90,7 +90,7 @@ module proxy; run `go mod vendor` after changing dependencies.
   deleted and recreated returns `UNKNOWN_TOPIC_ID` forever. It has an escape hatch — purge a
   topic that has been *absent* from metadata for 15s — but that only fires while the client can
   still see metadata. If the broker is away for the whole delete/recreate window (a crash that
-  loses its data, then `warmup.sh` recreating the topics), the client never sees the gap and that
+  loses its data, then warmup recreating the topics), the client never sees the gap and that
   pair or exchange silently vanishes from the UI until the container is restarted. So the
   consumer calls `PurgeTopicsFromClient` itself on that error, rate-limited to once a minute per
   topic; the regex then re-discovers the topic with its current ID, and the `first record from

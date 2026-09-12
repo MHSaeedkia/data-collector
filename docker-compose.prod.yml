@@ -538,7 +538,7 @@ services:
             # PRODUCER_ID_EXPIRATION_MS — 24h by default: how long each PARTITION remembers
             # a producer id it has not heard from. The shutdown log showed ~1700 ids on
             # every busy partition (NiFi's own `ex{id}-raw`: 5-8) across ~3000 partitions.
-            # 1h matches the 1h retention `warmup.sh` puts on the stage topics — there is no
+            # 1h matches the 1h retention warmup puts on the stage topics — there is no
             # value in remembering a producer longer than the data it wrote.
             KAFKA_HEAP_OPTS: "-Xmx4G -Xms4G"
             KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
@@ -605,7 +605,7 @@ services:
             # (<topic>-value), so without this kafka-ui finds no serde at all for them (empty
             # valueSerde, nothing to pick when producing). Bind each topic pattern to the one
             # canonical registry subject it actually uses instead of registering a subject per
-            # topic (see scripts/warmup.sh).
+            # topic (see warmup/).
             KAFKA_CLUSTERS_0_SERDE_0_NAME: AggregatedOrderBookEventAvro
             KAFKA_CLUSTERS_0_SERDE_0_CLASSNAME: com.provectus.kafka.ui.serdes.builtin.sr.SchemaRegistrySerde
             KAFKA_CLUSTERS_0_SERDE_0_TOPICVALUESPATTERN: ^p[0-9]+-(asks|bids)$
