@@ -21,6 +21,7 @@ services:
                 jobmanager.rpc.address: jobmanager
                 metrics.reporters: prom
                 jobmanager.scheduler: adaptive
+                jobmanager.adaptive-scheduler.prefer-minimal-taskmanagers: true
                 web.rescale.enable: true
                 web.adaptive-scheduler.rescale-history.size: 10
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
@@ -33,6 +34,19 @@ services:
             test: [ "CMD", "curl", "-f", "http://localhost:8081/overview" ]
             interval: 10s
             retries: 5
+
+    autoscaler:
+        build: ./autoscaler
+        container_name: autoscaler
+        hostname: autoscaler
+        restart: on-failure
+        depends_on:
+            jobmanager:
+                condition: service_healthy
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+        networks:
+            - data-collector-net
 
     taskmanager:
         build: ./flink/normalizer
@@ -47,6 +61,7 @@ services:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
                 taskmanager.numberOfTaskSlots: 8
+                taskmanager.load-balance.mode: MIN_RESOURCES
                 # M2a's dev half. The image default gives 1728m process and only 512m
                 # JVM heap for ALL jobs, which was survivable until checkpointing
                 # landed. With 6 jobs checkpointing every 10s it GCs hard enough to

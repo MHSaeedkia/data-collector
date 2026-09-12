@@ -26,7 +26,7 @@ fi
 # A job can be scheduled onto any TaskManager, so log lookups read all of them. Discovered
 # rather than listed: docker-compose.yml (dev) runs a single `taskmanager`, docker-compose.prod.yml
 # runs `taskmanager-1..4`, and this script has to work against both.
-TASKMANAGERS=($(docker ps --format '{{.Names}}' | grep -E '^taskmanager(-[0-9]+)?$' | sort))
+TASKMANAGERS=($(docker ps --format '{{.Names}}' | grep -E '(^|-)taskmanager(-[0-9]+)?$' | sort || true))
 
 tm_logs() {
     if [[ ${#TASKMANAGERS[@]} -eq 0 ]]; then
