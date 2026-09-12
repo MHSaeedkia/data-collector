@@ -186,3 +186,29 @@ registry's default level — so registration itself will pass.
 The `.avsc` in `schemas/` is the single source of truth: `common/pom.xml` copies it onto the TEST
 classpath, so the serde tests exercise the trimmed schema directly. That is what proves the serde
 edit correct without a live registry.
+
+---
+
+## 2026-09-12 — the removal went LIVE, and the ordering warning above was paid for
+
+Both subjects were re-registered without `sequence_jump_tolerance` on the dev server
+(192.168.150.31). **The "register second, deploy first" rule from the section above was not
+followed**, and every job reading raw events crashed in a restart loop:
+
+```
+org.apache.avro.AvroRuntimeException: Not a valid schema field: sequence_jump_tolerance
+  at io.tibobit.normalizer.serde.RawOrderBookEventDeserializer.fromGenericRecord(...:49)
+```
+
+**Correction to the prediction above: it is an `AvroRuntimeException`, not an NPE.**
+`GenericData.Record.get(String)` throws `Not a valid schema field: <name>` for an unknown name — it
+never returns null — so the `(long)` cast is never reached. The *serializer* side does NPE, but
+inside `GenericRecordBuilder.set` (`schema().getField(name)` returns null → NPE on `field.pos()`),
+not on a cast. Two different exceptions, one cause. Recognise both as "old code, new registry".
+
+The fix was **not** in this repo's code — the committed code was already correct. It was a stale
+build on the server: see the 2026-09-12 section of [[project_flink_deploy_tooling]].
+
+Registry now trimmed, all 8 jobs running on `9a4c970`. The standing "re-register both subjects"
+todo is **closed for dev**. ⚠ Prod has not been done; when it is, obey the order — **deploy all 8
+jobs first (with a `mvn clean`), register second.**

@@ -244,3 +244,56 @@ under `<artifact>-1.0-SNAPSHOT-<sha>.jar` so Flink's `/jars` listing says which 
 
 Deploy targets: `make prod-up` / `prod-deploy` / `prod-verify` / `prod-logs` drive the prod file.
 `make refresh-normalizer` is **dev-only** — it still runs `docker compose down -v`.
+
+## 2026-09-12 — `run-job.sh` does NOT `clean`, and the git SHA in the jar name LIES about it
+
+Cost ~90 minutes of live debugging on the dev server. Worth the whole section.
+
+`run-job.sh` builds with `mvn ... package -q -DskipTests`, **never `clean`**. All 6 normalizer jobs
+depend on one `common` module, and `common` holds the serde classes. Maven's incremental compile
+decided `common/target/classes` was up to date and skipped it, so a fresh `mvn package` shaded
+**stale classes into a brand-new jar**.
+
+**The trap is that every cheap check says the deploy is correct:**
+
+| Check                              | Said     | Truth |
+| ---------------------------------- | -------- | ----- |
+| `git log -1` on the server         | `9a4c970` | ✅ |
+| `grep` the `.java` source          | 0 hits   | ✅ |
+| uploaded jar name (S7 SHA stamp)   | `…-9a4c970.jar` | ✅ |
+| **classes inside that jar**        | —        | ❌ old |
+
+The S7 SHA stamp comes from `git rev-parse`, **not** from what Maven actually compiled. A jar can
+be named for a commit whose code is not in it. Treat the SHA stamp as "which checkout submitted
+this", never as "which code is inside this".
+
+**The only check that is not fooled** — read the bytes, not the name:
+
+```bash
+unzip -p job-rebaser/target/job-rebaser-1.0-SNAPSHOT.jar \
+  io/tibobit/normalizer/serde/RawOrderBookEventDeserializer.class \
+  | strings | grep sequence_jump
+```
+
+**Rule: after any `git pull` on a server, run `mvn -q clean` in `flink/normalizer` before
+deploying.** `make refresh-normalizer` hides this (it does `down -v` + a rebuild), which is why the
+gap went unnoticed — a plain `run-job.sh` / `run-all-jobs` on a pulled tree does not.
+
+**Still open (deliberately not done — [[scope-discipline]]):** adding `clean` to `run-job.sh` costs
+a full rebuild of `common` on every single-job deploy, and `run-all-jobs` would pay it 8 times. The
+user has not asked. If it is ever added, prefer cleaning `common` only.
+
+### How to tell a stale jar from a ghost job
+
+Both produce a "this code is not the code I deployed" stack trace. Discriminator: **map the stack
+trace's line number onto the CURRENT source.** If the line number points at a statement that cannot
+throw that error (here: line 49 was `setSimulation(...)` but the error named
+`sequence_jump_tolerance`), the running class is old — full stop. Then it is either a stale jar
+(check the bytes, above) or a leftover/HA-resubmitted job graph
+(`curl -s localhost:7070/jobs/overview | jq -r '.jobs[] | "\(.jid) \(.name) \(.state)"'`, look for
+duplicates — see M3 in [[project_flink_production]]). It was the jar.
+
+### Flink's Exceptions tab shows HISTORY
+
+Two false alarms in this session came from re-reading an 11:41 stack trace at 12:50. **Always check
+the exception's timestamp against the job's `start-time`** before concluding a redeploy failed.
