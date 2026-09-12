@@ -1137,7 +1137,28 @@ the dated § in `memory/project_pair_extractor.md`.
       subjects is NOT required and was deliberately NOT done — code-first is safe because the
       field had `default: 0`, while registry-first would NPE every running job's deserializer.
       `sequence_jump` itself STAYS (ex6/ex7/ex8). See the follow-up item below.
-- [ ] **Register the trimmed `raw-order-book-event` + `rejected-order-book-event`** whenever the
+- [x] **Register the trimmed `raw-order-book-event` + `rejected-order-book-event` — DONE on dev
+      2026-09-12, and the ordering warning below was PAID FOR.** Both subjects were registered
+      while the server still ran old jars, so every job reading raw events entered a restart loop
+      with `AvroRuntimeException: Not a valid schema field: sequence_jump_tolerance` (⚠ NOT the
+      NPE predicted below — `GenericData.Record.get(String)` throws on an unknown name; the
+      serializer side NPEs inside `GenericRecordBuilder.set` instead). **The repo code was already
+      correct — the real culprit was a STALE BUILD:** `run-job.sh` uses `mvn package` without
+      `clean`, so the shared `common` module was not recompiled and new-named jars
+      (`…-9a4c970.jar`) shipped old serde classes. `mvn -q clean` in `flink/normalizer` +
+      re-submit fixed it; all 8 jobs green on `9a4c970`. Full post-mortem and the
+      "how to tell a stale jar from a ghost job" procedure: 2026-09-12 § of
+      `memory/project_flink_deploy_tooling.md`. ⚠ **PROD IS NOT DONE** — when it is: `mvn clean`,
+      deploy all 8 jobs, register second.
+      Original note follows.
+- [ ] **Decide whether `run-job.sh` should `mvn clean`** (opened 2026-09-12, after the stale-jar
+      incident above). Today it runs `mvn ... package -q -DskipTests` with no `clean`, so a `git
+      pull` on a server can leave `common/target/classes` stale and every job ships old code under
+      a jar named for the new commit. A blanket `clean` costs a full `common` rebuild on every
+      single-job deploy and `run-all-jobs` would pay it 8 times — so if this is done, prefer
+      cleaning only `common`, or a `--clean` flag. NOT done unasked ([[project_scope_discipline]]).
+      Interim rule: after any server `git pull`, run `mvn -q clean` in `flink/normalizer` by hand.
+- [ ] **(prod) Register the trimmed subjects** whenever the
       next real schema change goes out. No longer doc-only: as of 2026-09-07 the committed `.avsc`
       also DROPS `sequence_jump_tolerance`. Still Avro compatible (removing a field that carried
       `default: 0` is BACKWARD, the registry's default level) and still not urgent — the
