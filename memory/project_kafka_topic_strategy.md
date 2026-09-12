@@ -150,8 +150,19 @@ Three bugs the first version shipped with, all worth not repeating (2026-08-19):
 - Own module with a committed `vendor/` because the dev server cannot reach proxy.golang.org.
 - **Batching is the whole point.** One `ListTopics`, then `DescribeTopicConfigs`/`CreateTopics`/
   `AlterTopicConfigs` in batches of `TOPIC_BATCH_SIZE` (500) grouped by retention value — a handful
-  of requests instead of 3000 process spawns. ⚠ **NOT yet timed against a real broker** (docker was
-  down when it was written); the design is sound but the speed claim is unmeasured.
+  of requests instead of 3000 process spawns.
+- **✅ VERIFIED LIVE 2026-09-12** on the laptop stack (352 `exchange_markets` rows, 9 exchanges,
+  54 markets → 2446 topics). Numbers, for the next person who wonders whether it is worth it:
+  **full reconcile of 2446 existing topics = 295 ms**; creating 6 new topics = 275 ms total;
+  **retuning 1765 topics = 374 ms total** (the alter itself ~140 ms, 4 batched requests). The shell
+  version's equivalent was ~1 hour. Three paths were each checked against the broker, not just the
+  log line: create (a temporary `exchange_markets` row → the 6 expected topics, 1 partition, RF 1,
+  `retention.ms=3600000`, row and topics removed afterwards), alter (`RETENTION_INPUT_MS=7200000`
+  → `kafka-configs --describe` shows 7200000 on a stage topic **and 3600000 still on `ex1-raw`**,
+  which is what proves the per-family grouping does not spray one value over everything, then
+  restored), and idempotence (a second run reports `to_create=0 to_retune=0` and does nothing).
+  Schema registration returned the EXISTING ids (1, 2, 4, 9, 11, 12, 13) — re-registering an
+  identical schema is idempotent in the registry and does NOT add a version.
 - **Runs from the HOST, no `docker exec` at all** — both compose files publish `9092` and `5432`,
   and `pgx` replaces `docker exec postgres psql`. It needs no docker CLI and no container names.
 - **Retention is RECONCILED, not just set at creation.** This is the second half of the user's ask.
@@ -188,6 +199,16 @@ Three bugs the first version shipped with, all worth not repeating (2026-08-19):
   source of truth only for warmup. Nothing enforces the rest.
 - `scripts/diagnose-stuck-markets.sh` was deleted the same day on the same instruction; it had never
   been run.
+- **Nothing else in the repo depended on the shell script** (checked 2026-09-12): `e2e` provisions
+  through its OWN `e2e/topics` + `schemaregistry` packages and only ever shells out to
+  `docker compose`, the exporter derives names itself, and the Flink jobs read `latest`. What the
+  deletion DID leave behind was dangling comments in `web/internal/kafka/consumer.go`,
+  `web/README.md`, `e2e/topics/topics.go` and `lpa-staleness-exporter/exporter.py` — one of them
+  ("warmup.sh keeps 6 hours on these topics") now factually wrong. All repointed.
+- ⚠ **e2e and warmup now set DIFFERENT retentions on the same topic names.** `e2e/topics/topics.go`
+  still hardcodes 1h/2d/6h/2d/1h and deletes+recreates its topics per scenario, so a scenario runs
+  against its own values and a later `make warmup` retunes them to 1h. Harmless for test outcomes,
+  but the two are no longer the same numbers — the file says so now.
 
 **Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.
 **How to apply:** Use this structure for all Kafka topic definitions, NiFi routing logic, and Flink source configurations in this project.

@@ -1218,10 +1218,21 @@ the dated § in `memory/project_pair_extractor.md`.
       and in the Go fallback defaults, so the two cannot disagree. Replaces raw 2 d / rejected 2 d /
       output 6 h. ⚠ Existing topics are retuned on the next `make warmup`, which DELETES whatever is
       already older than one hour on them
-- [ ] **Run `make warmup` live and time it** (opened 2026-09-12). Docker was down when the Go tool
-      was written, so NOTHING about it is verified against a real broker — the speed claim, the
-      batched create path, the retention-alter path and the registry calls are all unproven. Check
-      a retention change actually lands (`kafka-configs --describe`)
+- [x] **Run `make warmup` live and time it — DONE 2026-09-12.** Laptop stack, 352 rows → 2446
+      topics: full reconcile **295 ms**, create of 6 new topics 275 ms, retune of 1765 topics
+      374 ms, second run a no-op. Create, alter and idempotence each verified with
+      `kafka-configs --describe` rather than trusting the log — including that raising
+      `RETENTION_INPUT_MS` left `ex1-raw` untouched, which is what proves the per-family grouping.
+      Temp `exchange_markets` row and its 6 topics cleaned up. Schema re-registration returned the
+      existing ids, so no new versions
+- [x] **Checked what else the deleted script touched — 2026-09-12.** Nothing depends on it: e2e
+      provisions through its own packages and only shells out to `docker compose`. Dangling
+      comments in `web/internal/kafka/consumer.go`, `web/README.md`, `e2e/topics/topics.go` and
+      `lpa-staleness-exporter/exporter.py` repointed; one of them claimed a 6h retention that is
+      now 1h
+- [ ] **Decide whether `e2e/topics/topics.go` should follow warmup to 1h everywhere** (opened
+      2026-09-12). It still hardcodes 1h/2d/6h/2d/1h and recreates its topics per scenario, so
+      test outcomes do not change — but the two files no longer hold the same numbers
 - [ ] **`make prod-deploy` now needs Go on the deploy server** (opened 2026-09-12). It runs
       `make -C warmup run`, i.e. `go run .`. [[server-build-env]] records only the Java/Maven
       install, so whether Go is on that box is UNCONFIRMED — check before the next prod deploy.

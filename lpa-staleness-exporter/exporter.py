@@ -5,7 +5,7 @@ Topic list comes from two sources, selected by config.yaml `topic_source:`
 ("both" the default, "db", or "config"):
 
   1. Postgres (exchange_markets, joined with markets/exchanges), producing the
-     same topic names scripts/warmup.sh creates:
+     same topic names warmup/ creates:
        - ex{exchange_id}-p{pair_id}-{stage} for each of the five normalizer
          stages, per active subscription, using that row's
          exchange_markets.staleness_threshold_seconds (falling back to
@@ -142,7 +142,7 @@ DB_QUERY = """
     WHERE em.status = 'subscribe'
 """
 
-# Per-exchange+pair pipeline stages, mirroring NORMALIZER_STAGES in scripts/warmup.sh.
+# Per-exchange+pair pipeline stages, mirroring normalizerStages in warmup/internal/topics.
 # Each entry is one raw-pipeline job's output topic, so a stalled stage points at the
 # job that stopped emitting.
 #
@@ -287,7 +287,7 @@ def close_episode(pg_dsn, topic, recovered_at_ts, duration):
 def fetch_db_topics(pg_dsn, default_threshold, output_threshold):
     """Returns {topic_name: threshold_seconds} derived from exchange_markets.
 
-    Two families, both named exactly as scripts/warmup.sh creates them:
+    Two families, both named exactly as warmup/ creates them:
       - ex{exchange_id}-p{pair_id}-{stage}, one per NORMALIZER_STAGES entry per
         subscribed row, carrying that row's threshold;
       - p{pair_id}-{asks,bids}, once per distinct subscribed pair. The aggregated
