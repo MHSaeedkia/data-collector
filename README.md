@@ -138,7 +138,7 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 # Run Flink
 
 ```
-./scripts/warmup.sh
+make warmup   # registers the Avro schemas and creates the Kafka topics (see warmup/)
 
 # One script builds and submits any job, from any project under flink/.
 # Run it with no argument to list them. Order matters: downstream-first, because
