@@ -1226,3 +1226,13 @@ the dated § in `memory/project_pair_extractor.md`.
       `make -C warmup run`, i.e. `go run .`. [[server-build-env]] records only the Java/Maven
       install, so whether Go is on that box is UNCONFIRMED — check before the next prod deploy.
       `scripts/install-deps.sh` is where a Go install would belong
+- [x] **ex6 gap hunt — FIXED 2026-09-09.** The gaps were adjacent-pair REORDERING inside NiFi, not
+      loss (`difference: 2` with the missing `u` on the very next line; `PublishKafka` failure never
+      fired once). Cause: no prioritizer on any connection. Fix: `OldestFlowFileFirstPrioritizer`
+      on the five WS→Kafka connections in the BYBIT group — NOT `FirstInFirstOutPrioritizer`, which
+      sorts by queue arrival and would have preserved the swap. Confirmed by the user.
+      See [[project-nifi-hot-path]] 2026-09-09.
+- [ ] **Roll the prioritizer fix out to the other 8 exchange groups** (opened 2026-09-09). Same
+      flow shape, same empty prioritizer lists; ex6 was just the feed whose `u` is contiguous
+      enough to make the disorder visible. Then re-check whether job 2's `sequence_gap` dead
+      letters actually stop.

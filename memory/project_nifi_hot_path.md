@@ -48,3 +48,109 @@ Concurrent Tasks (must be 1 for an ordered feed), a `FirstInFirstOutPrioritizer`
 on the path, and `max.in.flight.requests.per.connection` on the producer. Note this trades
 throughput for order — the exact axis 2026-08-31 optimised the other way, so it needs a decision,
 not a reflex. See the 2026-09-08 § of [[project-pair-extractor]].
+
+---
+
+**2026-09-09 — reading the BYBIT group export against the three 2026-09-08 suspects.**
+A two-VM A/B test was run: VM1 a standalone Go websocket→Kafka producer, VM2 this NiFi group,
+both on `BTCUSDT`, both watched by a `u`-contiguity script. VM1 clean for a long run, VM2 broke
+within seconds. Verdict on the suspects, from the flow JSON:
+
+- **Concurrent Tasks — NOT the cause.** The whole WS path is already single-threaded:
+  `ConnectWebSocket`, `LookupAttribute`, `ReplaceText`, `UpdateAttribute`, the output port and
+  `PublishKafka` are all `concurrentlySchedulableTaskCount: 1`. Suspect #1 is closed.
+- **FIFO prioritizer — CONFIRMED MISSING.** Every connection in the group is `"prioritizers":[]`.
+  Undefined order is documented NiFi behaviour, so this stays open, but note it only bites where
+  something can actually reorder a single-threaded chain (penalized FlowFiles, or swapping).
+- **`max.in.flight.requests.per.connection` — not exposed** by `Kafka3ConnectionService` and not
+  in the flow. Moot *while* `Transactions Enabled: true`, because transactions force
+  `enable.idempotence` and Kafka then keeps per-partition order. **Turning transactions off to fix
+  the isolation mismatch below would remove that guarantee with no exposed knob to restore it** —
+  do not treat the two changes as independent.
+
+**The A/B test itself is confounded — fix before drawing conclusions.** `PublishKafka` has
+`Transactions Enabled: true`; the Go producer does not use transactions. Both the seqwatch reader
+(franz-go defaults to `ReadUncommitted`, verified in `config.go`) and job 1's `KafkaSource` (no
+`isolation.level` set anywhere in `flink/`) read **uncommitted**. So on the NiFi VM the reader also
+sees records from ABORTED transactions, and on the Go VM there is nothing to abort. This alone can
+manufacture non-contiguous `u` with NiFi perfectly ordered. It also means job 2's `sequence_gap`
+dead letters may be reading aborted writes.
+
+**Loss is silent in three places**, each ending at a `LogAttribute` that auto-terminates `success`,
+with no counter: `PublishKafka` `failure` (Failure Strategy = Route to Failure), the id-injection
+`ReplaceText` `failure`, and `LookupAttribute` `failure`/`unmatched` (that last one intended, see
+above). Because transactions batch, ONE `PublishKafka` failure drops **every** FlowFile in that
+batch — loss arrives in bursts, which is what "many gaps in a couple of seconds" looks like.
+`ack.wait.time` and `max.block.ms` are both **5 sec**, which makes those failures reachable.
+
+**The sign of the gap tells you which fault it is**, and the script already logs it: `> 1` = loss
+(the drop paths), `0` or negative = duplicate/reorder (aborted transactions read uncommitted, or
+swapping). Read `gap_detected.log` before changing anything.
+
+**Still unverified:** whether `ConnectWebSocket` really bypasses back pressure (the 2026-08-31 open
+item). It matters more now: if it does, the queue can pass `nifi.queue.swap.threshold` (20000)
+while back pressure is 10000, and swapping is the one mechanism that reorders a single-threaded
+chain. Same observable as before — queue at ~10000 means no swap, 50k+ means swap.
+
+**Unrelated leftover found while reading:** the REST-snapshot branch still runs the
+`JoltTransformJSON` with `${pair}` in its spec at `Transform Cache Size 1` — the per-message
+recompile the 2026-08-31 work removed from the WS path never got removed from this one
+(`InvokeHTTP` beside it is at 4 concurrent tasks). Not the `u` gaps; same landmine.
+
+**2026-09-09 (later) — MEASURED: it is REORDERING, not loss. Adjacent-pair swap.**
+`gap_detected.log` from the NiFi VM, 5 entries: 4 of them are `difference: 2` with the missing `u`
+arriving on the VERY NEXT line (…412, 414, 413…). The 5th is a slightly longer shuffle
+(179, 181, 183). Nothing is missing and nothing is duplicated — neighbours change places. The user
+also confirms **zero FlowFiles have ever reached the `LogAttribute` on `PublishKafka`'s `failure`**.
+
+This closes most of the file above:
+
+- **Loss is NOT happening.** The silent-drop paths, the 5-sec `max.block.ms`/`ack.wait.time`, and
+  the transactional-abort-visible-to-read_uncommitted theory are all real hazards but **none of
+  them is the ex6 gap**. Do not "fix" them in response to this symptom — raising those timeouts
+  for a realtime feed trades data loss for stale data, and the user was right to push back on it.
+  (`read_committed` on job 1 is still correct on its own merits; it is not this bug.)
+- **Suspect #2 (no `FirstInFirstOutPrioritizer`) is the only one left standing**, and it is
+  confirmed missing on all five connections of the WS→Kafka path.
+
+**The mechanism, INFERRED and NOT YET VERIFIED:** `ConnectWebSocket` does not emit from a scheduled
+processor thread — it creates one session per websocket message from the Jetty callback and commits
+it asynchronously, so the order those commits land in the first queue need not be the arrival
+order. Nothing downstream re-sorts, because a queue with no prioritizer has undefined order by
+NiFi's own documentation. Note a single partition + a transactional (therefore idempotent) producer
++ 1 concurrent task everywhere means the producer CANNOT be the reorder point — which is what
+pushed the search back upstream into the FlowFile path.
+
+**Fix being tried:** `FirstInFirstOutPrioritizer` on all five connections. It sorts by FlowFile
+creation time, so a swapped pair is put back in order before the next processor takes it. **Limit:
+it only helps while both FlowFiles are in the queue together** (the `Run Duration 25ms` batching
+makes that likely, not certain). If it does not hold, the next step is a `LogAttribute` on the
+`uuid` immediately after `ConnectWebSocket`, compared against Kafka order, to prove whether the
+swap happens at reception or later.
+
+**2026-09-09 (resolved) — `OldestFlowFileFirstPrioritizer` on the five WS→Kafka connections FIXES
+the ex6 reordering.** Confirmed by the user against the same seqwatch/`u`-contiguity test that had
+been breaking within seconds.
+
+**Take the naming trap with you — it is the whole lesson.** `FirstInFirstOutPrioritizer` is the
+obvious-looking choice and it is the WRONG one here: it sorts by when a FlowFile reached *that
+connection*, so it re-derives order at every hop and faithfully preserves a swap that happened
+upstream. `OldestFlowFileFirstPrioritizer` sorts by **lineage start date** — when the FlowFile was
+created, i.e. when the websocket message actually arrived — and that timestamp is carried unchanged
+through every processor, so one setting is correct at all five hops. That the fix works is also
+evidence for the mechanism inferred above: the pair is already swapped when it lands in the FIRST
+queue (FlowFiles created in order on the Jetty thread, committed out of order), because sorting by
+creation time repairs it while sorting by queue arrival would not have.
+
+**Known limits of the fix, worth re-testing if gaps ever return:**
+- Lineage start date is **milliseconds**. Two messages created in the same millisecond are a tie
+  and their order is arbitrary again. Fine for one symbol at bybit's ~20 ms push rate; NOT
+  obviously fine if a group ever carries many symbols on one connection at high rate.
+- A prioritizer only sorts what is **in the queue at that moment**. It cannot help if the later
+  message is pulled before the earlier one has arrived. The `Run Duration 25ms` batching is what
+  keeps several FlowFiles in the queue together and gives the prioritizer something to sort — so
+  the 2026-08-31 throughput change is quietly load-bearing for the ordering fix.
+
+**Apply this to the other 8 exchange groups.** Nothing about the mechanism is bybit-specific: every
+group has the same `ConnectWebSocket` → … → `PublishKafka` shape and the same empty prioritizer
+lists. ex6 was simply the one with a `u` counter contiguous enough to expose it.
