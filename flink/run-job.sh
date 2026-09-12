@@ -50,13 +50,17 @@ if [[ -z "${PROJECT:-}" ]]; then
 fi
 
 # 1. Build. Multi-module needs -am so common/ is built alongside; single-module builds whole project.
+# `clean` is not optional: every normalizer job shares common/, and Maven's incremental compile
+# will happily skip a stale common/target/classes after a git pull — shading OLD serde classes
+# into a jar this script then names after the NEW commit. That cost ~90 min live on 2026-09-12.
+# Scope is the reactor, so -am cleans exactly common/ + this job and leaves sibling jobs alone.
 if [[ -n "${MODULE:-}" ]]; then
     echo "==> Building $MODULE ($(basename "$PROJECT"))..."
-    mvn -f "$PROJECT/pom.xml" -pl "$MODULE" -am package -q -DskipTests -Dgit.sha="$GIT_SHA"
+    mvn -f "$PROJECT/pom.xml" -pl "$MODULE" -am clean package -q -DskipTests -Dgit.sha="$GIT_SHA"
     TARGET="$PROJECT/$MODULE/target"
 else
     echo "==> Building $JOB..."
-    mvn -f "$PROJECT/pom.xml" package -q -DskipTests -Dgit.sha="$GIT_SHA"
+    mvn -f "$PROJECT/pom.xml" clean package -q -DskipTests -Dgit.sha="$GIT_SHA"
     TARGET="$PROJECT/target"
 fi
 
