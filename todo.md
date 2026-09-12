@@ -1151,13 +1151,17 @@ the dated § in `memory/project_pair_extractor.md`.
       `memory/project_flink_deploy_tooling.md`. ⚠ **PROD IS NOT DONE** — when it is: `mvn clean`,
       deploy all 8 jobs, register second.
       Original note follows.
-- [ ] **Decide whether `run-job.sh` should `mvn clean`** (opened 2026-09-12, after the stale-jar
-      incident above). Today it runs `mvn ... package -q -DskipTests` with no `clean`, so a `git
-      pull` on a server can leave `common/target/classes` stale and every job ships old code under
-      a jar named for the new commit. A blanket `clean` costs a full `common` rebuild on every
-      single-job deploy and `run-all-jobs` would pay it 8 times — so if this is done, prefer
-      cleaning only `common`, or a `--clean` flag. NOT done unasked ([[project_scope_discipline]]).
-      Interim rule: after any server `git pull`, run `mvn -q clean` in `flink/normalizer` by hand.
+- [x] **`run-job.sh` now builds with `clean` — DONE 2026-09-12** (user request, same day as the
+      stale-jar incident above). Both build paths changed: `-pl "$MODULE" -am clean package` for the
+      normalizer modules and `clean package` for the single-module projects (`merger`,
+      `adjustment`). The multi-module one is the fix that matters — `common` only enters the build
+      through `-am`, so cleaning only the single-module branch would not have fixed the rebaser.
+      `clean` scopes to the reactor, so `-am` cleans `common/` + the one job module and leaves the
+      other five job `target/`s alone; the price is `common` rebuilt 8 times by
+      `make run-all-jobs`, accepted because a stale jar is silent and every quick check reports
+      success. If build time ever becomes the complaint, the narrower fix is one
+      `mvn -pl common clean` before the Makefile loop — do NOT drop `clean` from the script.
+      The manual "run `mvn -q clean` after a server `git pull`" rule is retired.
 - [ ] **(prod) Register the trimmed subjects** whenever the
       next real schema change goes out. No longer doc-only: as of 2026-09-07 the committed `.avsc`
       also DROPS `sequence_jump_tolerance`. Still Avro compatible (removing a field that carried

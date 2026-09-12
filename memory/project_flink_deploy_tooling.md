@@ -275,13 +275,23 @@ unzip -p job-rebaser/target/job-rebaser-1.0-SNAPSHOT.jar \
   | strings | grep sequence_jump
 ```
 
-**Rule: after any `git pull` on a server, run `mvn -q clean` in `flink/normalizer` before
-deploying.** `make refresh-normalizer` hides this (it does `down -v` + a rebuild), which is why the
-gap went unnoticed — a plain `run-job.sh` / `run-all-jobs` on a pulled tree does not.
+`make refresh-normalizer` hid this (it does `down -v` + a rebuild), which is why the gap went
+unnoticed for so long — a plain `run-job.sh` / `run-all-jobs` on a pulled tree does not.
 
-**Still open (deliberately not done — [[scope-discipline]]):** adding `clean` to `run-job.sh` costs
-a full rebuild of `common` on every single-job deploy, and `run-all-jobs` would pay it 8 times. The
-user has not asked. If it is ever added, prefer cleaning `common` only.
+**FIXED the same day (2026-09-12, user request): `run-job.sh` now builds with `clean package` on
+BOTH paths** — `-pl "$MODULE" -am clean package` for the normalizer modules, `clean package` for the
+single-module projects. There is no manual `mvn clean` step any more.
+
+The multi-module path is the load-bearing one. `clean` on the single-module branch alone would NOT
+have fixed the rebaser, because `common` only enters the build through `-am`. Both were changed so
+no path can ship a stale jar.
+
+**The cost is accepted, not overlooked:** `clean` scopes to the reactor, so `-am` cleans exactly
+`common/` + the one job module and leaves the other five job `target/`s intact. `make run-all-jobs`
+therefore rebuilds `common` 8 times. Judged cheaper than one more incident of this class — a stale
+jar is silent and every quick check reports success. If build time ever becomes the complaint, the
+narrower fix is a single `mvn -pl common clean` before the Makefile loop, **not** dropping `clean`
+from the script.
 
 ### How to tell a stale jar from a ghost job
 
