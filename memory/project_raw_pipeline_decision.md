@@ -269,3 +269,12 @@ compat check (do at M8).
 
 Detailed implementation task breakdown lives in `todo.md` (rewritten 2026-07-13 to contain only
 this pipeline; prior phases 1–5 history removed — recoverable from git).
+
+**⚠ 2026-09-05 — the ex8/okx lines above are SUPERSEDED.** Both the § capture note
+(`books-grouped`, `grouping: "1"`, sequence id = `ts`) and the gap-validation rule
+("ex8 okx (`ts`, string epoch-millis, jump 300)") describe a channel we no longer consume. okx moved
+to `wss://ws.okx.com:8443/ws/v5/public` channel **`books`**: 400 levels a side, four-element levels,
+and a real chained counter (`seqId` with `prevSeqId`), so its sequence is `seqId` with a **DYNAMIC**
+jump of `seqId - prevSeqId`, not a timestamp with a fixed 300. The delta-feed roster for rule (a) is
+now ex5 (`ts`, 650±110 — the only timestamp-sequenced feed left), ex6 (`u`, 1), ex7 (`u`, dynamic
+`u - U`) and ex8 (`seqId`, dynamic `seqId - prevSeqId`). Full story: [[project_pair_extractor]] § ex8.

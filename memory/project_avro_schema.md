@@ -123,3 +123,11 @@ same identical-redefinition rule as `PriceLevel`/`Type`.
 [[kafka-topic-strategy]]
 
 **2026-08-03 — `simulation` (int, default 0) added to ALL FOUR schemas** (`AggregatedLevel` gets it per level, not per record). Same re-registration trap as `pipeline_timings`: a stale registered subject makes the Avro sink throw. See [[simulation-flag]].
+
+**⚠ 2026-09-05 — the ex8 entries in the two bullets above are STALE.** ex8/okx is no longer
+sequenced by `ts` and no longer stamps `sequence_jump = 300`. On the `books` channel its
+`sequence_id` is `seqId` (a real counter) and its `sequence_jump` is stamped **per message** as
+`seqId - prevSeqId`, which makes job 2's rule reduce to `prevSeqId == lastSeq`. So `sequence_jump`
+is NOT always a per-exchange constant — ex7 and ex8 both vary it message to message, and nothing in
+the schema needed to change for that (it was always a plain long). `ts`-as-sequence now means ex5
+alone. See [[project_pair_extractor]] § ex8.

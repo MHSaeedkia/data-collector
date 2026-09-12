@@ -150,6 +150,11 @@
 - [ ] Run it against the live stack — the per-exchange path has never seen a real `order-book-snapshot` record, only synthesised ones in `decoder_test.go`
 - [ ] An idle exchange renders nothing until its next event (consequence of reading the per-exchange topics from `latest`). If that turns out to be a problem in practice, the fix is a bounded backfill on that consumer, not a switch back to `earliest`
 - [ ] The pair dropdown lists every market in postgres, including ones with no `subscribe` row and therefore no topics — chosen deliberately; narrowing it is a `WHERE EXISTS` on the markets query if it becomes noise
+- [x] **Websocket freeze — one stalled browser froze the whole server** (2026-09-06, user bug report, branch `fix/web-ws-hub-freeze-and-replay`) — three reported symptoms, one defect: the aggregated view stuck on a single exchange while `p1-asks` held complete records, the page showing nothing at all, and the websocket connected in the inspector with **zero frames arriving**. `hub.send` wrote to the socket **while holding `h.mu`** with **no write deadline anywhere**, so a browser that stopped draining parked a goroutine inside the shared mutex forever: `Publish` blocked (and with it the Kafka poll loop, which calls `onRecord` synchronously inside `EachRecord`), and `add` blocked, so a new browser got the 101 handshake and then silence. What stalled the browser was the aggregated consumer's `AtStart()` against the **6h retention** `warmup.sh` sets — every restart replayed six hours of full order books at a page that re-renders per message, which is exactly why restarting stopped helping: the restart *caused* the flood. Fix: a **per-client writer goroutine** off the shared lock (sole-writer is now what satisfies gorilla's no-concurrent-writes rule), a **coalescing** outbound queue bounded at ~4 entries because every message is a complete book (newer replaces older for the same slot; a snapshot drops every queued book message), `writeWait` deadlines on every write, and ping/pong + read deadline so a half-open socket is dropped instead of written to forever. **Consumers now read `AtEnd()` only — user's explicit call: "read only real time messages and not history."** 12 new hub tests including the two named regressions (`TestPublish_DoesNotBlockOnAStalledClient`, `TestAdd_DoesNotBlockOnAStalledClient`) plus a new `hub_ws_test.go` driving a **real** websocket over `httptest` (the only way to cover the read deadline and pong handler); full suite green under `-race -count=3`, vet/gofmt clean, binary smoke-tested serving the page and upgrading `/ws`. **Not yet run against the live stack.** See [[project_orderbook_web]]
+- [ ] **Verify the fix on the server** — restart the `web` container and confirm: the book paints within a second or two of the next live record (no 6h replay), the aggregated view keeps showing every exchange over a long session, and leaving a tab open/asleep for an hour no longer kills the page for other viewers. A frozen hub used to show as **huge non-moving lag** on the `orderbook-web-agg-*` consumer group; that number should now stay near zero
+- [ ] **`hub.Publish` has no ordering guard** — `latest[key]` is overwritten unconditionally. Deliberately left alone: an `event_time` monotonicity check would drop good records (job 6 unions across exchanges, so its `event_time` is not monotonic per topic) and would *cause* the stale-book symptom it looks like it prevents. The topics are 1 partition, so a single consumer already sees them in order; if the partition count is ever raised, the fix belongs in the producer's partition key
+- [x] **Logging** (2026-09-06, user request "add more log", same branch) — the app was nearly silent, which is most of why the freeze took so long to find. Added, all **low-volume and state-changing, never per record**: per-client lifecycle lines with a sequential client id and a disconnect **reason** (browser closed / half-open, no pong / write failed / ping failed); an explicit "`ws select` … NOTHING HELD for it yet" line, which is the fastest answer to "the page shows nothing"; a 30s hub heartbeat reporting clients, books held and the arrival **rate** (a stalled consumer and a quiet market look identical without a rate) plus a line naming any client that is falling behind; per-consumer startup/pattern/group lines, a "first record from {topic}" line answering "is my regex matching anything?", and an explicit "**NO records in the last 30s**" instead of ambiguous silence; the decoder naming each schema id the first time it is fetched; and the registry reporting stale/recovered **on the transition only** — postgres being down used to repeat a multi-line pgx error every 10s forever, which buries everything else. Verified by running the binary with Kafka, postgres and the registry all unreachable while driving a real websocket at it. See [[project_orderbook_web]]
+- [ ] **`public/index.html` hardcodes `ws://`** — fine behind plain HTTP, but the page cannot connect if it is ever served over HTTPS (mixed content). One-line fix (`location.protocol === "https:" ? "wss:" : "ws:"`) when that day comes; not touched now because nothing serves it over TLS today
 
 ## flink/normalizer (job 1 parsers)
 
@@ -851,3 +856,176 @@ stack** — see the same memory section for the run and what it did not cover.
       and the dev stack is what this server runs. Today's deploy was verified by hand.
 - [ ] **A bare `docker compose up -d` on this box wants to recreate NiFi.** Use `--no-deps` with an
       explicit service list, and `--dry-run` first. Worth understanding why NiFi shows as drifted.
+
+## ex8/okx resync black hole (2026-09-05) — half fixed
+
+- [x] **The REST snapshot was being dropped by job 1**, making every `sequence_gap` on ex8
+      terminal. `parseRestSnapshot` branch added, null-seq, with the wire shape documented in
+      `sample-raw-data.md` § ex8 and 2 new parser tests (107 pair-extractor tests green, all 8
+      normalizer modules BUILD SUCCESS). ⚠ **not deployed, not seen live.**
+- [x] **⚠ `seqId` — ASKED AND ANSWERED 2026-09-05. Do not re-open.** The REST body carries
+      `seqId: 4428333610`, which looked like it should replace `ts` as ex8's sequence and delete the
+      whole window question. **The live WS capture settles it: `books-grouped` frames carry `ts` and
+      nothing else — no `seqId`, no `prevSeqId`, no counter.** A sequence only one of the two streams
+      carries cannot order the other. `ts` stays; the REST body stays null-seq; `seqId` is IGNORED,
+      which the parser does and `61-ex8-rest-snapshot-resync` pins.
+- [x] **MEASURED 2026-09-05 on the dev server — 15.0 min, 51,930 WS frames, 51,907 transitions,
+      23 markets.** The ex5 treatment, finally applied. Results, and they close the question both
+      ways at once: **the 300 ms cadence is REAL and exact** (0 of 51,907 forward deltas are off the
+      300 grid, 0.0000%) — so `jump = 300` was always right — **but only 79.52% of transitions are
+      `+300`**; okx skips whole grid steps (`+600` 15.22%, `+900` 2.65%, tail to `+13200`), plus
+      0.254% at exactly `−300` (NiFi↔Kafka reordering, correctly rejected `stale_or_duplicate`).
+      ⚠ **The "dropped frames" hypothesis in the previous version of this item is DEAD:** median
+      Kafka *arrival* delta is 322/324/310/314 ms for the `+300`/`+600`/`+900`/`>900` buckets — a
+      lost frame would arrive ~600 ms out, not ~310. The wall clock keeps its drumbeat while `ts`
+      skips. Two more facts proven at scale: `books-grouped` carries `seqId`/`prevSeqId` on **0 of
+      51,930** frames (REST: 4,828/4,828), and the WS channel sends **ZERO snapshots** (`action` is
+      `"update"` on 51,930/51,930), making ex8 structurally identical to ex5 — REST is its only
+      baseline. See [[project_pair_extractor]] § ex8 for the full distribution and method.
+- [x] **RESOLVED 2026-09-05 by switching channel, NOT by any window change — see the item two
+      below. Kept because the measurement is the reason the switch happened.**
+      **A TOLERANCE IS NOT THE FIX — measured, it buys exactly 0%.** `300 ± 0`, `±10`,
+      `±50`, `±100`, `±150`, `±200`, `±250`, `±299` **all score the identical 79.52%**: the misses
+      are a whole step beyond the band, and a symmetric window around 300 cannot reach 600 without
+      its lower bound touching 0, where `seq == last` is accepted as *valid* before the `seq <= last`
+      duplicate branch is reached. ex5's problem was jitter (`300 ± ε`); ex8's is `300 × k`.
+      Three options, none implemented — awaiting a pick:
+      **(a) grid rule, the correct model** — `seq > last && (seq - last) % jump == 0`, 100% of
+      observed forward transitions, still rejects the −300s; costs one backward-compatible schema
+      field + one branch in job 2, exactly the way `sequence_jump_tolerance` landed.
+      **(b) parser constants only, ships today** — `[J−T, J+T]` with `T = J−1` is `[1, 2J−1]`, so
+      `jump 901 / tol 900` = 99.20% and `jump 2101 / tol 2100` = 99.67%; one line, no schema, no
+      job change, but the constants read as nonsense and it accepts off-grid values.
+      ⚠ **(c) BELOW IS WITHDRAWN — `books` and `books-l2-tbt` are NOT reachable from our endpoint.**
+      See the channel item under this one; it is replaced by the `books5` / WS-resubscribe options.
+      **(c) ~~the real fix, NiFi side~~** — resubscribe okx to `books` / `books-l2-tbt`, which carry
+      `seqId`/`prevSeqId`: exact contiguity, REAL drop detection for the first time, and the REST
+      body's already-present `seqId` seeds the resync, deleting the null-seq workaround.
+      ⚠ (c) is unverified — okx channel behaviour is an external API claim nothing here has tested.
+      **Keep in mind whichever wins: `ts` on `books-grouped` cannot detect a dropped frame at all** —
+      a legitimate skipped step and a lost frame are byte-identical `+600`s. Only (c) changes that.
+- [x] **DECIDED AND IMPLEMENTED — neither A nor B; the team chose `books` on the PUBLIC endpoint.
+      See the item below for what shipped. Probed live 2026-09-05
+      against the real exchange, not the docs.** Two findings reframe everything:
+      **(1) We are not on okx's public API.** NiFi points at `wss://wspri.okx.com:8443/ws/v5/ipublic`
+      (from NiFi's `conf/flow.json.gz`); the dev server gets **HTTP 403** from `www.okx.com`
+      directly. `books-grouped` is undocumented and is **rejected `60018 doesn't exist` on BOTH**
+      `/ws/v5/public` and `/ws/v5/business` — it is real only on `ipublic`. **The public docs do not
+      describe our feed; do not reason from them.**
+      **(2) `ipublic` serves EXACTLY TWO order book channels** (`books`, `bbo-tbt`, `books-rpi`,
+      `books-l2-tbt`, `books50-l2-tbt`, `books10/15/20/25/50/100/400`, `books5-grouped` — all
+      rejected 60018): `books-grouped` (≤**150** levels/side, one `snapshot` on subscribe then
+      deltas, no seqId, exact 300 ms grid) and **`books5` (5 levels/side, EVERY push a full book,
+      no `action` field at all, no seqId, 100 ms grid)**. `books5` verified on 8 of our real markets:
+      8/8 subscribe, 485 msgs/20 s, always 5/5, never an `action` field.
+      **Also corrects the "zero snapshots" claim above:** every fresh `books-grouped` subscribe
+      returns `action:"snapshot"` first (3/3, 150 levels/side) — so **a WS RESUBSCRIBE is a valid
+      resync source**, on the delta feed's own clock and grid, which is what the control-plane item
+      suspected and what would delete the REST two-clocks problem.
+      **A — `books5`, snapshot-only (user's proposal, and it is sound):** ex8 stops being a delta
+      feed (`type="snapshot"`, `sequence_id=null`, event-time ordered — the ex1/ex2/ex3 shape). Kills
+      the whole problem class: no jump, tolerance, gap, RESET, control-plane request, REST resync or
+      black hole, and `parseRestSnapshot` becomes dead weight. **Cost: 150 → 5 levels/side.**
+      **B — keep `books-grouped` for depth and fix it properly:** grid rule + resync by **WS
+      resubscribe** instead of REST. Deep and correct; costs a schema field, a job-2 branch, a NiFi
+      change, and keeps the delta machinery.
+      **The ONLY thing that decides it is whether 5 levels/side is enough for the product.** Nothing
+      in the pipeline caps depth (no `max_levels`/`depth_limit` in `flink/`, `web/`, `schemas/`,
+      `postgres/`) and the aggregator unions all exchanges' levels, so okx would contribute 5 where
+      others contribute full depth. Today's slippage is a flat percent per `exchange_markets` row, so
+      nothing currently reads deep levels — but a depth-walked slippage later would need B.
+      Bandwidth favours A: ~3/s/market of 10 levels beats deltas plus 323.9 REST snapshots/min of
+      200 levels. See [[project_pair_extractor]] § ex8 channel question.
+      **OUTCOME: neither.** The team took a third option this probe had wrongly excluded — `books` on
+      `wss://ws.okx.com:8443/ws/v5/public`. It is absent from `ipublic`, which is why the probe above
+      ruled it out, but the PUBLIC endpoint has it and NiFi is moving there. It keeps the depth (400
+      a side, better than either A or B) AND gets exact contiguity, so the depth-vs-correctness
+      trade-off this item agonised over turned out to be false.
+
+- [x] **SHIPPED on `feat/ex8-okx-books-channel` (2026-09-05) — ex8 now consumes okx `books`.**
+      `wss://ws.okx.com:8443/ws/v5/public`, channel `books`: 400 levels/side, four-element levels,
+      `seqId` + `prevSeqId` + `checksum`. Reachability confirmed first — `ws.okx.com:8443` completes
+      TLS from both the dev host and the NiFi container (`www.okx.com:443` is blocked from that box,
+      which is why REST needed a proxy; the WS host does not).
+      **`OkxParser` stamps `sequence_id = seqId` and a DYNAMIC `sequence_jump = seqId - prevSeqId`**
+      (the ex7 pattern), so job 2's `seq == lastSeq + jump` reduces to `prevSeqId == lastSeq` —
+      exact contiguity, **zero change to job 2**, no schema change, no registry re-register, no
+      tolerance. Measured 6,516/6,516 live transitions chained, 0 broken, on 5 markets.
+      ⚠ **A snapshot stamps jump 0** — its `prevSeqId` is the `-1` sentinel and deriving from it
+      would compute `seqId + 1`; this also keeps the "a snapshot is ordered, never jump-checked"
+      invariant. The REST branch stays null-seq but for a NEW reason: same counter now, but a
+      snapshot's `seqId` is not any later update's `prevSeqId`.
+      Updated: `OkxParser` + javadoc, its 3 fixtures (real captured consecutive snapshot/update
+      pair), `OkxParserTest` 5→8, all 7 ex8 e2e scenarios, `sample-raw-data.md` § ex8, and stale
+      cross-refs in `RawOrderBookEvent`/`BitgetParser` javadoc. **292 normalizer tests green, e2e
+      build/vet/gofmt/test clean.** Mutation-checked 3 ways on the parser, 1 way on job 2.
+- [x] **Job 2 had NO test for the dynamic jump at all** — ex7 has relied on it since 2026-08-24 and
+      nothing exercised a per-message jump. Two added (69→71):
+      `dynamicJumpChainsEachMessageToItsNamedPredecessor` (jumps 0/4/7/2 — no constant would pass)
+      and `dynamicJumpRejectsAnUnseenPredecessor`. Mutating `expected = last + 1` fails 13 tests.
+- [ ] **⚠ RUN THE ex8 SCENARIOS LIVE once NiFi's change lands.** Nothing here has been verified
+      against a real feed: `ex8-raw` on the dev server still carries `books-grouped`, so all 7 ex8
+      scenarios would fail against it today, and their expected books were preserved from the old
+      scenarios rather than re-observed. `Ex8RestSnapshotResync`'s one-reject/one-command count is
+      the assertion most worth watching. Also re-check the accept rate — the baseline to beat is
+      `ex8-p1` at **3.8%** accepted and 323.9 REST resyncs/min.
+- [ ] **Ask the NiFi team to answer resyncs with a RESUBSCRIBE rather than a REST fetch.** Documented
+      in `sample-raw-data.md` § ex8: a fresh subscribe returns a 400-level snapshot on the feed's own
+      counter, so `lastSeq` is re-seeded exactly and the next update chains straight to it — no
+      baseline gap. The REST path still works (and is kept as the tested fallback) but costs a
+      `baselinePending` bootstrap every single resync.
+- [ ] **`checksum` is parsed-past and ignored.** okx ships a CRC32 book-integrity value on every
+      `books` frame; nothing in the platform verifies a checksum (same as ex5). It read `0` on all
+      6,521 captured frames, so it may not even be populated on this feed — worth one look before
+      anyone designs a book-integrity check around it.
+- [x] **The damage this was doing, kept as the baseline to compare against after the switch.**
+      ⚠ Still true on the dev server until NiFi's change lands. ~20.5% of updates
+      gap, each gap RESETs the book and asks the control plane, and NiFi answers by REST:
+      **323.9 REST snapshots/min across 23 markets (~14/min/market)** measured live. Lifetime topic
+      counts: `ex8-p1` 206,188 raw → 196,293 rejected → **7,734 accepted (3.8%)**, every other ex8
+      pair within a point of it. Post-restart reject tails are ~90% `awaiting_snapshot` / ~8%
+      `sequence_gap` — the resync black hole IS fixed (episodes close now), the gap rate is not.
+- [x] **ANSWERED 2026-09-05 — the WS and REST books DO share a price grid; no mismatch.** Captured
+      both streams for the **same** market on all 23 subscribed markets (the pairing that was
+      missing — we had BTC's WS and ZEC's REST, never both for one). Every market's `arg.grouping`
+      equals the tick its REST body quotes at: BTC/BNB `0.1`, ETH/SOL/AAVE/OKB/**ZEC** `0.01`,
+      AVAX/GRAM/HYPE/LINK/NEAR/UNI `0.001`, ADA/DOT/SUI/WLD/XRP `0.0001`, DOGE/TRX/XLM `0.00001`,
+      PEPE/SHIB `1e-9`. The ZEC worry was unfounded — its grouping IS 2 decimals. *(Method caveat:
+      the grid is inferred from the decimal places of quoted top-of-book prices, so it is a lower
+      bound on coarseness; it agrees with `grouping` on all 23, which is what makes it convincing.)*
+- [x] **e2e coverage for the ex8 resync: `61-ex8-rest-snapshot-resync` added** (`Ex8RestSnapshotResync`
+      in `data_ex8.go`, registered in `scenarios.go`; e2e build/vet/gofmt clean, `go test ./scenario/...`
+      ok). ⚠ **never run against a live stack.**
+      **Correcting an earlier claim in this file: ex8's scenarios were NOT commented out** — 38-43
+      have been registered the whole time, and they passed while production was broken. The real
+      gap is narrower and worse: **`40-ex8-sequence-gap` answers its own gap with a WS snapshot**,
+      a frame NiFi never sends for a delta feed. It tested a recovery path that does not exist in
+      production. ex5 (31) and ex6 (48) both already had a REST-resync scenario; ex8 did not.
+- [ ] **Audit the other delta feeds for the same hole.** ex6/bybit is the one to check: does its
+      resync answer parse? ex1/ex2/ex5 are known good (they have REST branches), ex8 was not.
+
+## Flink direct-buffer OOM + no restart strategy (2026-09-06)
+
+- [x] **`docker-compose.yml` now sets M1's `restart-strategy`.** This was the standing P1 from the
+      2026-09-05 revert — "the single most likely way the pipeline dies quietly" — and it is what
+      killed `orderbook-merger` (`Recovery is suppressed by NoRestartBackoffTimeStrategy`). Five keys
+      copied verbatim from the prod file, not re-derived.
+- [x] **Capped Kafka consumer fetch memory on all three PATTERN-subscribing sources** — aggregator,
+      merger, adjustment — to `fetch.max.bytes` 8 MB / `max.partition.fetch.bytes` 512 KB, against a
+      direct-memory budget of 286.7 MB shared by all 8 jobs in the single dev TaskManager. All three,
+      not just the one that threw: the aggregator reads ~4x more partitions, so the merger was
+      probably the victim. See [[project_flink_production]] for the arithmetic.
+- [ ] **⚠ NOT DEPLOYED, NOT OBSERVED.** Needs `make run-all-jobs` (the fetch caps are in the jars)
+      AND the JobManager recreated (the restart strategy is cluster config). Recreating the JM alone
+      would fix the symptom of staying dead while leaving the crash in place.
+- [ ] **Confirm the fetch caps did not starve throughput.** The trade is round trips for peak
+      memory. Watch consumer lag on `p{id}-{side}` and `ex{id}-p{id}-orderbook-snapshot-flink` after
+      the deploy; if the jobs fall behind, raise `taskmanager.memory.task.off-heap.size` (which costs
+      task heap, ~1013m today) rather than putting the 50 MB defaults back.
+- [ ] **Why did this start now?** The sizing has been wrong since the dev TaskManager was set to 2g,
+      so something changed on the demand side — more subscribed markets widening the patterns, or a
+      volume spike. Worth knowing, because the same budget will run out again as markets are added.
+- [ ] **The single dev TaskManager is the structural issue.** 8 jobs in one JVM share one 286.7 MB
+      direct budget and one heap; prod runs 4 TaskManagers precisely to bound this blast radius. The
+      dev file cannot simply grow (it runs on 5+ boxes and must stay host-agnostic), so the dev
+      server may want a `docker-compose.override.yml` of its own.

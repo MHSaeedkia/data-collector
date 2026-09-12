@@ -281,3 +281,122 @@ All Go tests green (5 new: 2 decoder, 2 registry, 2 hub), `go vet` + `gofmt` cle
 on the extracted inline script, and a local run confirming the page serves with the third option. **NOT verified against live Kafka** — docker was
 down, so no merged record has ever actually been decoded by this app, and neither had the merger
 been run live when it was written. The first real test is a stack with the merger job submitted.
+
+---
+
+## 2026-09-06 — the freeze: one stalled browser stopped the whole server
+
+Reported symptoms: the aggregated view sometimes showed **one exchange** while `p1-asks`
+clearly held records from all of them; sometimes it showed **nothing at all**, with the
+browser's network inspector showing the websocket connected but **no frames arriving**; a
+container restart fixed it once and then stopped helping. All three were the same defect.
+
+### The mechanism (read this before touching `internal/hub`)
+
+`hub.send` wrote to the socket **while `h.mu` was held**, and nothing anywhere set a write
+deadline. gorilla's `WriteJSON` blocks indefinitely once the peer stops draining, so one slow
+browser parked a goroutine inside the shared mutex forever. Everything else then queued behind
+it:
+
+- `Publish` blocked → the Kafka poll loop blocked, because `Consumer.Run` calls `onRecord`
+  **synchronously** inside `EachRecord`. Both consumers, since they share one hub.
+- `add` blocked → a NEW browser got the 101 handshake (the upgrade happens before `add`) and
+  then **never a single frame**. That is the "ws shows nothing" symptom exactly.
+- The browser was left rendering whatever book it received last — often a **historical** one
+  from mid-replay, which is why the aggregated view sat on a single exchange while the topic
+  had newer, complete records.
+
+What made the browser stall in the first place was the aggregated consumer's `AtStart()`:
+`warmup.sh` puts **6h retention** on `p{id}-{side}` and `-merged`, so every restart replayed six
+hours of full order books at fetch speed and pushed each one at a page that re-renders the whole
+table per message. That is why restarting stopped helping — the restart *caused* the flood, and
+the backlog only grew.
+
+Nothing here was a Flink or Kafka fault. Both were doing their job.
+
+### What the fix is
+
+- **No socket write ever happens under `h.mu` again.** Each client has its own `writeLoop`
+  goroutine plus a `pending` queue, woken by a capacity-1 `wake` channel. Being the sole writer
+  for that conn is what now satisfies gorilla's no-concurrent-writes rule — the hub mutex used
+  to be what did that, and that is the trap to avoid re-introducing.
+- **The queue coalesces, it does not grow.** Every message carries a COMPLETE book or catalog,
+  so a newer one replaces the older for the same slot (`coalesce`): catalog replaces catalog,
+  update replaces update with the same `Book.Key()`, and a snapshot **drops every queued book
+  message** because it answers the client's whole selection. That bounds `pending` at ~4 entries
+  no matter how far behind the browser is — a slow client loses intermediate frames, never
+  correctness, and is never disconnected merely for being slow. **Do not "fix" this into an
+  unbounded buffered channel; the bound is the point.**
+- **Deadlines and ping/pong.** `writeWait` 10s per write; `pingPeriod` 25s / `pongWait` 60s, with
+  the read deadline and pong handler set on the concrete `*websocket.Conn` in `ServeWS` (which is
+  why they are deliberately NOT on the `conn` interface). Without the ping, a client watching a
+  quiet pair is never written to, so a half-open socket is never discovered. `pingPeriod` is a
+  `var` only so tests can drive that path.
+- `remove` is reached from both the read loop and the write loop, so `client.stop` is a
+  `sync.Once`. Closing `done` twice would panic.
+- **Consumers read from `AtEnd()` only — the user's explicit call (2026-09-06): "I need to read
+  only real time messages and not history messages."** The book no longer paints from replay on
+  a cold start; it fills from the next live record, and the `snapshot` reply covers whatever
+  arrived since the process started. The per-start consumer group name is now load-bearing: a
+  stable name would resume from committed offsets and bring the replay straight back.
+
+### Deliberately NOT done
+
+`hub.Publish` still overwrites `latest[key]` with no ordering guard. Adding an `EventTime`
+monotonicity check was considered and **rejected**: job 6 unions across exchanges, so its
+`event_time` is not monotonic per topic, and such a guard would drop good records and *cause*
+the stale-book symptom it looks like it prevents. The topics are 1 partition (`warmup.sh`), so a
+single consumer already sees them in order. If anyone ever raises the partition count, the fix
+belongs in the producer's partition key, not here.
+
+### Tests
+
+`internal/hub` has two test files on purpose: `hub_test.go` drives the hub through a fake conn
+(including one that *stalls* — `newStalledConn`/`waitParked`/`resume` make the stall
+deterministic rather than timing-dependent), and `hub_ws_test.go` drives it through a **real**
+websocket over `httptest`, which is the only way to cover the read deadline, the pong handler,
+and the fact that `*websocket.Conn` really satisfies `conn`. The two regression tests that name
+the bug are `TestPublish_DoesNotBlockOnAStalledClient` and `TestAdd_DoesNotBlockOnAStalledClient`.
+Assertions on `h.clients` must go through `clientCount(h)` — writer goroutines mutate that map,
+so a bare `len()` is a race in the test even when the code is correct. All green under `-race`,
+`-count=3`.
+
+### Logging (same day, user follow-up: "add more log")
+
+The app was nearly silent, which is most of why the freeze above took so long to find. The
+logging added is deliberately **low-volume and state-changing** — never per record, which at
+these rates would be thousands of lines a second and would bury the useful ones.
+
+- **Lifecycle, one line each**: `ws connect` / `ws select` / `ws disconnect`. Every client gets a
+  sequential id (`client #7 (addr)`) via `client.String()`, because the address alone does not
+  identify a session — the browser reconnects from the same address every 2s. Disconnects carry
+  a **reason** (`readReason`): browser closed, no pong within 60s (half-open), write failed, ping
+  failed. Telling those apart is the difference between "a user closed a tab" and "we are
+  dropping clients we should be keeping".
+- **`ws select` says when the answer was EMPTY.** That single line is the fastest answer to "the
+  page shows nothing": it proves the request arrived and was answered, and that the hub simply
+  holds no book for what was asked — so the question is upstream, not in the web app.
+- **Heartbeat every 30s** (`Hub.LogStats`, ticked from `main.go`): clients, books held, and the
+  arrival RATE. The rate is the point — a stalled consumer and a quiet market look identical in
+  any snapshot of state, and that ambiguity is exactly what cost time last outage. Clients whose
+  `skipped` counter is non-zero get a line naming them, which is the early warning the old design
+  could never give.
+- **`client.skipped`** counts frames dropped by the outbox's coalescing (computed in `enqueue`
+  from how much `pending` did NOT grow). It is the only signal separating "this browser is slow"
+  from "this pair is quiet".
+- **Consumers** (`kafka[agg]` / `kafka[ex]`) log their pattern, offset and group at startup, the
+  **first record from each topic** (the answer to "is my regex matching anything?" — a
+  subscription that matches nothing is otherwise totally silent), and a 30s rate line that says
+  **`NO records in the last 30s`** explicitly. Silence in a log is ambiguous; an explicit line is
+  not.
+- **Decoder** logs each schema id the first time it is fetched, with its Avro full name — once per
+  id for the life of the process, since the cache never invalidates. Proves the registry is
+  reachable and names which record shapes are actually flowing.
+- **Registry** logs count changes, and reports going stale / recovering **on the transition
+  only** (`adopt` + `logErr`). This matters: Refresh runs every 10s, and postgres being down used
+  to mean a repeated multi-line pgx error every tick forever. Repeating identical errors is worse
+  than not logging them — it buries everything else. **Keep new log lines on this discipline.**
+
+Verified by running the binary with Kafka, postgres and the registry all unreachable and driving
+a real websocket at it (connect → select → junk message → disconnect): every line above appears
+once, in order, with no per-tick repetition.
