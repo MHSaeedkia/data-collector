@@ -204,8 +204,10 @@ type Hub struct {
 	latest  map[domain.Selection]domain.Book
 	catalog domain.Catalog
 	// defaultLimit is the depth a client gets until it asks for one of
-	// domain.LevelLimits itself, and the depth the page's dropdown opens
-	// on. It comes from LEVEL_LIMIT (see internal/config).
+	// domain.LevelLimits itself. It is the same value the registry puts in
+	// the catalog for the dropdown to open on, from DEFAULT_LEVEL_LIMIT
+	// (see internal/config) — this copy is what the hub ENFORCES, which is
+	// a different job from what the page is told to show.
 	defaultLimit int
 
 	// published counts books that have reached the hub, so the heartbeat
@@ -238,13 +240,6 @@ func (h *Hub) limitOr(n int) int {
 // actually changed — it is recomputed on the registry's refresh tick, and
 // that is almost always the same list as last time.
 func (h *Hub) SetCatalog(c domain.Catalog) {
-	// The depth dropdown is filled from here, not from postgres, so the
-	// registry never has to know about it — and stamping the values in one
-	// place keeps them inside the DeepEqual below, where a change to the
-	// default would correctly re-broadcast the catalog.
-	c.LevelLimits = domain.LevelLimits
-	c.DefaultLevelLimit = h.defaultLimit
-
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if reflect.DeepEqual(c, h.catalog) {

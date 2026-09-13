@@ -177,8 +177,11 @@
 			// cross-exchange views below. Never write the bare numbers.
 			const AGGREGATED = 0; // job 6's union: levels side by side
 			const MERGED = -1; // the merger's sum: one level per price
+			// All three start empty and are filled from the catalog: which
+			// pair, which exchange and which depth the page opens on are
+			// configured on the server, not decided here.
 			let selectedPair = null; // market id
-			let selectedExchange = AGGREGATED;
+			let selectedExchange = null;
 			// How many levels per side to ask for. The server applies it
 			// before sending, so this is a request, not a filter: the choices
 			// and the one to start on both come from the catalog, which is
@@ -227,10 +230,18 @@
 
 			function refreshDropdowns() {
 				const markets = catalog.markets || [];
-				// Fall back to the first market when nothing is selected yet,
-				// or when the selected one disappeared from the catalog.
+				// Nothing selected yet, or the selected market disappeared
+				// from the catalog: take the configured default, and the
+				// first market if that is not one we were given (id 0 is
+				// what the server sends when it resolved nothing).
 				if (!markets.some((m) => m.id === selectedPair)) {
-					selectedPair = markets.length ? markets[0].id : null;
+					selectedPair = markets.some(
+						(m) => m.id === catalog.default_pair_id,
+					)
+						? catalog.default_pair_id
+						: markets.length
+							? markets[0].id
+							: null;
 				}
 				fillSelect(
 					$pair,
@@ -240,18 +251,22 @@
 					})),
 					selectedPair,
 				);
-				fillSelect(
-					$exchange,
-					[
-						{ value: AGGREGATED, text: "All exchanges (aggregated)" },
-						{ value: MERGED, text: "All exchanges (merged)" },
-						...(catalog.exchanges || []).map((e) => ({
-							value: e.id,
-							text: e.name,
-						})),
-					],
-					selectedExchange,
-				);
+				const exchangeOptions = [
+					{ value: AGGREGATED, text: "All exchanges (aggregated)" },
+					{ value: MERGED, text: "All exchanges (merged)" },
+					...(catalog.exchanges || []).map((e) => ({
+						value: e.id,
+						text: e.name,
+					})),
+				];
+				if (!exchangeOptions.some((o) => o.value === selectedExchange)) {
+					selectedExchange = exchangeOptions.some(
+						(o) => o.value === catalog.default_exchange_id,
+					)
+						? catalog.default_exchange_id
+						: AGGREGATED;
+				}
+				fillSelect($exchange, exchangeOptions, selectedExchange);
 				const limits = catalog.level_limits || [];
 				if (!limits.includes(selectedLimit)) {
 					selectedLimit = limits.includes(catalog.default_level_limit)
@@ -410,12 +425,17 @@
 					if (msg.type === "catalog") {
 						catalog = msg;
 						const was = selectedPair;
+						const wasExchange = selectedExchange;
 						const wasLimit = selectedLimit;
 						refreshDropdowns();
-						// Only re-subscribe if the catalog moved us off the
-						// pair or the depth we were on (first load, or it
-						// disappeared).
-						if (selectedPair !== was || selectedLimit !== wasLimit) {
+						// Only re-subscribe if the catalog moved us off what
+						// we were on — first load, where all three come from
+						// the server's defaults, or one of them disappeared.
+						if (
+							selectedPair !== was ||
+							selectedExchange !== wasExchange ||
+							selectedLimit !== wasLimit
+						) {
 							sendSelect();
 							return;
 						}

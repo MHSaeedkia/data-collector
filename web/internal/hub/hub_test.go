@@ -646,16 +646,22 @@ func TestSelect_ADepthTheUIDoesNotOfferFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
-// The page builds its depth dropdown from the catalog, so the choices and
-// the one it opens on have to be in it.
-func TestCatalog_CarriesTheDepthChoices(t *testing.T) {
+// The hub forwards the catalog exactly as the registry built it — the
+// dropdown contents, defaults included, are not its business.
+func TestCatalog_IsForwardedUnchanged(t *testing.T) {
 	h := New(100)
-	h.SetCatalog(domain.Catalog{Markets: []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}}})
+	built := domain.Catalog{
+		Markets:           []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}},
+		LevelLimits:       domain.LevelLimits,
+		DefaultLevelLimit: 50,
+		DefaultPairID:     1,
+		DefaultExchangeID: domain.MergedExchangeID,
+	}
+	h.SetCatalog(built)
 	c := newFakeConn()
 
 	h.add(c, "test")
 
 	cat := waitSent(t, c, 1)[0].(domain.WSCatalog)
-	assert.Equal(t, domain.LevelLimits, cat.LevelLimits)
-	assert.Equal(t, 100, cat.DefaultLevelLimit)
+	assert.Equal(t, built, cat.Catalog)
 }

@@ -553,17 +553,18 @@ This is deliberately the opposite choice from the `AGGREGATED`/`MERGED` constant
 duplicated in the JS and coupled by convention only — the todo item asking whether to serve them
 in the catalog instead now has a working precedent to copy.
 
-The hub stamps both fields in `SetCatalog` (so the registry never learns about depths, and the
-values sit inside the existing `DeepEqual` guard, which means changing the default correctly
-re-broadcasts). `hub.New` now takes the default.
+`hub.New` takes the default, which is what it ENFORCES. (The catalog stamping first lived in
+`hub.SetCatalog`; it moved to the registry hours later — see the defaults section below — so the
+whole catalog message is filled in one place.)
 
 ### Invalid depths are replaced and ANNOUNCED, never honoured
 
 Two gates, both falling back rather than clamping:
 
-- `config`: `LEVEL_LIMIT` must parse and be one of `domain.LevelLimits`, else one log line
-  (`config: LEVEL_LIMIT="75" is not one of [25 50 100 200] — using 25`) and the default. A value
-  the dropdown cannot show would leave the UI open on a depth it cannot select back.
+- `config`: `DEFAULT_LEVEL_LIMIT` (named `LEVEL_LIMIT` for the first few hours of the same day)
+  must parse and be one of `domain.LevelLimits`, else one log line
+  (`config: DEFAULT_LEVEL_LIMIT="75" is not one of [25 50 100 200] — using 25`) and the default.
+  A value the dropdown cannot show would leave the UI open on a depth it cannot select back.
 - `hub.limitOr`: a client asking for anything else — including `0`, which is what a browser that
   has not received a catalog yet sends — gets the default. **A rejected request must not be the
   way to receive the whole book**, which is what "no limit" would mean here.
@@ -574,7 +575,7 @@ is what makes sure a client never reaches it with one.
 ### Defaults and config
 
 Default **25** (user's choice — the cheapest thing to render is the right thing to open on).
-`LEVEL_LIMIT` added to `web/.env.example` and to the `web` service in **both**
+`DEFAULT_LEVEL_LIMIT` added to `web/.env.example` and to the `web` service in **both**
 `docker-compose.yml` and `docker-compose.prod.yml` (identical service blocks; leaving prod out
 would have meant the setting existed everywhere except where it runs).
 
@@ -601,3 +602,67 @@ computes the max event time at all.
 Nothing on the server changed: `event_time` is still on every book in the websocket JSON, it is
 simply not drawn. `main { margin-top: 53px }` still matches the header, which the added span does
 not grow — it is 11px text in a row of 32px selects.
+
+---
+
+## 2026-09-13 — all three dropdowns open on a configured default
+
+User request: "the default values for all three dropdowns must be configurable via the .env file."
+So `DEFAULT_PAIR`, `DEFAULT_EXCHANGE`, `DEFAULT_LEVEL_LIMIT` — and the depth var added hours
+earlier was renamed from `LEVEL_LIMIT` into that family (user's call; nothing was deployed yet).
+
+### Names in `.env`, ids on the wire
+
+The user chose **symbols over ids** for the pair: `DEFAULT_PAIR=BTC/USDT`, not `DEFAULT_PAIR_ID=2`
+— an id in a hand-edited file says nothing without the database open beside it. `DEFAULT_EXCHANGE`
+follows the same principle: an exchange NAME as postgres spells it, or the words `aggregated` /
+`merged` for the two cross-exchange views (`domain.AggregatedName` / `MergedName`). Matching is
+case-insensitive and the value is trimmed, because a `.env` is hand-edited.
+
+The browser still receives **ids** (`default_pair_id`, `default_exchange_id` on the catalog): the
+page's whole vocabulary is ids, and nothing about the wire changed.
+
+### The registry resolves them, and now owns the whole catalog
+
+Resolution needs the postgres maps, so it happens in `registry.Refresh` (under the write lock,
+right after `adopt`), storing `defaultPairID`/`defaultExchangeID` that `Catalog()` reads. It runs
+on **every** refresh, not once at startup, because on a cold start postgres may not have answered
+yet — the configured pair is unresolvable then, and it starts working on the tick after postgres
+comes back (the catalog changing is what re-broadcasts it to the browsers).
+
+As a consequence `registry.Catalog()` now fills **everything** a catalog message contains, the
+depths included, and `hub.SetCatalog` stamps nothing — one place to look for what is in one. The
+hub keeps its own `defaultLimit`, but only for `limitOr`: what the hub ENFORCES on a client
+request is a different job from what the page is TOLD to open on.
+
+### Fallbacks, and what "0" means
+
+Neither gate guesses. A pair that matches nothing resolves to **0**, which is not a market id and
+is therefore the page's cue to fall back to the first market — exactly what it did before any of
+this was configurable. An unknown exchange resolves to `AggregatedExchangeID`. The browser
+re-checks both against the catalog it was actually given (`markets.some(...)`,
+`exchangeOptions.some(...)`) before adopting them, so a stale or half-loaded catalog cannot leave
+a dropdown pointing at something it does not list.
+
+`selectedExchange` in the page now starts as `null`, not `AGGREGATED`. That is the whole trick
+that lets a configured default apply on first load: `refreshDropdowns` only reaches for the
+default when what is selected is not in the list, so a hardcoded starting value would have meant
+the default never got a chance. The catalog handler's "did the catalog move us?" guard grew the
+exchange alongside pair and depth for the same reason.
+
+### Logging
+
+`registry.logResolved` says once — on the transition, keyed per var — what a name became
+(`registry: DEFAULT_PAIR="BTC/USDT" is id 2`) or that it matched nothing yet. Same discipline as
+`logErr`/`adopt`: `Refresh` runs every 10s and a line per tick would bury everything. **Verified
+by running 26s with postgres down: exactly one line, not three.**
+
+### Status
+
+`make check` green. New tests: 5 registry (symbol resolution incl. case, unknown/unset → 0, the
+three exchange spellings, resolution recovering once postgres answers, catalog carries the
+depths), 2 config, 1 hub (the catalog is forwarded unchanged). Mutation-tested: matching on
+`m.Base` instead of `base/quote` fails 2, collapsing merged into aggregated fails 2.
+**Resolution has never run against a real postgres** — docker was down here, so every test used
+the fake repo. The first real check is whether `DEFAULT_PAIR=BTC/USDT` matches the way the server
+DB actually spells its currency names.

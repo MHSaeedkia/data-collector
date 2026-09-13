@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 
@@ -19,9 +20,12 @@ type Config struct {
 	KafkaBroker       string
 	DatabaseURL       string
 	SchemaRegistryURL string
-	// LevelLimit is the depth the UI starts on: how many levels per side a
-	// client gets until it picks one of domain.LevelLimits itself.
-	LevelLimit int
+	// Defaults are the three dropdown values the page opens on. Pair and
+	// Exchange are passed on as written: they name rows in postgres, which
+	// this package cannot reach, so the registry is what resolves them (and
+	// what reports a name that matches nothing). Only the depth can be
+	// checked here, because the depths on offer are a fixed list.
+	Defaults domain.Defaults
 }
 
 const (
@@ -54,23 +58,27 @@ func FromEnv() Config {
 		KafkaBroker:       env("KAFKA_BROKER", defaultKafkaBroker),
 		DatabaseURL:       env("DATABASE_URL", defaultDatabaseURL),
 		SchemaRegistryURL: env("SCHEMA_REGISTRY_URL", defaultSchemaRegistryURL),
-		LevelLimit:        levelLimit(),
+		Defaults: domain.Defaults{
+			Pair:       strings.TrimSpace(os.Getenv("DEFAULT_PAIR")),
+			Exchange:   strings.TrimSpace(os.Getenv("DEFAULT_EXCHANGE")),
+			LevelLimit: levelLimit(),
+		},
 	}
 }
 
-// levelLimit reads LEVEL_LIMIT, which must name one of the depths the UI
-// offers. A value outside that list is not clamped or honoured quietly:
-// it is announced and replaced, because the alternative is a server whose
-// starting depth cannot be selected back in the dropdown, with nothing in
-// the log to say why.
+// levelLimit reads DEFAULT_LEVEL_LIMIT, which must name one of the depths
+// the UI offers. A value outside that list is not clamped or honoured
+// quietly: it is announced and replaced, because the alternative is a
+// server whose starting depth cannot be selected back in the dropdown,
+// with nothing in the log to say why.
 func levelLimit() int {
-	raw := os.Getenv("LEVEL_LIMIT")
+	raw := os.Getenv("DEFAULT_LEVEL_LIMIT")
 	if raw == "" {
 		return defaultLevelLimit
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || !domain.ValidLevelLimit(n) {
-		log.Printf("config: LEVEL_LIMIT=%q is not one of %v — using %d", raw, domain.LevelLimits, defaultLevelLimit)
+		log.Printf("config: DEFAULT_LEVEL_LIMIT=%q is not one of %v — using %d", raw, domain.LevelLimits, defaultLevelLimit)
 		return defaultLevelLimit
 	}
 	return n

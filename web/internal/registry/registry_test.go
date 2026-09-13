@@ -33,7 +33,7 @@ func TestRefresh_PopulatesBothMaps(t *testing.T) {
 		markets:   map[int]domain.Market{1: {ID: 1, Base: "BTC", Quote: "USDT"}},
 		exchanges: map[int]domain.Exchange{2: {ID: 2, Name: "nobitex", Label: "نوبیتکس"}},
 	}
-	r := New(repo)
+	r := New(repo, domain.Defaults{})
 
 	r.Refresh(context.Background())
 
@@ -48,7 +48,7 @@ func TestRefresh_TransientErrorDoesNotBlankExistingData(t *testing.T) {
 		markets:   map[int]domain.Market{1: {ID: 1, Base: "BTC", Quote: "USDT"}},
 		exchanges: map[int]domain.Exchange{2: {ID: 2, Name: "nobitex", Label: "نوبیتکس"}},
 	}
-	r := New(repo)
+	r := New(repo, domain.Defaults{})
 	r.Refresh(context.Background())
 
 	// Second refresh fails on both queries; a real error case (empty map + error).
@@ -64,7 +64,7 @@ func TestRefresh_TransientErrorDoesNotBlankExistingData(t *testing.T) {
 }
 
 func TestEnrich_UnknownIdsFallBackToPlaceholders(t *testing.T) {
-	r := New(&fakeRepo{})
+	r := New(&fakeRepo{}, domain.Defaults{})
 
 	got := r.Enrich(domain.RawBook{
 		PairID: 42,
@@ -84,7 +84,7 @@ func TestEnrich_UnknownIdsFallBackToPlaceholders(t *testing.T) {
 // filled so the table renders the same either way.
 func TestEnrich_PerExchangeBookResolvesTheBookLevelExchange(t *testing.T) {
 	repo := &fakeRepo{exchanges: map[int]domain.Exchange{8: {ID: 8, Name: "okx", Label: "OKX"}}}
-	r := New(repo)
+	r := New(repo, domain.Defaults{})
 	r.Refresh(context.Background())
 
 	got := r.Enrich(domain.RawBook{
@@ -100,7 +100,7 @@ func TestEnrich_PerExchangeBookResolvesTheBookLevelExchange(t *testing.T) {
 }
 
 func TestEnrich_AggregatedBookHasNoBookLevelExchange(t *testing.T) {
-	r := New(&fakeRepo{})
+	r := New(&fakeRepo{}, domain.Defaults{})
 
 	got := r.Enrich(domain.RawBook{PairID: 1, Side: "asks"})
 
@@ -113,7 +113,7 @@ func TestEnrich_MergedBookResolvesEveryContributingExchange(t *testing.T) {
 		1: {ID: 1, Name: "nobitex", Label: "نوبیتکس"},
 		3: {ID: 3, Name: "wallex", Label: "والکس"},
 	}}
-	r := New(repo)
+	r := New(repo, domain.Defaults{})
 	r.Refresh(context.Background())
 
 	got := r.Enrich(domain.RawBook{
@@ -135,7 +135,7 @@ func TestEnrich_MergedBookResolvesEveryContributingExchange(t *testing.T) {
 }
 
 func TestEnrich_MergedUnknownExchangeStillFallsBackToThePlaceholder(t *testing.T) {
-	r := New(&fakeRepo{exchanges: map[int]domain.Exchange{1: {ID: 1, Name: "nobitex"}}})
+	r := New(&fakeRepo{exchanges: map[int]domain.Exchange{1: {ID: 1, Name: "nobitex"}}}, domain.Defaults{})
 	r.Refresh(context.Background())
 
 	got := r.Enrich(domain.RawBook{
@@ -160,7 +160,7 @@ func TestCatalog_ListsEverythingSortedByID(t *testing.T) {
 			1: {ID: 1, Name: "nobitex"},
 		},
 	}
-	r := New(repo)
+	r := New(repo, domain.Defaults{})
 	r.Refresh(context.Background())
 
 	got := r.Catalog()
@@ -178,7 +178,7 @@ func TestEnrich_PreservesLevelOrderAndFields(t *testing.T) {
 			2: {ID: 2, Name: "ex2", Label: "Exchange Two"},
 		},
 	}
-	r := New(repo)
+	r := New(repo, domain.Defaults{})
 	r.Refresh(context.Background())
 
 	got := r.Enrich(domain.RawBook{
@@ -195,4 +195,89 @@ func TestEnrich_PreservesLevelOrderAndFields(t *testing.T) {
 	assert.Equal(t, "ex1", got.Levels[0].Exchange.Name)
 	assert.Equal(t, "ex2", got.Levels[1].Exchange.Name)
 	assert.Equal(t, int64(123), got.EventTime)
+}
+
+// The defaults are written as names in .env — an id there would say
+// nothing without the database open beside it — so postgres is what turns
+// them into the ids the browser selects on.
+func TestCatalog_ResolvesTheConfiguredDefaultPairBySymbol(t *testing.T) {
+	repo := &fakeRepo{markets: map[int]domain.Market{
+		1: {ID: 1, Base: "BTC", Quote: "USDT"},
+		2: {ID: 2, Base: "ETH", Quote: "USDT"},
+	}}
+	r := New(repo, domain.Defaults{Pair: "eth/usdt"}) // case is not the point
+	r.Refresh(context.Background())
+
+	assert.Equal(t, 2, r.Catalog().DefaultPairID)
+}
+
+// 0 is not a market id, so it is the page's cue to fall back to the first
+// market — which is what it did before any of this was configurable.
+func TestCatalog_UnknownOrUnsetDefaultPairIsZero(t *testing.T) {
+	repo := &fakeRepo{markets: map[int]domain.Market{1: {ID: 1, Base: "BTC", Quote: "USDT"}}}
+
+	for name, defaults := range map[string]domain.Defaults{
+		"unset":   {},
+		"unknown": {Pair: "DOGE/USDT"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := New(repo, defaults)
+			r.Refresh(context.Background())
+
+			assert.Zero(t, r.Catalog().DefaultPairID)
+		})
+	}
+}
+
+// The exchange dropdown offers two cross-exchange views alongside the
+// real exchanges, so DEFAULT_EXCHANGE has to be able to name them.
+func TestCatalog_ResolvesTheConfiguredDefaultExchange(t *testing.T) {
+	repo := &fakeRepo{exchanges: map[int]domain.Exchange{8: {ID: 8, Name: "okx"}}}
+
+	for _, tc := range []struct {
+		configured string
+		want       int
+	}{
+		{"", domain.AggregatedExchangeID},
+		{"aggregated", domain.AggregatedExchangeID},
+		{"merged", domain.MergedExchangeID},
+		{"MERGED", domain.MergedExchangeID},
+		{"okx", 8},
+		{"OKX", 8},
+		{"kraken", domain.AggregatedExchangeID}, // not an exchange we know
+	} {
+		t.Run(tc.configured, func(t *testing.T) {
+			r := New(repo, domain.Defaults{Exchange: tc.configured})
+			r.Refresh(context.Background())
+
+			assert.Equal(t, tc.want, r.Catalog().DefaultExchangeID)
+		})
+	}
+}
+
+// A cold start with postgres down cannot resolve a name, and must not
+// pick something arbitrary instead. Once the maps arrive the default
+// starts working, and the catalog changing is what re-broadcasts it.
+func TestCatalog_ResolvesTheDefaultsOncePostgresAnswers(t *testing.T) {
+	repo := &fakeRepo{marketsErr: errors.New("connection refused")}
+	r := New(repo, domain.Defaults{Pair: "BTC/USDT"})
+	r.Refresh(context.Background())
+	require.Zero(t, r.Catalog().DefaultPairID)
+
+	repo.marketsErr = nil
+	repo.markets = map[int]domain.Market{7: {ID: 7, Base: "BTC", Quote: "USDT"}}
+	r.Refresh(context.Background())
+
+	assert.Equal(t, 7, r.Catalog().DefaultPairID)
+}
+
+// The page reads every dropdown's contents and starting value out of the
+// catalog, so all of it has to be in there.
+func TestCatalog_CarriesTheDepthChoicesAndTheDefault(t *testing.T) {
+	r := New(&fakeRepo{}, domain.Defaults{LevelLimit: 50})
+
+	c := r.Catalog()
+
+	assert.Equal(t, domain.LevelLimits, c.LevelLimits)
+	assert.Equal(t, 50, c.DefaultLevelLimit)
 }

@@ -185,13 +185,40 @@ func (s Selection) Matches(b Book) bool {
 type Catalog struct {
 	Markets   []Market   `json:"markets"`
 	Exchanges []Exchange `json:"exchanges"`
-	// LevelLimits and DefaultLevelLimit fill the depth dropdown and say
-	// which entry it starts on. They ride on the catalog because it is
-	// already the one message that bootstraps the dropdowns, and they come
-	// from the server so the page holds no copy of the vocabulary.
+	// LevelLimits is the depth dropdown's contents, and the three Default
+	// fields are the entry each of the three dropdowns opens on. They ride
+	// on the catalog because it is already the one message that bootstraps
+	// the dropdowns, and they come from the server so the page holds no
+	// copy of the vocabulary and no opinion about what to show first.
+	//
+	// DefaultPairID is 0 when nothing is configured or the configured pair
+	// is not a market postgres knows; the page then falls back to the
+	// first market in the list. DefaultExchangeID always names one of the
+	// three things an exchange_id can be, so it needs no such escape.
 	LevelLimits       []int `json:"level_limits"`
 	DefaultLevelLimit int   `json:"default_level_limit"`
+	DefaultPairID     int   `json:"default_pair_id"`
+	DefaultExchangeID int   `json:"default_exchange_id"`
 }
+
+// Defaults are the three dropdown values the page opens on, exactly as
+// configured (see internal/config). Pair and Exchange are written the way
+// a person writes them in .env — "BTC/USDT", "okx", "aggregated",
+// "merged" — never as ids: an id in a hand-edited file says nothing
+// without the database open next to it. Resolving those names is the
+// registry's job, because postgres is where the names live.
+type Defaults struct {
+	Pair       string
+	Exchange   string
+	LevelLimit int
+}
+
+// The two views the exchange dropdown offers besides a real exchange,
+// spelled as DEFAULT_EXCHANGE takes them.
+const (
+	AggregatedName = "aggregated"
+	MergedName     = "merged"
+)
 
 // The websocket message shapes. Server -> client: catalog, snapshot,
 // update. Client -> server: select.

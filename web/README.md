@@ -53,9 +53,18 @@ module proxy; run `go mod vendor` after changing dependencies.
 - `DATABASE_URL` — postgres DSN (default `postgres://postgres:postgres@localhost:5432/markets`)
 - `SCHEMA_REGISTRY_URL` — Confluent Schema Registry URL (default `http://localhost:8082`, the
   host-exposed listener), used to resolve each record's Avro writer schema by id
-- `LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one of the
-  depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and replaced
-  by the default, since the page could not select it back
+- `DEFAULT_PAIR` — the market the pair dropdown opens on, as a `base/quote` symbol
+  (`BTC/USDT`, case-insensitive). Unset, or a symbol no market matches, means the first market
+  in the list
+- `DEFAULT_EXCHANGE` — the exchange dropdown's starting entry: an exchange name (`okx`), or
+  `aggregated` / `merged` for the two cross-exchange views. Unset or unknown means `aggregated`
+- `DEFAULT_LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one
+  of the depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and
+  replaced by the default, since the page could not select it back
+
+`DEFAULT_PAIR` and `DEFAULT_EXCHANGE` are names, not ids: an id in a hand-edited file says
+nothing without the database open next to it. The registry resolves them against postgres on
+every refresh and says once, in the log, what each one became — or that it matched nothing.
 
 ## Notes
 
@@ -89,6 +98,10 @@ module proxy; run `go mod vendor` after changing dependencies.
   level, so two browsers can watch the same book at different depths, and a client asking for a
   depth that is not on offer gets the default rather than the whole book. The dropdown's choices
   and its starting value both ride on the `catalog` message, so the page holds no copy of them.
+- **All three dropdowns open on a configured default** (`DEFAULT_PAIR`, `DEFAULT_EXCHANGE`,
+  `DEFAULT_LEVEL_LIMIT`). The `catalog` message carries the resolved ids, so the page decides
+  nothing for itself; it only falls back — to the first market, or to the aggregated view — when
+  what it was given is not in the list it was given.
 - **The server pushes each browser only the pair+exchange it selected.** The browser sends
   `{"type":"select","pair_id":N,"exchange_id":N,"limit":N}` (exchange `0` = aggregated) on
   connect and on every dropdown change; the server answers with a `snapshot` of what it holds and then

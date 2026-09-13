@@ -7,6 +7,7 @@ import (
 	"log"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"orderbook-web/internal/domain"
@@ -17,6 +18,11 @@ import (
 // repository.
 type Registry struct {
 	repo ports.MarketRepository
+	// defaults are the dropdown values the page opens on, as configured.
+	// Pair and Exchange arrive as names and are resolved against the maps
+	// below on every refresh — they are unresolvable until postgres has
+	// answered at least once, which on a cold start it may not have.
+	defaults domain.Defaults
 
 	mu        sync.RWMutex
 	markets   map[int]domain.Market
@@ -29,15 +35,24 @@ type Registry struct {
 	// lastErr is the previous failure per load, so a repeating error is
 	// reported once rather than on every tick.
 	lastErr map[string]string
+	// defaultPairID/defaultExchangeID are the resolved defaults, recomputed
+	// on each refresh, and resolvedID is what they were last reported as —
+	// the same "say it on the transition" discipline as lastErr.
+	defaultPairID     int
+	defaultExchangeID int
+	resolvedID        map[string]int
 }
 
-func New(repo ports.MarketRepository) *Registry {
+func New(repo ports.MarketRepository, defaults domain.Defaults) *Registry {
 	return &Registry{
-		repo:      repo,
-		markets:   map[int]domain.Market{},
-		exchanges: map[int]domain.Exchange{},
-		stale:     map[string]bool{},
-		lastErr:   map[string]string{},
+		repo:              repo,
+		defaults:          defaults,
+		markets:           map[int]domain.Market{},
+		exchanges:         map[int]domain.Exchange{},
+		stale:             map[string]bool{},
+		lastErr:           map[string]string{},
+		defaultExchangeID: domain.AggregatedExchangeID,
+		resolvedID:        map[string]int{},
 	}
 }
 
@@ -54,6 +69,58 @@ func (r *Registry) Refresh(ctx context.Context) {
 	r.logErr("exchanges", exchangesErr)
 	r.markets = adopt(r, "markets", markets, r.markets)
 	r.exchanges = adopt(r, "exchanges", exchanges, r.exchanges)
+	r.resolveDefaults()
+}
+
+// resolveDefaults turns the configured names into ids against the maps
+// just loaded. It runs on every refresh rather than once at startup
+// because postgres may not have answered yet when the process comes up,
+// and because a market or exchange can be renamed under us. Callers hold
+// the write lock.
+func (r *Registry) resolveDefaults() {
+	r.defaultPairID = 0
+	if want := r.defaults.Pair; want != "" {
+		for id, m := range r.markets {
+			if strings.EqualFold(m.Base+"/"+m.Quote, want) {
+				r.defaultPairID = id
+				break
+			}
+		}
+		r.logResolved("DEFAULT_PAIR", want, r.defaultPairID, r.defaultPairID != 0)
+	}
+
+	r.defaultExchangeID = domain.AggregatedExchangeID
+	switch want := r.defaults.Exchange; {
+	case want == "" || strings.EqualFold(want, domain.AggregatedName):
+	case strings.EqualFold(want, domain.MergedName):
+		r.defaultExchangeID = domain.MergedExchangeID
+	default:
+		found := false
+		for id, e := range r.exchanges {
+			if strings.EqualFold(e.Name, want) {
+				r.defaultExchangeID, found = id, true
+				break
+			}
+		}
+		r.logResolved("DEFAULT_EXCHANGE", want, r.defaultExchangeID, found)
+	}
+}
+
+// logResolved reports what a configured name turned into, once — when the
+// answer changes, not on every 10s refresh. A name that matches nothing is
+// worth saying out loud: the page silently opening on a different pair
+// than the one in .env is otherwise indistinguishable from a typo nobody
+// made. Callers hold the write lock.
+func (r *Registry) logResolved(what, want string, id int, ok bool) {
+	if prev, seen := r.resolvedID[what]; seen && prev == id {
+		return
+	}
+	r.resolvedID[what] = id
+	if !ok {
+		log.Printf("registry: %s=%q matches nothing postgres knows (yet) — the page falls back", what, want)
+		return
+	}
+	log.Printf("registry: %s=%q is id %d", what, want, id)
 }
 
 // logErr prints a query failure once per run of identical failures, not
@@ -118,6 +185,13 @@ func (r *Registry) Catalog() domain.Catalog {
 	}
 	sort.Slice(c.Markets, func(i, j int) bool { return c.Markets[i].ID < c.Markets[j].ID })
 	sort.Slice(c.Exchanges, func(i, j int) bool { return c.Exchanges[i].ID < c.Exchanges[j].ID })
+
+	// Everything the dropdowns need comes from here, including the depths,
+	// so there is one place to look for what a catalog message contains.
+	c.LevelLimits = domain.LevelLimits
+	c.DefaultLevelLimit = r.defaults.LevelLimit
+	c.DefaultPairID = r.defaultPairID
+	c.DefaultExchangeID = r.defaultExchangeID
 	return c
 }
 
