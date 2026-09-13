@@ -71,7 +71,7 @@ services:
                 # the PARALLELISM_* values in the root Makefile. Keep the two in step. Sized from
                 # live busy/throughput on 2026-09-13. Slots are not cores: every job still shares
                 # this container's CPU.
-                taskmanager.numberOfTaskSlots: 14
+                taskmanager.numberOfTaskSlots: 50
                 # M2a's dev half. The image default gives 1728m process and only 512m
                 # JVM heap for ALL jobs, which was survivable until checkpointing
                 # landed. With 6 jobs checkpointing every 10s it GCs hard enough to
@@ -92,7 +92,7 @@ services:
                 # ignores unknown keys, and it is how every commented block in
                 # docker-compose.prod.yml already behaves. Noted so the startup log's
                 # "Loading configuration property #..." lines are not mistaken for a bug.
-                taskmanager.memory.process.size: 2g
+                taskmanager.memory.process.size: 8g
                 taskmanager.memory.managed.fraction: 0.1
                 metrics.reporters: prom
                 metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
