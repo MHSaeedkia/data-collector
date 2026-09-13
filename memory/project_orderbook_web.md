@@ -274,7 +274,8 @@ an id postgres doesn't know shows as `unknown` rather than dropping a contributo
 ### Browser
 
 `exchangeNames(l)` joins `l.exchanges` with `", "` (user's choice over a bare count), falling back
-to `l.exchange.name`. The Exchange column now shows for `selectedExchange <= 0` (both cross-exchange
+to `l.exchange.name`. **⚠ REVERSED 2026-09-13 — it is a bare count now, and blank for a single
+contributor; see that section. The names were tried for three weeks and the user chose the count.** The Exchange column now shows for `selectedExchange <= 0` (both cross-exchange
 views, still hidden for a single exchange where it is one constant), with the header reading
 `Exchanges` in the merged view. Levels render in the merger's order — asks ascending, bids
 descending, live before simulated at one price — the same convention `render()` already assumes.
@@ -688,3 +689,68 @@ declared, since a reader will otherwise think one of the two is a mistake).
 Worth keeping straight when reading this file: **"aggregated" and "separated" are the same view**
 — job 6's union, every exchange's levels side by side, each keeping its own exchange. The user's
 word describes what the reader of the book sees; the pipeline's word describes what the job does.
+
+---
+
+## 2026-09-13 — exchange names, dropdown order, and a count instead of a list
+
+Three user requests in one, all about the exchange dropdown and the merged column.
+
+### The names now live in postgres in their brand spelling
+
+`postgres/02_seed.sql` renames every `exchanges.name` to the exchange's own English styling —
+`Nobitex`, `Bitpin`, `Wallex`, `Ramzinex`, `Bitget`, `Bybit`, `OMPFinex`, `OKX`, `LBank` (checked
+against how the companies and the financial press write them; OKX and LBank are styled by the
+companies, OMPFinex is "Ogen Mashregh Pars" + "Finex"). `label` keeps the Persian display name.
+
+**⚠ THE SIDE EFFECT, reported to the user and not fixed here** (the change was scoped to
+`postgres/`): `exchanges.name` is NOT display-only. `market-subscriptions` sends it **verbatim**
+to NiFi as `{"exchange": name, "market": symbol}` on `/subscribe` and `/unsubscribe`
+([[market-subscriptions]]), and `csv-bulk-sync/markets.csv` — the file that has always driven that
+same endpoint — spells every exchange in **lowercase**. So NiFi is very likely matching lowercase
+strings, and a renamed `name` would reach it as `Bitpin`, not `bitpin`. Nothing in this repo can
+prove what NiFi does with that; the flow lives on the server and `nifi/` here holds only a
+Dockerfile. **Confirm the NiFi side before anyone runs the subscription console against a database
+carrying the new names.** The other reader, `market-subscriptions`'s `ORDER BY e.name`, only
+changes sort order (capitals sort before lowercase in the default collation, which is moot once
+every row is capitalised). `warmup` joins `exchanges` but selects only ids — unaffected. The Flink
+parsers are named after exchanges in Java but dispatch on `exchange_id` — unaffected.
+
+**⚠ The seed only applies to a FRESH volume.** The server database keeps the old lowercase names
+until someone runs the `UPDATE`s by hand — the same trap the `exchange_markets` percent columns hit
+on 2026-08-25 ([[db-schema]]).
+
+### Dropdown order
+
+Real exchanges first, sorted by name, then a **separator**, then the two cross-exchange views —
+`merged` before `separated`, alphabetically, as asked. The separator is a `disabled <option>` of
+box-drawing characters, not `<hr>`: `<hr>` inside a `<select>` is only drawn by newer browsers.
+`fillSelect` grew a `separator: true` entry type for it.
+
+The sort happens **in the page**, not in `registry.Catalog()`, which stays sorted by id: that sort
+is what makes the catalog stable and comparable by `DeepEqual` (a rename would otherwise reshuffle
+the list and re-broadcast). The order of a dropdown is the page's business.
+
+### A merged level names a COUNT, not the exchanges
+
+`exchangeNames` → `exchangeCell`: on a merged level, `l.exchanges.length > 1` renders the number
+and a single contributor renders **nothing at all**. This reverses the 2026-08-24 decision (the
+comma-joined list, then also the user's choice). The reasoning for the blank is the user's: one
+exchange behind a level is the ordinary case and reading its name adds nothing when the whole
+point of the view is the sum.
+
+### Alignment — the part that would have broken quietly
+
+Asks and bids are **two separate `<table>`s** (they always have been, with the spread between
+them). Under automatic layout each sizes its columns to its own content, so the moment one table's
+exchange column is empty and the other's is not, the price and quantity columns of the two stop
+lining up. Fixed by `table-layout: fixed` plus a fixed 120px exchange column — the first
+CSS in this file that both tables depend on, so keep them on the same geometry if either is
+touched again. (The risk pre-dated this change but empty cells are what make it visible.)
+
+### Status
+
+`make check` green (no Go changed, but the seed and the page did). The merged cell rule was
+exercised in node against the real function source pulled out of the HTML: blank for one
+contributor, the count for two and three, the plain name off a non-merged level. **Nothing was
+rendered in a browser and no renamed row has been read from a real postgres** — docker was down.

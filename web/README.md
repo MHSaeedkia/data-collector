@@ -100,6 +100,14 @@ every refresh and says once, in the log, what each one became — or that it mat
   level, so two browsers can watch the same book at different depths, and a client asking for a
   depth that is not on offer gets the default rather than the whole book. The dropdown's choices
   and its starting value both ride on the `catalog` message, so the page holds no copy of them.
+- **The exchange dropdown lists the real exchanges first, by name**, then a rule, then the two
+  cross-exchange views (merged, separated) — also alphabetically. The sort is done in the page:
+  the catalog stays sorted by id, which is what keeps it stable and comparable.
+- **A merged level shows how MANY exchanges were summed, not which.** One contributor is the
+  ordinary case and says nothing, so that cell is left blank and only a real sum carries a
+  number. The cell is emitted either way, and both tables use a fixed layout with a fixed-width
+  exchange column, because asks and bids are two separate tables and would otherwise size that
+  column to their own content and stop lining up.
 - **All three dropdowns open on a configured default** (`DEFAULT_PAIR`, `DEFAULT_EXCHANGE`,
   `DEFAULT_LEVEL_LIMIT`). The `catalog` message carries the resolved ids, so the page decides
   nothing for itself; it only falls back — to the first market, or to the aggregated view — when

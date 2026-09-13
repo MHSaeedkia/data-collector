@@ -81,6 +81,13 @@
 			table {
 				width: 100%;
 				border-collapse: collapse;
+				/* Asks and bids are two separate tables, so with automatic
+				   layout each sizes its columns to its OWN content and the
+				   two stop lining up — most visibly in the merged view,
+				   where a cell is empty whenever one exchange made the
+				   level. Fixed layout gives both tables the same geometry
+				   whatever is in them. */
+				table-layout: fixed;
 			}
 			th,
 			td {
@@ -111,6 +118,10 @@
 			th.exch,
 			td.exch {
 				text-align: left;
+				/* Fixed at a width that holds the longest exchange name, so
+				   the price and quantity columns never move when this one
+				   is empty. */
+				width: 120px;
 			}
 
 			tbody tr {
@@ -217,12 +228,20 @@
 				books[book.side] = book;
 			}
 
+			// A `separator: true` entry renders as an unselectable rule. A
+			// disabled <option> is used rather than <hr>, which only newer
+			// browsers draw inside a <select>.
 			function fillSelect($el, options, value) {
 				$el.innerHTML = "";
 				for (const o of options) {
 					const opt = document.createElement("option");
-					opt.value = o.value;
-					opt.textContent = o.text;
+					if (o.separator) {
+						opt.disabled = true;
+						opt.textContent = "──────────";
+					} else {
+						opt.value = o.value;
+						opt.textContent = o.text;
+					}
 					$el.appendChild(opt);
 				}
 				$el.value = String(value);
@@ -251,13 +270,23 @@
 					})),
 					selectedPair,
 				);
+				// The exchanges people trade on come first, by name; the two
+				// cross-exchange views are a different kind of thing, so they
+				// sit below a rule — also alphabetically, merged then
+				// separated. Sorting is done here rather than in the catalog
+				// because the order of this list is the page's business; the
+				// catalog stays sorted by id, which is what makes it stable.
 				const exchangeOptions = [
-					{ value: AGGREGATED, text: "All exchanges (separated)" },
+					...(catalog.exchanges || [])
+						.map((e) => ({ value: e.id, text: e.name }))
+						.sort((a, b) =>
+							a.text.localeCompare(b.text, undefined, {
+								sensitivity: "base",
+							}),
+						),
+					{ separator: true },
 					{ value: MERGED, text: "All exchanges (merged)" },
-					...(catalog.exchanges || []).map((e) => ({
-						value: e.id,
-						text: e.name,
-					})),
+					{ value: AGGREGATED, text: "All exchanges (separated)" },
 				];
 				if (!exchangeOptions.some((o) => o.value === selectedExchange)) {
 					selectedExchange = exchangeOptions.some(
@@ -312,11 +341,15 @@
 				return str + "0".repeat(places - current);
 			}
 
-			// A merged level was summed across exchanges, so it names them
-			// all — that list is the answer to "who is behind this quantity?",
-			// which is the first thing a reader of a merged level asks.
-			function exchangeNames(l) {
-				if (l.exchanges) return l.exchanges.map((e) => e.name).join(", ");
+			// On a merged level the question is how MANY exchanges were
+			// summed into this quantity: one contributor is the ordinary
+			// case and adds nothing to read, so it stays blank and only a
+			// real sum shows a number. The cell is still emitted either way,
+			// which is what keeps the column aligned.
+			function exchangeCell(l) {
+				if (l.exchanges) {
+					return l.exchanges.length > 1 ? String(l.exchanges.length) : "";
+				}
 				return l.exchange.name;
 			}
 
@@ -324,7 +357,7 @@
 				return levels
 					.map(
 						(l) =>
-							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td>${showExchange ? `<td class="exch">${exchangeNames(l)}</td>` : ""}</tr>`,
+							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td>${showExchange ? `<td class="exch">${exchangeCell(l)}</td>` : ""}</tr>`,
 					)
 					.join("");
 			}
