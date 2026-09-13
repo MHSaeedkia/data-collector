@@ -153,6 +153,25 @@ Side findings, not fixed:
   nothing checks. ⚠ macOS `make` is GNU 3.81 (no `--eval`); test helpers through a wrapper
   makefile that `include`s the real one. Verified with a fake `FLINK_RUN`: correct values
   reach the script, and a failure stops the chain with a non-zero exit.
+- **✅ VERIFIED LIVE 2026-09-13 after deploying merger parallelism 5 + 12 slots: the merger has
+  CAUGHT UP.** Over 66 s the aggregated topics wrote 1053.4 rec/s and `-merged` 1052.6, equal
+  per topic (p1-asks +558/+558, p3 +606/+606), and the latest `p1-{side}` and
+  `p1-{side}-merged` event_times were IDENTICAL in two samples 60 s apart. The Flink UI (per the
+  user) shows busy dropping from 100% to ~50% with 12% data skew. **More merger parallelism is
+  NOT needed**: 50% busy is ~2× headroom. The skew comes from hot pairs on one-partition topics,
+  so more readers would not reduce it. **`orderbook-adjustment` is now the lagging job**:
+  608.6 rec/s against 1053.4 in, with `p1-*-adjusted` ~46 min behind. It needs at least 1.73×,
+  so parallelism 3, but all 12 slots are used. Reached the server DIRECTLY from the laptop
+  (`ssh -p2020 m_gholami@192.168.150.31`); the `asus` jump host is not required.
+- **Re-sized 2026-09-13 (NOT deployed): 14 slots, `PARALLELISM_job-aggregator := 2`, merger 5 → 4,
+  `adjustment := 3`.** The live per-subtask numbers behind it: merger ~40% busy at 5 (≈480/s
+  each), so 4 → ~60% at 1200/s; adjustment 100% busy at 1 (≈530/s), so 3 → ~75%. The input
+  rises to ~1200/s once job 6 stops lagging, which is why sizing used that figure rather than
+  today's ~1000. ⚠ **prod has 4 TM × 3 = 12 slots, so `prod-deploy` no longer fits** and fails
+  on its last jobs. Resizing prod's per-TM memory was left for the user. ⚠ Direct memory was
+  225 MB of the ~287 MB limit with 12 tasks, and this adds 2 net source readers (≤ 8 MB fetch
+  each). No memory change was made; watch for `Direct buffer memory`. See [[aggregator]]
+  § 2026-09-13 for the job-6 code fix.
 - **More CPU for the TaskManager** (answered 2026-09-13, nothing applied). No container in
   EITHER compose file has a CPU limit (prod sets memory limits only), so the TaskManager may
   already use all 8 cores. The problem is contention, not a cap, and "more CPU" can only mean

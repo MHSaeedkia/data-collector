@@ -4,8 +4,8 @@
 # there.  Adding or rewiring a service here means doing the same over there by hand.
 #
 # Full stack for the raw-normalization pipeline: the Flink image builds from ./flink/normalizer
-# and the taskmanager has 12 slots: the 6 normalizer jobs and orderbook-adjustment at parallelism 1
-# plus orderbook-merger at 5, all submitted to this one cluster via flink/run-job.sh.
+# and the taskmanager has 14 slots, sized to the per-job parallelism in the root Makefile, all
+# submitted to this one cluster via flink/run-job.sh.
 services:
     jobmanager:
         build: ./flink/normalizer
@@ -67,10 +67,11 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                # 12 = the 7 other jobs at parallelism 1 + orderbook-merger at 5. The merger fell
-                # behind job 6 at parallelism 1 (908 rec/s in, 727 out, measured 2026-09-13).
-                # Slots are not cores: every job still shares this container's CPU.
-                taskmanager.numberOfTaskSlots: 12
+                # 14 = the 5 upstream normalizer jobs at 1 + job-aggregator 2 + merger 4 + adjustment 3,
+                # the PARALLELISM_* values in the root Makefile. Keep the two in step. Sized from
+                # live busy/throughput on 2026-09-13. Slots are not cores: every job still shares
+                # this container's CPU.
+                taskmanager.numberOfTaskSlots: 14
                 # M2a's dev half. The image default gives 1728m process and only 512m
                 # JVM heap for ALL jobs, which was survivable until checkpointing
                 # landed. With 6 jobs checkpointing every 10s it GCs hard enough to

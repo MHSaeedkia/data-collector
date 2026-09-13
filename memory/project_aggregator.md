@@ -64,4 +64,40 @@ the `"reset"` enum symbol being registered AND the jobs resubmitted** ([[type-va
 note) — otherwise job 2 NPEs and no p1 event arrives. Written + syntax-checked 2026-07-22; **NOT run
 live yet.**
 
+## 2026-09-13 — CPU fix + parallelism 2 (measured live, NOT deployed)
+
+Once the merger was given parallelism, **job 6 became the bottleneck**. Live Flink metrics: the
+`aggregate` operator thread was 99.8% busy with its source 86% backpressured, taking ~1000
+books/s against ~1200/s from job 5 (600 snapshots/s × 2 sides). Flink REST rate metrics DO
+work now; earlier the same day they read 0. **Profiled by sampling the TaskManager
+thread-dump REST endpoint** (~200 samples, read-only, no agent):
+Avro serialize 35% (of which `GenericRecordBuilder` 53% and the actual datum write 38%; the
+registry lookup was ~3%, so it is NOT the problem), sort 27%, Kafka send 20%, and keyBy network
+deserialize 17%.
+
+Two behaviour-preserving fixes:
+- **Sort**: the comparator did `new BigDecimal(...)` on both sides of EVERY comparison. Now each
+  level is parsed once into a private `ParsedLevel`, then sorted. The comparators became
+  `static final`, so the old "built in open() because Comparator isn't Serializable" reason
+  is gone.
+- **Serializer**: `GenericData.Record` with positional puts instead of a `GenericRecordBuilder`
+  per level (the builder validates every field and builds a second record internally). A
+  null required field still fails, at encode time instead of at `set`.
+
+Benchmark on a 9-exchange, 774-level book (local, uncontended): `processElement` **177.5 → 98
+µs**, `toGenericRecord` **41 → 10 µs**, and the Avro write is unchanged (~33 µs). **Equivalence
+PROVEN rather than assumed**: the HEAD serializer produced byte-identical output on 500 random
+books, and the HEAD aggregator produced identical level order and event_time on 3000 random
+events with heavy ties and mixed scales (`10`/`10.0`/`10.00`). New
+`AggregatedOrderBookSerializerTest` (3 tests, binary round-trip against the canonical schema,
+copied onto the TEST classpath by a `copy-resources` block in this module's pom, like
+common's). 22 tests green. Mutation-checked: an un-reversed quantity tie-break → 2 failures,
+swapped price/quantity positions → 1, ascending bids → 1.
+
+Parallelism 2 is safe for this job's semantics. Every `ex*-p*-snapshot` topic has one partition,
+so one reader owns each exchange's stream, and a Flink channel is FIFO, so per-exchange order
+into a key survives. Each `(pair, side)` key lives on ONE subtask, so every `p{id}-{side}` topic
+still has a single writer. There is no checkpointing, so rescaling loses nothing that a restart
+did not already lose.
+
 **2026-08-03 — `AggregatedLevel` is now `exchange_id, simulation, price, quantity`.** The flag is per LEVEL because the union mixes exchanges, so a record-level flag would be a lie; `SnapshotSplitter` stamps it from each snapshot. See [[simulation-flag]].

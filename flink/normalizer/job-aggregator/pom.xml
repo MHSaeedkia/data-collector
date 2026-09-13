@@ -75,6 +75,30 @@
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
             </plugin>
+            <!-- Test-only, same as common/pom.xml: the canonical output schema on the TEST classpath so
+                 AggregatedOrderBookSerializerTest can round-trip without a live Schema Registry. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-avro-schemas</id>
+                        <phase>generate-test-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.testOutputDirectory}/avro</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>${project.basedir}/../../../schemas</directory>
+                                    <includes>
+                                        <include>aggregated_order_book_event.avsc</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
