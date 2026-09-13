@@ -38,12 +38,17 @@ import java.util.Map;
 public class CrossExchangeAggregator
         extends KeyedProcessFunction<String, ExchangeBook, AggregatedOrderBook> {
 
-    private transient MapState<Integer, ExchangeBook> booksByExchange;
-    private transient Comparator<AggregatedLevel> asksComparator; // price ascending
-    private transient Comparator<AggregatedLevel> bidsComparator; // price descending
+    // Secondary: larger quantity first, regardless of side.
+    private static final Comparator<ParsedLevel> BY_QUANTITY_DESC =
+            Comparator.<ParsedLevel, BigDecimal>comparing(parsed -> parsed.quantity).reversed();
+    private static final Comparator<ParsedLevel> ASKS =
+            Comparator.<ParsedLevel, BigDecimal>comparing(parsed -> parsed.price).thenComparing(BY_QUANTITY_DESC);
+    private static final Comparator<ParsedLevel> BIDS =
+            Comparator.<ParsedLevel, BigDecimal>comparing(parsed -> parsed.price).reversed().thenComparing(BY_QUANTITY_DESC);
 
-    // State and comparators are built in open() (not the constructor): MapState is provided per
-    // keyed instance, and Comparator isn't Serializable so it can't be a shipped field.
+    private transient MapState<Integer, ExchangeBook> booksByExchange;
+
+    // MapState is provided per keyed instance, so it is built in open(), not the constructor.
     @Override
     public void open(OpenContext openContext) {
         MapStateDescriptor<Integer, ExchangeBook> descriptor = new MapStateDescriptor<>(
@@ -51,14 +56,6 @@ public class CrossExchangeAggregator
                 TypeInformation.of(Integer.class),
                 TypeInformation.of(ExchangeBook.class));
         booksByExchange = getRuntimeContext().getMapState(descriptor);
-
-        Comparator<AggregatedLevel> byPriceAsc =
-                Comparator.comparing(level -> new BigDecimal(level.getPrice()));
-        // Secondary: larger quantity first, regardless of side.
-        Comparator<AggregatedLevel> byQuantityDesc = Comparator.<AggregatedLevel, BigDecimal>comparing(
-                level -> new BigDecimal(level.getQuantity())).reversed();
-        asksComparator = byPriceAsc.thenComparing(byQuantityDesc);
-        bidsComparator = byPriceAsc.reversed().thenComparing(byQuantityDesc);
     }
 
     @Override
@@ -70,18 +67,26 @@ public class CrossExchangeAggregator
         booksByExchange.put(book.getExchangeId(), book);
 
         // Union every exchange's levels (already stamped with their exchange_id); never summed.
-        List<AggregatedLevel> merged = new ArrayList<>();
+        // Each price and quantity is parsed ONCE here. Parsing inside the comparator did it twice per
+        // comparison (~n log n times for a ~750-level book), which was 27% of the live operator thread.
+        List<ParsedLevel> union = new ArrayList<>();
         long maxEventTime = Long.MIN_VALUE;
         for (Map.Entry<Integer, ExchangeBook> entry : booksByExchange.entries()) {
             ExchangeBook exchangeBook = entry.getValue();
             maxEventTime = Math.max(maxEventTime, exchangeBook.getEventTime());
             if (exchangeBook.getLevels() != null) {
-                merged.addAll(exchangeBook.getLevels());
+                for (AggregatedLevel level : exchangeBook.getLevels()) {
+                    union.add(new ParsedLevel(level));
+                }
             }
         }
 
         // Sort the union by side; equal-price levels from different exchanges stay separate.
-        merged.sort("asks".equals(book.getSide()) ? asksComparator : bidsComparator);
+        union.sort("asks".equals(book.getSide()) ? ASKS : BIDS);
+        List<AggregatedLevel> merged = new ArrayList<>(union.size());
+        for (ParsedLevel parsed : union) {
+            merged.add(parsed.level);
+        }
 
         AggregatedOrderBook aggregated =
                 new AggregatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime);
@@ -89,5 +94,18 @@ public class CrossExchangeAggregator
         // gather here, only this record's own id to mint.
         aggregated.setId(Lineage.newId());
         out.collect(aggregated);
+    }
+
+    /** A level with its sort keys parsed as BigDecimal (see memory/project_bigdecimal_rules.md). */
+    private static final class ParsedLevel {
+        private final AggregatedLevel level;
+        private final BigDecimal price;
+        private final BigDecimal quantity;
+
+        ParsedLevel(AggregatedLevel level) {
+            this.level = level;
+            this.price = new BigDecimal(level.getPrice());
+            this.quantity = new BigDecimal(level.getQuantity());
+        }
     }
 }

@@ -5,7 +5,6 @@ import io.tibobit.normalizer.avro.AvroSchemaLoader;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.generic.GenericRecordBuilder;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroSerializationSchema;
 
@@ -41,27 +40,38 @@ public class AggregatedOrderBookSerializer implements SerializationSchema<Aggreg
         return avroSerializer.serialize(toGenericRecord(element, schema));
     }
 
+    /**
+     * Plain {@link GenericData.Record}s with positional puts, not {@code GenericRecordBuilder}: the
+     * builder validates each field and builds a second record for every level, which was about half
+     * of this serializer's time on a ~750-level book. Every field is set explicitly, so the builder's
+     * defaults were never used. A null in a required field still fails, at encode time instead.
+     */
     static GenericRecord toGenericRecord(AggregatedOrderBook book, Schema schema) {
         Schema sideSchema = schema.getField("side").schema();
         Schema levelSchema = schema.getField("levels").schema().getElementType();
+        int exchangeIdPos = levelSchema.getField("exchange_id").pos();
+        int simulationPos = levelSchema.getField("simulation").pos();
+        int sourceIdPos = levelSchema.getField("source_id").pos();
+        int pricePos = levelSchema.getField("price").pos();
+        int quantityPos = levelSchema.getField("quantity").pos();
 
-        List<GenericRecord> levels = new ArrayList<>();
+        List<GenericRecord> levels = new ArrayList<>(book.getLevels().size());
         for (AggregatedLevel level : book.getLevels()) {
-            levels.add(new GenericRecordBuilder(levelSchema)
-                    .set("exchange_id", level.getExchangeId())
-                    .set("simulation", level.getSimulation())
-                    .set("source_id", level.getSourceId())
-                    .set("price", level.getPrice())
-                    .set("quantity", level.getQuantity())
-                    .build());
+            GenericData.Record record = new GenericData.Record(levelSchema);
+            record.put(exchangeIdPos, level.getExchangeId());
+            record.put(simulationPos, level.getSimulation());
+            record.put(sourceIdPos, level.getSourceId());
+            record.put(pricePos, level.getPrice());
+            record.put(quantityPos, level.getQuantity());
+            levels.add(record);
         }
 
-        return new GenericRecordBuilder(schema)
-                .set("pair_id", book.getPairId())
-                .set("side", new GenericData.EnumSymbol(sideSchema, book.getSide()))
-                .set("id", book.getId())
-                .set("event_time", book.getEventTime())
-                .set("levels", levels)
-                .build();
+        GenericData.Record record = new GenericData.Record(schema);
+        record.put("pair_id", book.getPairId());
+        record.put("side", new GenericData.EnumSymbol(sideSchema, book.getSide()));
+        record.put("id", book.getId());
+        record.put("event_time", book.getEventTime());
+        record.put("levels", levels);
+        return record;
     }
 }
