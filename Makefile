@@ -8,11 +8,18 @@ NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job
 ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)
 
 # Per-job parallelism: PARALLELISM_<job>, falling back to DEFAULT_PARALLELISM. Every job needs that
-# many task slots, so the total must fit taskmanager.numberOfTaskSlots (12 in docker-compose.yml).
+# many task slots, so the total must fit taskmanager.numberOfTaskSlots (14 in docker-compose.yml,
+# 4 x 3 = 12 in docker-compose.prod.yml).
 # Override from the command line, e.g. `make run-all-jobs PARALLELISM_merger=3`.
 DEFAULT_PARALLELISM := 1
-# At parallelism 1 the merger fell behind job 6 (908 rec/s in, 727 out, measured 2026-09-13).
-PARALLELISM_merger := 5
+# Sized from live Flink metrics on 2026-09-13, against ~1200 books/s out of job-book-builder:
+# - job-aggregator was 100% busy at ~1000/s; after the sort/serializer fix a single subtask is
+#   estimated at ~1350/s, too close to the input, so 2.
+# - merger was ~40% busy per subtask at 5 (~480/s each), so 4 runs at ~60%.
+# - adjustment was 100% busy at 1 (~530/s), so 3 runs at ~75%.
+PARALLELISM_job-aggregator := 2
+PARALLELISM_merger := 4
+PARALLELISM_adjustment := 3
 
 # $(call submit_jobs,<jobs>) submits each job in the order given, stopping at the first failure.
 submit_jobs = $(foreach job,$(1),PARALLELISM=$(or $(PARALLELISM_$(job)),$(DEFAULT_PARALLELISM)) $(FLINK_RUN) $(job) || exit 1;)
