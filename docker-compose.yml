@@ -415,10 +415,10 @@ services:
             retries: 3
             start_period: 15s
 
-    web:
-        build: ./web
-        container_name: orderbook-web
-        hostname: orderbook-web
+    orderbook-viewer:
+        build: ./orderbook-viewer
+        container_name: orderbook-viewer
+        hostname: orderbook-viewer
         restart: on-failure
         depends_on:
             kafka:
@@ -432,7 +432,7 @@ services:
             KAFKA_BROKER: kafka:29092
             DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
             SCHEMA_REGISTRY_URL: http://schema-registry:8082
-            # What the three dropdowns open on. See web/.env.example.
+            # What the three dropdowns open on. See orderbook-viewer/.env.example.
             DEFAULT_PAIR: BTC/USDT
             DEFAULT_EXCHANGE: separated
             DEFAULT_LEVEL_LIMIT: 25 # levels per side: 25, 50, 100 or 200

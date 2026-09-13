@@ -1,0 +1,151 @@
+# Order Book Web UI
+
+Live viewer for two families of order book topic produced by the Flink pipeline:
+
+- **aggregated** (job 6) — `p{pair_id}-{side}`, e.g. `p2-asks`, `p2-bids`: the union across
+  every exchange, one record per side.
+- **per-exchange** (job 5) — `ex{exchange_id}-p{pair_id}-orderbook-snapshot-flink`: one
+  exchange's full book, **both sides in one record**.
+
+A small Go server consumes both, resolves the IDs to human-readable labels from postgres,
+keeps the latest book per (pair, exchange, side), and pushes updates to the browser over
+WebSocket. The page has a pair dropdown and an exchange dropdown: with **All exchanges
+(separated)** selected it renders the job-6 union — every exchange's levels side by side — and
+picking a specific exchange renders that exchange's own book for the same pair.
+
+## Run
+
+```bash
+cd orderbook-viewer
+go run .
+```
+
+Then open http://localhost:3000.
+
+To build a **single self-contained binary** instead — the UI (`public/`) is embedded via
+`go:embed`, so the binary runs from anywhere with no `public/` directory at runtime:
+
+```bash
+go build -o orderbook-viewer .
+./orderbook-viewer
+```
+
+## Docker
+
+Built and run as the `orderbook-viewer` service in the repo's `docker-compose.yml`:
+
+```bash
+docker compose up -d --build orderbook-viewer
+```
+
+It reaches the other services over the compose network (`KAFKA_BROKER=kafka:29092`,
+`DATABASE_URL=postgres://postgres:postgres@postgres:5432/markets`,
+`SCHEMA_REGISTRY_URL=http://schema-registry:8082`) and is exposed on http://localhost:3000.
+
+The image is a multi-stage build (golang-alpine → distroless static). Dependencies are
+**vendored** (`orderbook-viewer/vendor/`, committed) so the image builds fully offline without the Go
+module proxy; run `go mod vendor` after changing dependencies.
+
+## Config (env vars)
+
+- `PORT` — HTTP port (default `3000`)
+- `KAFKA_BROKER` — broker address (default `localhost:9092`, the host-exposed listener)
+- `DATABASE_URL` — postgres DSN (default `postgres://postgres:postgres@localhost:5432/markets`)
+- `SCHEMA_REGISTRY_URL` — Confluent Schema Registry URL (default `http://localhost:8082`, the
+  host-exposed listener), used to resolve each record's Avro writer schema by id
+- `DEFAULT_PAIR` — the market the pair dropdown opens on, as a `base/quote` symbol
+  (`BTC/USDT`, case-insensitive). Unset, or a symbol no market matches, means the first market
+  in the list
+- `DEFAULT_EXCHANGE` — the exchange dropdown's starting entry: an exchange name (`okx`), or
+  `separated` / `merged` for the two cross-exchange views. Unset or unknown means `separated`
+  (job 6's union — the pipeline's own word for it is "aggregated", the page's word is
+  "separated", and only the page's word is typed here)
+- `DEFAULT_LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one
+  of the depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and
+  replaced by the default, since the page could not select it back
+
+`DEFAULT_PAIR` and `DEFAULT_EXCHANGE` are names, not ids: an id in a hand-edited file says
+nothing without the database open next to it. The registry resolves them against postgres on
+every refresh and says once, in the log, what each one became — or that it matched nothing.
+
+## Notes
+
+- The Flink output carries only IDs (`pair_id`, and `exchange_id` per level) — no `base`,
+  `quote`, or `exchange_name`. The server resolves them for display by loading the `markets`
+  and `exchanges` tables from postgres (refreshed every 10s), then enriches each book before
+  pushing it to the browser. Unknown ids fall back to placeholders.
+- Record values are Confluent-wire-format Avro (magic byte + schema-registry id + Avro binary),
+  matching the Flink sinks — **not JSON**. `internal/schema.Decoder` resolves each record's
+  writer schema from the registry by id (schema-registry ids are immutable, so schemas are
+  cached forever once fetched) and decodes into the internal `domain.RawBook` shape. It picks
+  the payload shape from the schema's **full name**, not the topic: an
+  `AggregatedOrderBookEvent` yields one book, an `OrderBookSnapshot` yields two (one per side)
+  with its record-level `exchange_id`/`simulation` copied onto every level, so everything past
+  the decoder sees a single shape. Malformed/undecodable records are logged and skipped.
+- **Two Kafka consumers, both from the LATEST offset — live records only, never history.**
+  The aggregated consumer subscribes `^p\d+-(asks|bids)(-merged)?$`, the per-exchange one
+  `^ex\d+-p\d+-orderbook-snapshot-flink$`. These topics carry a full book on every event, so
+  replaying their retention window at startup costs far more than it is worth: the aggregated
+  consumer used to start at the earliest offset (so the book painted on load) and with the 6h
+  retention warmup set then (1h since 2026-09-12), every restart replayed six hours of order books at the
+  browser — which is what used to freeze the server (see the websocket note below). The
+  trade-off is that a quiet pair or exchange shows nothing until its next event; the `snapshot`
+  reply covers everything that has arrived since the process started. Both use a fresh consumer
+  group each start, which is what makes "latest" mean latest — a stable group would resume from
+  committed offsets and replay the backlog again.
+- **The depth is cut on the server, not in the browser.** A third dropdown picks how many levels
+  per side to show (25/50/100/200, opening on `LEVEL_LIMIT`); the choice travels in the `select`
+  message and the hub sends only that many levels — keeping the FIRST n, which are the best n
+  because every producer emits asks ascending and bids descending. The stored book keeps every
+  level, so two browsers can watch the same book at different depths, and a client asking for a
+  depth that is not on offer gets the default rather than the whole book. The dropdown's choices
+  and its starting value both ride on the `catalog` message, so the page holds no copy of them.
+- **The exchange dropdown lists the real exchanges first, by name**, then a rule, then the two
+  cross-exchange views (merged, separated) — also alphabetically. The sort is done in the page:
+  the catalog stays sorted by id, which is what keeps it stable and comparable.
+- **A merged level shows how MANY exchanges were summed, not which.** One contributor is the
+  ordinary case and says nothing, so that cell is left blank and only a real sum carries a
+  number. The cell is emitted either way, and both tables use a fixed layout with a fixed-width
+  exchange column, because asks and bids are two separate tables and would otherwise size that
+  column to their own content and stop lining up.
+- **All three dropdowns open on a configured default** (`DEFAULT_PAIR`, `DEFAULT_EXCHANGE`,
+  `DEFAULT_LEVEL_LIMIT`). The `catalog` message carries the resolved ids, so the page decides
+  nothing for itself; it only falls back — to the first market, or to the aggregated view — when
+  what it was given is not in the list it was given.
+- **The server pushes each browser only the pair+exchange it selected.** The browser sends
+  `{"type":"select","pair_id":N,"exchange_id":N,"limit":N}` (exchange `0` = aggregated) on
+  connect and on every dropdown change; the server answers with a `snapshot` of what it holds and then
+  `update`s as records arrive. Both dropdowns are filled from a `catalog` message (every market
+  and exchange in postgres, re-sent only when it changes) — with server-side filtering the
+  client can no longer infer the lists from the data it receives.
+- **A recreated Kafka topic is purged and re-discovered, not stalled on.** franz-go pins a
+  topic's ID when it first creates the cursor and never adopts a new one, so a topic that is
+  deleted and recreated returns `UNKNOWN_TOPIC_ID` forever. It has an escape hatch — purge a
+  topic that has been *absent* from metadata for 15s — but that only fires while the client can
+  still see metadata. If the broker is away for the whole delete/recreate window (a crash that
+  loses its data, then warmup recreating the topics), the client never sees the gap and that
+  pair or exchange silently vanishes from the UI until the container is restarted. So the
+  consumer calls `PurgeTopicsFromClient` itself on that error, rate-limited to once a minute per
+  topic; the regex then re-discovers the topic with its current ID, and the `first record from
+  {topic}` line is the confirmation it recovered.
+- **Websocket writes never happen under the hub's lock.** Each client has its own writer
+  goroutine and a small outbound queue that *coalesces* — every message carries a complete book
+  or a complete catalog, so a newer one replaces the older one for the same slot instead of
+  queueing behind it. A browser that falls behind therefore skips frames and stays correct,
+  rather than backing the socket up. Writes carry a deadline and idle clients are pinged, so a
+  peer that has silently gone away is dropped instead of being written to forever. Before this,
+  one stalled socket blocked `Publish` under the shared mutex and froze the whole server: no
+  updates for anyone, and new browsers got the websocket handshake followed by silence.
+- New pairs created after the server starts are picked up on restart (the regex is matched
+  against topics that exist at subscribe time).
+- The UI starts and serves immediately even if Kafka or postgres is unreachable; it logs and
+  keeps running.
+
+## Stack
+
+- `net/http` + `embed` — HTTP server serving the UI baked into the binary (`go:embed public`)
+- [`github.com/gorilla/websocket`](https://github.com/gorilla/websocket) — browser push
+- [`github.com/twmb/franz-go`](https://github.com/twmb/franz-go) — Kafka consumer (regex topics)
+- [`github.com/hamba/avro/v2`](https://github.com/hamba/avro) — Avro decoding (schema fetched
+  from the registry per record, Confluent wire format)
+- [`github.com/jackc/pgx/v5`](https://github.com/jackc/pgx) — postgres lookups

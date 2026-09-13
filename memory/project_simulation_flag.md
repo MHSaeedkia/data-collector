@@ -68,4 +68,4 @@ The field is `"default": 0` on every schema, so old records still read.
   **The browser UI does not render it** — plumbed only, not displayed.
 
 Related: [[avro-schema]], [[pair-extractor]], [[type-validator]], [[book-builder]], [[aggregator]],
-[[e2e-harness]], [[orderbook-web]].
+[[e2e-harness]], [[orderbook-viewer]].
