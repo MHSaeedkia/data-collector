@@ -792,3 +792,59 @@ fresh one is created every start by design, so the old groups simply age out.
 ⚠ The root `README.md` still tells you to run this service with `npm i && npm start` (only the
 path was corrected here). It is a **Go** app — `go run .`. Pre-existing error, left alone on
 purpose, reported to the user.
+
+---
+
+## 2026-09-13 — BUG: the exchange dropdown came up blank and ignored DEFAULT_EXCHANGE
+
+User report, with a screenshot: `DEFAULT_EXCHANGE=Bybit` on the server, and the exchange dropdown
+rendered **empty** — no selection at all, while pair and depth were fine. Two defects, found one
+after the other, and the second only because a test was written for the first.
+
+### Defect 1 — `undefined` matched the separator
+
+The separator added earlier the same day is `{ separator: true }`, an option with **no `value`**,
+so `o.value === undefined`. Before the first catalog arrives `catalog.default_exchange_id` is also
+`undefined`, and the code asked:
+
+```js
+exchangeOptions.some((o) => o.value === catalog.default_exchange_id)  // matched the SEPARATOR
+```
+
+so `selectedExchange = undefined`. From then on the "is it still on offer?" check matched the
+separator too, so it never recovered, and `$el.value = String(undefined)` selects nothing. The
+blank box. **A sentinel-free option in a list you match values against is a trap; `undefined ===
+undefined` is the whole bug.**
+
+### Defect 2 — the fallback got committed before the server had spoken
+
+Fixing defect 1 was not enough, and the node check is what said so: the page called
+`refreshDropdowns()` once at load, before any catalog. With the lookup fixed that call settled on
+`AGGREGATED` — a perfectly valid value — and the "keep the current selection while it is still on
+offer" rule then made that stick, so the catalog's `Bybit` never applied. **A provisional value
+must not be recorded as a choice.** The fix is that the dropdowns are now filled ONLY from a
+catalog: the bootstrap `refreshDropdowns()` call is gone, and the page shows empty selects for the
+few milliseconds before the first one lands.
+
+### The shape of the fix
+
+One `pickOption(options, current, preferred, fallback)` used by all three dropdowns: keep the
+current value if it is still offered, else the server's default, else the fallback — with
+separators excluded and `undefined`/`null` never treated as values. Written once so "the default
+applies on first load, a user's choice outranks it, a vanished selection recovers" is one rule
+instead of three near-copies. The three near-copies are what let the exchange one drift.
+
+### Testing
+
+`public/index.html` has no test harness, so the check pulls `pickOption`'s **source out of the
+HTML** and runs it in node (same technique as `exchangeCell`): the reported sequence, a re-sent
+catalog, a user choice outranking the default, a vanished selection, and null/undefined. Keep
+doing this for page logic that is not pure rendering — it is what caught defect 2 in seconds.
+
+### Also worth knowing (told to the user)
+
+Both compose files set `DEFAULT_EXCHANGE` in `environment:`, and **compose's value wins over
+anything in `orderbook-viewer/.env`** — `godotenv.Load` does not override a variable that is
+already set. `.env` is also not in the image (`.dockerignore` does not exclude it, but nothing
+copies it either — the Dockerfile copies only what it builds). So for a container, the compose
+file is where these belong.

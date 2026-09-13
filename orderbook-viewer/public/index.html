@@ -247,29 +247,44 @@
 				$el.value = String(value);
 			}
 
+			// What a dropdown should be showing: keep the current value while
+			// it is still on offer, else the server's default, else the
+			// fallback. Every option list goes through this, so "the default
+			// applies on first load and a vanished selection recovers" is
+			// written once.
+			//
+			// A separator carries NO value, and `undefined` is also what a
+			// catalog without defaults gives — so a bare `some(o => o.value
+			// === wanted)` matched the separator, "selected" undefined, and
+			// left the exchange dropdown permanently blank (2026-09-13).
+			// Both guards below exist because of that: separators are not
+			// selectable, and undefined is not a value.
+			function pickOption(options, current, preferred, fallback) {
+				const offered = (v) =>
+					v !== undefined &&
+					v !== null &&
+					options.some((o) => !o.separator && o.value === v);
+				if (offered(current)) return current;
+				if (offered(preferred)) return preferred;
+				return fallback;
+			}
+
 			function refreshDropdowns() {
 				const markets = catalog.markets || [];
-				// Nothing selected yet, or the selected market disappeared
-				// from the catalog: take the configured default, and the
-				// first market if that is not one we were given (id 0 is
-				// what the server sends when it resolved nothing).
-				if (!markets.some((m) => m.id === selectedPair)) {
-					selectedPair = markets.some(
-						(m) => m.id === catalog.default_pair_id,
-					)
-						? catalog.default_pair_id
-						: markets.length
-							? markets[0].id
-							: null;
-				}
-				fillSelect(
-					$pair,
-					markets.map((m) => ({
-						value: m.id,
-						text: `${m.base}/${m.quote}`,
-					})),
+				const pairOptions = markets.map((m) => ({
+					value: m.id,
+					text: `${m.base}/${m.quote}`,
+				}));
+				// Falls back to the first market, which is also what the
+				// server asks for when it resolved no DEFAULT_PAIR (it sends
+				// id 0, and 0 is not a market id).
+				selectedPair = pickOption(
+					pairOptions,
 					selectedPair,
+					catalog.default_pair_id,
+					markets.length ? markets[0].id : null,
 				);
+				fillSelect($pair, pairOptions, selectedPair);
 				// The exchanges people trade on come first, by name; the two
 				// cross-exchange views are a different kind of thing, so they
 				// sit below a rule — also alphabetically, merged then
@@ -288,25 +303,24 @@
 					{ value: MERGED, text: "All exchanges (merged)" },
 					{ value: AGGREGATED, text: "All exchanges (separated)" },
 				];
-				if (!exchangeOptions.some((o) => o.value === selectedExchange)) {
-					selectedExchange = exchangeOptions.some(
-						(o) => o.value === catalog.default_exchange_id,
-					)
-						? catalog.default_exchange_id
-						: AGGREGATED;
-				}
-				fillSelect($exchange, exchangeOptions, selectedExchange);
-				const limits = catalog.level_limits || [];
-				if (!limits.includes(selectedLimit)) {
-					selectedLimit = limits.includes(catalog.default_level_limit)
-						? catalog.default_level_limit
-						: null;
-				}
-				fillSelect(
-					$limit,
-					limits.map((n) => ({ value: n, text: `${n} levels` })),
-					selectedLimit,
+				selectedExchange = pickOption(
+					exchangeOptions,
+					selectedExchange,
+					catalog.default_exchange_id,
+					AGGREGATED,
 				);
+				fillSelect($exchange, exchangeOptions, selectedExchange);
+				const limitOptions = (catalog.level_limits || []).map((n) => ({
+					value: n,
+					text: `${n} levels`,
+				}));
+				selectedLimit = pickOption(
+					limitOptions,
+					selectedLimit,
+					catalog.default_level_limit,
+					limitOptions.length ? limitOptions[0].value : null,
+				);
+				fillSelect($limit, limitOptions, selectedLimit);
 			}
 
 			// Tell the server what to send us, and clear what we hold: the
@@ -481,7 +495,11 @@
 					render();
 				};
 			}
-			refreshDropdowns();
+			// The dropdowns stay empty until the first catalog: they are
+			// filled ONLY from one. Calling refreshDropdowns() here would
+			// settle on a fallback before the server has said what it wants
+			// shown, and that choice would then outrank DEFAULT_EXCHANGE
+			// when the catalog arrived a moment later.
 			render();
 			connect();
 		</script>
