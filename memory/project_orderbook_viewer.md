@@ -840,13 +840,11 @@ HTML** and runs it in node (same technique as `exchangeCell`): the reported sequ
 catalog, a user choice outranking the default, a vanished selection, and null/undefined. Keep
 doing this for page logic that is not pure rendering — it is what caught defect 2 in seconds.
 
-### Also worth knowing (told to the user)
+### Also worth knowing (told to the user, and FIXED later the same day)
 
-Both compose files set `DEFAULT_EXCHANGE` in `environment:`, and **compose's value wins over
-anything in `orderbook-viewer/.env`** — `godotenv.Load` does not override a variable that is
-already set. `.env` is also not in the image (`.dockerignore` does not exclude it, but nothing
-copies it either — the Dockerfile copies only what it builds). So for a container, the compose
-file is where these belong.
+Both compose files set the defaults in `environment:`, which wins over anything in
+`orderbook-viewer/.env` — and the file never reached the container anyway. See the last section:
+compose now loads it with `env_file:`.
 
 ---
 
@@ -878,3 +876,50 @@ What each layer does now:
 
 Nothing else moved: the catalog fields, the browser, the fallbacks and `pickOption` are unchanged,
 because all of that was already id-based.
+
+---
+
+## 2026-09-13 — `.env` had NO effect in docker (user bug report), and now it does
+
+User set `DEFAULT_EXCHANGE_ID=6` in `orderbook-viewer/.env` on the server and the page still opened
+on the separated view. Two independent reasons, both mine:
+
+1. **The file never reached the container.** The runtime stage copies ONLY the binary into `/app`,
+   so `config.Load(".env")` looks in `/app` and finds nothing. Nothing in `.dockerignore` is
+   responsible — the Dockerfile simply does not copy it.
+2. **Compose would have won anyway.** `environment: DEFAULT_EXCHANGE_ID: 0` is a real environment
+   variable, and `godotenv.Load` deliberately does not overwrite one that is already set.
+
+Documenting `.env` as the place to configure this while compose hardcoded the same keys was the
+actual mistake. **A setting must have exactly one place it comes from, and the docs must name the
+one that wins.**
+
+### The fix (user chose it from three options)
+
+Both compose files now carry, for this service:
+
+```yaml
+env_file:
+  - path: ./orderbook-viewer/.env
+    required: false
+environment:
+  PORT / KAFKA_BROKER / DATABASE_URL / SCHEMA_REGISTRY_URL
+```
+
+so **one file configures `go run .` and the container**, and changing what the page opens on is an
+edit plus `docker compose up -d orderbook-viewer` — no rebuild, no compose edit.
+
+Two things that make this safe, both commented in the compose files because both look like
+tidy-up targets to a future reader:
+
+- **`environment:` is applied AFTER `env_file:` and therefore overrides it.** That is load-bearing:
+  a `.env` copied from `.env.example` points `KAFKA_BROKER` at `localhost`, which is wrong inside
+  the network. Verified with `docker compose config`: with the file present,
+  `DEFAULT_EXCHANGE_ID: "6"` comes from it while `KAFKA_BROKER` stays `kafka:29092`.
+- **`required: false` needs Compose v2.24+** (the server's version is not recorded anywhere). On an
+  older compose the file must exist or the WHOLE stack fails to parse — `cp .env.example .env`.
+  Verified here (v2.38) that deleting the file still parses and simply leaves the app's built-in
+  defaults.
+
+The `DEFAULT_*` keys are gone from `environment:` entirely; the app's own defaults (first market,
+separated, 25) are the fallback, so there is no second copy of them in YAML to drift.

@@ -42,6 +42,16 @@ It reaches the other services over the compose network (`KAFKA_BROKER=kafka:2909
 `DATABASE_URL=postgres://postgres:postgres@postgres:5432/markets`,
 `SCHEMA_REGISTRY_URL=http://schema-registry:8082`) and is exposed on http://localhost:3000.
 
+**The `DEFAULT_*` settings are read from this directory's `.env` in docker too** — compose loads it
+with `env_file:`, so one file configures both `go run .` and the container, and changing what the
+page opens on is an edit plus `docker compose up -d orderbook-viewer`, with no rebuild. The file is
+optional (without it the built-in defaults apply), but marking it optional needs Compose **v2.24+**;
+on older versions create it first (`cp .env.example .env`).
+
+The four connection settings above stay in the compose file's `environment:`, which is applied
+*after* `env_file:` and therefore wins: a `.env` written for running on the host points at
+`localhost`, which would be wrong inside the container.
+
 The image is a multi-stage build (golang-alpine → distroless static). Dependencies are
 **vendored** (`orderbook-viewer/vendor/`, committed) so the image builds fully offline without the Go
 module proxy; run `go mod vendor` after changing dependencies.

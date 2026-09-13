@@ -892,16 +892,25 @@ services:
                 condition: service_healthy
         ports:
             - "3000:3000" # host: http://localhost:3000
+        # What the three dropdowns open on lives in the service's own .env, so
+        # the SAME file configures `go run .` and this container, and changing
+        # it needs no edit here. Optional: without it the app's built-in
+        # defaults apply (first market, separated, 25 levels).
+        # Needs Compose v2.24+ for `required:`; on older versions the file
+        # must exist (cp orderbook-viewer/.env.example orderbook-viewer/.env).
+        env_file:
+            - path: ./orderbook-viewer/.env
+              required: false
+        # Everything below is how this container reaches the others, and it
+        # deliberately OVERRIDES the env_file: a .env written for running on
+        # the host points at localhost, which is wrong in here. Compose
+        # applies `environment:` after `env_file:`, which is what makes that
+        # work — do not move these two blocks around each other.
         environment:
             PORT: 3000
             KAFKA_BROKER: kafka:29092
             DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
             SCHEMA_REGISTRY_URL: http://schema-registry:8082
-            # What the three dropdowns open on. Ids from postgres — see
-            # orderbook-viewer/.env.example for how to list them.
-            DEFAULT_PAIR_ID: 1 # markets.id; 0/unknown = the first market
-            DEFAULT_EXCHANGE_ID: 0 # exchanges.id, or 0 = separated, -1 = merged
-            DEFAULT_LEVEL_LIMIT: 25 # levels per side: 25, 50, 100 or 200
         networks:
             - data-collector-net
 
