@@ -91,7 +91,7 @@ func (r *Registry) resolveDefaults() {
 
 	r.defaultExchangeID = domain.AggregatedExchangeID
 	switch want := r.defaults.Exchange; {
-	case want == "" || strings.EqualFold(want, domain.AggregatedName):
+	case want == "" || strings.EqualFold(want, domain.SeparatedName):
 	case strings.EqualFold(want, domain.MergedName):
 		r.defaultExchangeID = domain.MergedExchangeID
 	default:

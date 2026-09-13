@@ -214,10 +214,18 @@ type Defaults struct {
 }
 
 // The two views the exchange dropdown offers besides a real exchange,
-// spelled as DEFAULT_EXCHANGE takes them.
+// spelled as DEFAULT_EXCHANGE takes them and as the dropdown shows them.
+//
+// SeparatedName is the user's word for the view AggregatedExchangeID
+// identifies — job 6's union, where every exchange's levels sit side by
+// side, each keeping its own exchange. The pipeline calls that job the
+// aggregator and the wire vocabulary above follows it; the page says
+// "separated", because to a reader of the book the levels are exactly
+// that. Only the words a person sees changed (2026-09-13); nothing on the
+// wire did.
 const (
-	AggregatedName = "aggregated"
-	MergedName     = "merged"
+	SeparatedName = "separated"
+	MergedName    = "merged"
 )
 
 // The websocket message shapes. Server -> client: catalog, snapshot,

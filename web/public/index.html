@@ -252,7 +252,7 @@
 					selectedPair,
 				);
 				const exchangeOptions = [
-					{ value: AGGREGATED, text: "All exchanges (aggregated)" },
+					{ value: AGGREGATED, text: "All exchanges (separated)" },
 					{ value: MERGED, text: "All exchanges (merged)" },
 					...(catalog.exchanges || []).map((e) => ({
 						value: e.id,

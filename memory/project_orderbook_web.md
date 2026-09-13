@@ -615,8 +615,9 @@ earlier was renamed from `LEVEL_LIMIT` into that family (user's call; nothing wa
 
 The user chose **symbols over ids** for the pair: `DEFAULT_PAIR=BTC/USDT`, not `DEFAULT_PAIR_ID=2`
 — an id in a hand-edited file says nothing without the database open beside it. `DEFAULT_EXCHANGE`
-follows the same principle: an exchange NAME as postgres spells it, or the words `aggregated` /
-`merged` for the two cross-exchange views (`domain.AggregatedName` / `MergedName`). Matching is
+follows the same principle: an exchange NAME as postgres spells it, or the words `separated` /
+`merged` for the two cross-exchange views (`domain.SeparatedName` / `MergedName` — `separated`
+was `aggregated` for the first hours of the same day, see the section below). Matching is
 case-insensitive and the value is trimmed, because a `.env` is hand-edited.
 
 The browser still receives **ids** (`default_pair_id`, `default_exchange_id` on the catalog): the
@@ -666,3 +667,24 @@ depths), 2 config, 1 hub (the catalog is forwarded unchanged). Mutation-tested: 
 **Resolution has never run against a real postgres** — docker was down here, so every test used
 the fake repo. The first real check is whether `DEFAULT_PAIR=BTC/USDT` matches the way the server
 DB actually spells its currency names.
+
+---
+
+## 2026-09-13 — the page says "separated", the pipeline still says "aggregated"
+
+User request: the exchange dropdown's `All exchanges (aggregated)` becomes
+`All exchanges (separated)`, and (their call when asked) `DEFAULT_EXCHANGE` now takes
+**`separated` only** — `aggregated` is no longer a spelling it recognises. It still lands on the
+same view, through the unknown-name fallback rather than through a match, so nobody's page breaks.
+
+**Nothing on the wire or in the pipeline vocabulary changed.** `AggregatedExchangeID = 0`,
+`Book.ExchangeID()`, `hub.latest`'s key, the `aggregatedPattern` regex, the
+`AggregatedOrderBookEvent` schema name and job 6 itself all keep the word — job 6 IS the
+aggregator, and renaming any of that would be a pipeline-wide change to fix a label. What changed
+is exactly: the dropdown's text, the word `DEFAULT_EXCHANGE` accepts, and the constant that holds
+that word (`domain.AggregatedName` → `SeparatedName`, with the mismatch explained where it is
+declared, since a reader will otherwise think one of the two is a mistake).
+
+Worth keeping straight when reading this file: **"aggregated" and "separated" are the same view**
+— job 6's union, every exchange's levels side by side, each keeping its own exchange. The user's
+word describes what the reader of the book sees; the pipeline's word describes what the job does.

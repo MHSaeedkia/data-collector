@@ -10,8 +10,8 @@ Live viewer for two families of order book topic produced by the Flink pipeline:
 A small Go server consumes both, resolves the IDs to human-readable labels from postgres,
 keeps the latest book per (pair, exchange, side), and pushes updates to the browser over
 WebSocket. The page has a pair dropdown and an exchange dropdown: with **All exchanges
-(aggregated)** selected it renders the job-6 union, and picking a specific exchange renders
-that exchange's own book for the same pair.
+(separated)** selected it renders the job-6 union — every exchange's levels side by side — and
+picking a specific exchange renders that exchange's own book for the same pair.
 
 ## Run
 
@@ -57,7 +57,9 @@ module proxy; run `go mod vendor` after changing dependencies.
   (`BTC/USDT`, case-insensitive). Unset, or a symbol no market matches, means the first market
   in the list
 - `DEFAULT_EXCHANGE` — the exchange dropdown's starting entry: an exchange name (`okx`), or
-  `aggregated` / `merged` for the two cross-exchange views. Unset or unknown means `aggregated`
+  `separated` / `merged` for the two cross-exchange views. Unset or unknown means `separated`
+  (job 6's union — the pipeline's own word for it is "aggregated", the page's word is
+  "separated", and only the page's word is typed here)
 - `DEFAULT_LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one
   of the depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and
   replaced by the default, since the page could not select it back

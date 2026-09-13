@@ -239,12 +239,17 @@ func TestCatalog_ResolvesTheConfiguredDefaultExchange(t *testing.T) {
 		want       int
 	}{
 		{"", domain.AggregatedExchangeID},
-		{"aggregated", domain.AggregatedExchangeID},
+		{"separated", domain.AggregatedExchangeID},
+		{"SEPARATED", domain.AggregatedExchangeID},
 		{"merged", domain.MergedExchangeID},
 		{"MERGED", domain.MergedExchangeID},
 		{"okx", 8},
 		{"OKX", 8},
 		{"kraken", domain.AggregatedExchangeID}, // not an exchange we know
+		// "aggregated" is the pipeline's word, not the page's, and is no
+		// longer a spelling DEFAULT_EXCHANGE takes. It lands on the same
+		// view regardless — through the fallback, not through a match.
+		{"aggregated", domain.AggregatedExchangeID},
 	} {
 		t.Run(tc.configured, func(t *testing.T) {
 			r := New(repo, domain.Defaults{Exchange: tc.configured})
