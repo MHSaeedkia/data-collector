@@ -154,6 +154,7 @@
 			<h1>Live Order Book</h1>
 			<select id="pair"></select>
 			<select id="exchange"></select>
+			<select id="limit"></select>
 			<span class="status"
 				><span class="dot" id="dot"></span
 				><span id="conn">connecting…</span></span
@@ -179,11 +180,17 @@
 			const MERGED = -1; // the merger's sum: one level per price
 			let selectedPair = null; // market id
 			let selectedExchange = AGGREGATED;
+			// How many levels per side to ask for. The server applies it
+			// before sending, so this is a request, not a filter: the choices
+			// and the one to start on both come from the catalog, which is
+			// why no list of depths is written out here.
+			let selectedLimit = null;
 			let books = { asks: null, bids: null };
 			let ws = null;
 
 			const $pair = document.getElementById("pair");
 			const $exchange = document.getElementById("exchange");
+			const $limit = document.getElementById("limit");
 			const $book = document.getElementById("book");
 			const $meta = document.getElementById("meta");
 			const $dot = document.getElementById("dot");
@@ -246,6 +253,17 @@
 					],
 					selectedExchange,
 				);
+				const limits = catalog.level_limits || [];
+				if (!limits.includes(selectedLimit)) {
+					selectedLimit = limits.includes(catalog.default_level_limit)
+						? catalog.default_level_limit
+						: null;
+				}
+				fillSelect(
+					$limit,
+					limits.map((n) => ({ value: n, text: `${n} levels` })),
+					selectedLimit,
+				);
 			}
 
 			// Tell the server what to send us, and clear what we hold: the
@@ -260,6 +278,7 @@
 						type: "select",
 						pair_id: selectedPair,
 						exchange_id: selectedExchange,
+						limit: selectedLimit,
 					}),
 				);
 			}
@@ -372,6 +391,13 @@
 				sendSelect();
 			});
 
+			// A new depth is a new selection: the server answers with a
+			// snapshot cut to it, so there is nothing to re-render locally.
+			$limit.addEventListener("change", () => {
+				selectedLimit = Number($limit.value);
+				sendSelect();
+			});
+
 			function connect() {
 				ws = new WebSocket(`ws://${location.host}/ws`);
 				ws.onopen = () => {
@@ -389,10 +415,12 @@
 					if (msg.type === "catalog") {
 						catalog = msg;
 						const was = selectedPair;
+						const wasLimit = selectedLimit;
 						refreshDropdowns();
 						// Only re-subscribe if the catalog moved us off the
-						// pair we were on (first load, or it disappeared).
-						if (selectedPair !== was) {
+						// pair or the depth we were on (first load, or it
+						// disappeared).
+						if (selectedPair !== was || selectedLimit !== wasLimit) {
 							sendSelect();
 							return;
 						}

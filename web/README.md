@@ -53,6 +53,9 @@ module proxy; run `go mod vendor` after changing dependencies.
 - `DATABASE_URL` — postgres DSN (default `postgres://postgres:postgres@localhost:5432/markets`)
 - `SCHEMA_REGISTRY_URL` — Confluent Schema Registry URL (default `http://localhost:8082`, the
   host-exposed listener), used to resolve each record's Avro writer schema by id
+- `LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one of the
+  depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and replaced
+  by the default, since the page could not select it back
 
 ## Notes
 
@@ -79,9 +82,16 @@ module proxy; run `go mod vendor` after changing dependencies.
   reply covers everything that has arrived since the process started. Both use a fresh consumer
   group each start, which is what makes "latest" mean latest — a stable group would resume from
   committed offsets and replay the backlog again.
+- **The depth is cut on the server, not in the browser.** A third dropdown picks how many levels
+  per side to show (25/50/100/200, opening on `LEVEL_LIMIT`); the choice travels in the `select`
+  message and the hub sends only that many levels — keeping the FIRST n, which are the best n
+  because every producer emits asks ascending and bids descending. The stored book keeps every
+  level, so two browsers can watch the same book at different depths, and a client asking for a
+  depth that is not on offer gets the default rather than the whole book. The dropdown's choices
+  and its starting value both ride on the `catalog` message, so the page holds no copy of them.
 - **The server pushes each browser only the pair+exchange it selected.** The browser sends
-  `{"type":"select","pair_id":N,"exchange_id":N}` (exchange `0` = aggregated) on connect and on
-  every dropdown change; the server answers with a `snapshot` of what it holds and then
+  `{"type":"select","pair_id":N,"exchange_id":N,"limit":N}` (exchange `0` = aggregated) on
+  connect and on every dropdown change; the server answers with a `snapshot` of what it holds and then
   `update`s as records arrive. Both dropdowns are filled from a `catalog` message (every market
   and exchange in postgres, re-sent only when it changes) — with server-side filtering the
   client can no longer infer the lists from the data it receives.

@@ -47,7 +47,7 @@ func main() {
 	reg := registry.New(postgres.NewRepository(pool))
 	reg.Refresh(ctx) // initial load before anything uses the maps
 
-	h := hub.New()
+	h := hub.New(cfg.LevelLimit)
 	h.SetCatalog(reg.Catalog()) // dropdowns are ready before the first client connects
 	go func() {
 		t := time.NewTicker(registryRefresh)
@@ -105,6 +105,7 @@ func main() {
 	log.Printf("Order book UI:    http://localhost:%s", cfg.Port)
 	log.Printf("Kafka broker:     %s", cfg.KafkaBroker)
 	log.Printf("Schema registry:  %s", cfg.SchemaRegistryURL)
+	log.Printf("Default depth:    %d level(s) per side", cfg.LevelLimit)
 	log.Printf("Reading LIVE records only (latest offset) — no history is replayed on start")
 	log.Printf("Heartbeat every %s; registry refresh every %s", statsPeriod, registryRefresh)
 	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {

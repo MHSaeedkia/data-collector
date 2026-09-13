@@ -47,7 +47,7 @@ func readFrame(t *testing.T, c *websocket.Conn) (string, []byte) {
 }
 
 func TestServeWS_CatalogThenSnapshotThenUpdate(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	h.SetCatalog(domain.Catalog{
 		Markets:   []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}},
 		Exchanges: []domain.Exchange{{ID: 8, Name: "okx"}},
@@ -90,7 +90,7 @@ func TestServeWS_PingsTheBrowserAndKeepsAnsweringClientsAlive(t *testing.T) {
 	pingPeriod = 20 * time.Millisecond
 	defer func() { pingPeriod = restore }()
 
-	h := New()
+	h := New(testLimit)
 	c, _ := dial(t, h)
 
 	pinged := make(chan struct{}, 8)
@@ -123,7 +123,7 @@ func TestServeWS_PingsTheBrowserAndKeepsAnsweringClientsAlive(t *testing.T) {
 }
 
 func TestServeWS_RemovesTheClientWhenTheBrowserDisconnects(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c, _ := dial(t, h)
 	readFrame(t, c) // the catalog, so we know the client is fully registered
 
@@ -136,7 +136,7 @@ func TestServeWS_RemovesTheClientWhenTheBrowserDisconnects(t *testing.T) {
 // Junk on the socket is ignored, not fatal: dropping the connection over
 // one unparsable frame would take the book down with it.
 func TestServeWS_IgnoresUnknownMessagesWithoutDroppingTheClient(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c, _ := dial(t, h)
 	readFrame(t, c)
 
@@ -146,4 +146,26 @@ func TestServeWS_IgnoresUnknownMessagesWithoutDroppingTheClient(t *testing.T) {
 
 	typ, _ := readFrame(t, c)
 	assert.Equal(t, "snapshot", typ, "the select after the junk is still served")
+}
+
+// The depth crosses the wire as a field of the select message, so this
+// drives it as a browser does — raw JSON over a real socket — rather than
+// calling selectBooks directly.
+func TestServeWS_AppliesTheDepthFromTheSelectMessage(t *testing.T) {
+	h := New(testLimit)
+	held := deepBook(1, "bids")
+	h.latest[held.Key()] = held
+
+	c, _ := dial(t, h)
+	readFrame(t, c) // catalog
+
+	require.NoError(t, c.WriteMessage(websocket.TextMessage,
+		[]byte(`{"type":"select","pair_id":1,"exchange_id":0,"limit":25}`)))
+
+	typ, raw := readFrame(t, c)
+	require.Equal(t, "snapshot", typ)
+	var snap domain.WSSnapshot
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	require.Len(t, snap.Books, 1)
+	assert.Len(t, snap.Books[0].Levels, 25, "the browser asked for 25 of the 300 levels held")
 }

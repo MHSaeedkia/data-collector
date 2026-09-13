@@ -16,6 +16,29 @@ const (
 	MergedExchangeID = -1
 )
 
+// LevelLimits are the depths a browser may ask for — how many levels of
+// one side it wants — and the whole list the UI dropdown offers. The
+// limit is applied on the server, before the fan-out: these books are far
+// deeper than a page can usefully render, and a browser that drops the
+// extra levels itself has already paid to receive and parse them.
+//
+// The list is sent to the page in the Catalog rather than written out
+// again in JavaScript, so unlike the exchange_id constants above there is
+// no second copy to keep in step.
+var LevelLimits = []int{25, 50, 100, 200}
+
+// ValidLevelLimit reports whether n is one of LevelLimits. Anything else
+// — a client asking for a depth nobody offers, a mistyped env var — falls
+// back to the configured default instead of being honoured.
+func ValidLevelLimit(n int) bool {
+	for _, l := range LevelLimits {
+		if l == n {
+			return true
+		}
+	}
+	return false
+}
+
 // RawLevel/RawBook are a book as produced by the Flink jobs
 // (identity only: pair_id / exchange_id, no display fields).
 //
@@ -117,6 +140,22 @@ func (b Book) ExchangeID() int {
 	return b.Exchange.ID
 }
 
+// Limit returns this book with at most n levels, keeping the FIRST n:
+// every producer emits asks ascending and bids descending, so the levels
+// at the front are the ones nearest the spread and the only ones a
+// shallow view wants. n <= 0 means no limit.
+//
+// The receiver is a copy and the level array is never written to, because
+// the hub holds ONE book per key and each client watching it chooses its
+// own depth.
+func (b Book) Limit(n int) Book {
+	if n <= 0 || len(b.Levels) <= n {
+		return b
+	}
+	b.Levels = b.Levels[:n]
+	return b
+}
+
 // Key identifies the one book a producer keeps overwriting. Derived from
 // the content rather than the Kafka topic because a job-5 record carries
 // two sides on one topic — and because topic strings stay opaque to
@@ -146,6 +185,12 @@ func (s Selection) Matches(b Book) bool {
 type Catalog struct {
 	Markets   []Market   `json:"markets"`
 	Exchanges []Exchange `json:"exchanges"`
+	// LevelLimits and DefaultLevelLimit fill the depth dropdown and say
+	// which entry it starts on. They ride on the catalog because it is
+	// already the one message that bootstraps the dropdowns, and they come
+	// from the server so the page holds no copy of the vocabulary.
+	LevelLimits       []int `json:"level_limits"`
+	DefaultLevelLimit int   `json:"default_level_limit"`
 }
 
 // The websocket message shapes. Server -> client: catalog, snapshot,
@@ -170,4 +215,9 @@ type WSSelect struct {
 	Type       string `json:"type"`
 	PairID     int    `json:"pair_id"`
 	ExchangeID int    `json:"exchange_id"`
+	// Limit is the depth this client wants, one of LevelLimits. It is
+	// part of the selection rather than of Selection itself: Selection
+	// doubles as the key of a stored book, and how deep one browser
+	// renders is not part of what a book IS.
+	Limit int `json:"limit"`
 }

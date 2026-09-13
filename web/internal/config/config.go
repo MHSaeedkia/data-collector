@@ -4,9 +4,13 @@
 package config
 
 import (
+	"log"
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
+
+	"orderbook-web/internal/domain"
 )
 
 // Config holds every setting main() needs to wire the app up.
@@ -15,6 +19,9 @@ type Config struct {
 	KafkaBroker       string
 	DatabaseURL       string
 	SchemaRegistryURL string
+	// LevelLimit is the depth the UI starts on: how many levels per side a
+	// client gets until it picks one of domain.LevelLimits itself.
+	LevelLimit int
 }
 
 const (
@@ -22,6 +29,11 @@ const (
 	defaultKafkaBroker       = "localhost:9092"
 	defaultDatabaseURL       = "postgres://postgres:postgres@localhost:5432/markets"
 	defaultSchemaRegistryURL = "http://localhost:8082"
+	// defaultLevelLimit is the shallowest depth on offer — the cheapest
+	// thing to render is the right thing to start on. It must stay one of
+	// domain.LevelLimits, or the UI would open on a depth its own dropdown
+	// cannot show.
+	defaultLevelLimit = 25
 )
 
 // Load reads envFile into the process environment — a missing file is not
@@ -42,7 +54,26 @@ func FromEnv() Config {
 		KafkaBroker:       env("KAFKA_BROKER", defaultKafkaBroker),
 		DatabaseURL:       env("DATABASE_URL", defaultDatabaseURL),
 		SchemaRegistryURL: env("SCHEMA_REGISTRY_URL", defaultSchemaRegistryURL),
+		LevelLimit:        levelLimit(),
 	}
+}
+
+// levelLimit reads LEVEL_LIMIT, which must name one of the depths the UI
+// offers. A value outside that list is not clamped or honoured quietly:
+// it is announced and replaced, because the alternative is a server whose
+// starting depth cannot be selected back in the dropdown, with nothing in
+// the log to say why.
+func levelLimit() int {
+	raw := os.Getenv("LEVEL_LIMIT")
+	if raw == "" {
+		return defaultLevelLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || !domain.ValidLevelLimit(n) {
+		log.Printf("config: LEVEL_LIMIT=%q is not one of %v — using %d", raw, domain.LevelLimits, defaultLevelLimit)
+		return defaultLevelLimit
+	}
+	return n
 }
 
 func env(key, fallback string) string {

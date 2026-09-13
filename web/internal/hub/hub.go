@@ -85,6 +85,11 @@ type client struct {
 
 	sel      domain.Selection
 	selected bool
+	// limit is how many levels per side this client wants. Guarded by the
+	// hub's mutex like sel and selected, and applied at fan-out: the
+	// stored book keeps every level, each client is sent as much of it as
+	// it asked for.
+	limit int
 
 	mu      sync.Mutex
 	pending []any
@@ -198,6 +203,10 @@ type Hub struct {
 	clients map[*client]bool
 	latest  map[domain.Selection]domain.Book
 	catalog domain.Catalog
+	// defaultLimit is the depth a client gets until it asks for one of
+	// domain.LevelLimits itself, and the depth the page's dropdown opens
+	// on. It comes from LEVEL_LIMIT (see internal/config).
+	defaultLimit int
 
 	// published counts books that have reached the hub, so the heartbeat
 	// can report a RATE. A count that stops moving is the signature of a
@@ -206,17 +215,36 @@ type Hub struct {
 	lastLogged int64
 }
 
-func New() *Hub {
+func New(defaultLimit int) *Hub {
 	return &Hub{
-		clients: map[*client]bool{},
-		latest:  map[domain.Selection]domain.Book{},
+		clients:      map[*client]bool{},
+		latest:       map[domain.Selection]domain.Book{},
+		defaultLimit: defaultLimit,
 	}
+}
+
+// limitOr answers with the depth this client may have: what it asked for
+// if that is a depth the UI offers, the configured default otherwise. A
+// client that has never selected, or one asking for a depth nobody
+// offers, is served the default rather than the whole book.
+func (h *Hub) limitOr(n int) int {
+	if domain.ValidLevelLimit(n) {
+		return n
+	}
+	return h.defaultLimit
 }
 
 // SetCatalog publishes the dropdown content, broadcasting only when it
 // actually changed — it is recomputed on the registry's refresh tick, and
 // that is almost always the same list as last time.
 func (h *Hub) SetCatalog(c domain.Catalog) {
+	// The depth dropdown is filled from here, not from postgres, so the
+	// registry never has to know about it — and stamping the values in one
+	// place keeps them inside the DeepEqual below, where a change to the
+	// default would correctly re-broadcast the catalog.
+	c.LevelLimits = domain.LevelLimits
+	c.DefaultLevelLimit = h.defaultLimit
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if reflect.DeepEqual(c, h.catalog) {
@@ -242,10 +270,11 @@ func (h *Hub) Publish(b domain.Book) {
 	}
 	h.published.Add(1)
 	h.latest[b.Key()] = b
-	msg := domain.WSUpdate{Type: "update", Book: b}
+	// The message is built per client, not once: two browsers watching the
+	// same book can be on different depths.
 	for cl := range h.clients {
 		if cl.selected && cl.sel.Matches(b) {
-			cl.enqueue(msg)
+			cl.enqueue(domain.WSUpdate{Type: "update", Book: b.Limit(cl.limit)})
 		}
 	}
 }
@@ -257,6 +286,7 @@ func (h *Hub) add(c conn, addr string) *client {
 
 	h.mu.Lock()
 	h.clients[cl] = true
+	cl.limit = h.defaultLimit
 	cl.enqueue(domain.WSCatalog{Type: "catalog", Catalog: h.catalog})
 	total, books := len(h.clients), len(h.latest)
 	h.mu.Unlock()
@@ -288,16 +318,17 @@ func (h *Hub) remove(cl *client, reason string) {
 // selectBooks records a client's selection and immediately answers with
 // everything held for it, so switching pair or exchange paints at once
 // instead of waiting for the next Kafka record.
-func (h *Hub) selectBooks(cl *client, sel domain.Selection) {
+func (h *Hub) selectBooks(cl *client, sel domain.Selection, limit int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	cl.sel = sel
 	cl.selected = true
+	cl.limit = h.limitOr(limit)
 
 	books := make([]domain.Book, 0, 2)
 	for _, b := range h.latest {
 		if sel.Matches(b) {
-			books = append(books, b)
+			books = append(books, b.Limit(cl.limit))
 		}
 	}
 	cl.enqueue(domain.WSSnapshot{Type: "snapshot", Books: books})
@@ -307,12 +338,12 @@ func (h *Hub) selectBooks(cl *client, sel domain.Selection) {
 	// arrived and was answered, and that the hub simply holds no book for
 	// what was asked — so the question is upstream, not here.
 	if len(books) == 0 {
-		log.Printf("ws select: %s wants pair %d, exchange %d — NOTHING HELD for it yet (%d book(s) held in total)",
-			cl, sel.PairID, sel.ExchangeID, len(h.latest))
+		log.Printf("ws select: %s wants pair %d, exchange %d, %d level(s) — NOTHING HELD for it yet (%d book(s) held in total)",
+			cl, sel.PairID, sel.ExchangeID, cl.limit, len(h.latest))
 		return
 	}
-	log.Printf("ws select: %s wants pair %d, exchange %d — answered with %d book(s)",
-		cl, sel.PairID, sel.ExchangeID, len(books))
+	log.Printf("ws select: %s wants pair %d, exchange %d, %d level(s) — answered with %d book(s)",
+		cl, sel.PairID, sel.ExchangeID, cl.limit, len(books))
 }
 
 // LogStats prints one heartbeat line: enough to tell a healthy idle
@@ -425,7 +456,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 			log.Printf("ws: ignoring unrecognised message from %s: %.120q", cl, data)
 			continue
 		}
-		h.selectBooks(cl, domain.Selection{PairID: sel.PairID, ExchangeID: sel.ExchangeID})
+		h.selectBooks(cl, domain.Selection{PairID: sel.PairID, ExchangeID: sel.ExchangeID}, sel.Limit)
 	}
 	h.remove(cl, readReason(readErr))
 }

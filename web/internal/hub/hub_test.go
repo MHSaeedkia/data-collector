@@ -2,6 +2,7 @@ package hub
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -162,6 +163,11 @@ func (f *fakeConn) resume() {
 	close(gate)
 }
 
+// testLimit is the depth these hubs are configured with. It is one of
+// domain.LevelLimits and deeper than any book built here, so it changes
+// nothing except in the tests that are about limiting.
+const testLimit = 200
+
 func aggregatedBook(pairID int, side string) domain.Book {
 	return domain.Book{PairID: pairID, Side: side}
 }
@@ -179,7 +185,7 @@ func mergedBook(pairID int, side string) domain.Book {
 }
 
 func TestAdd_SendsCatalog(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	h.SetCatalog(domain.Catalog{Markets: []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}}})
 	c := newFakeConn()
 
@@ -194,7 +200,7 @@ func TestAdd_SendsCatalog(t *testing.T) {
 }
 
 func TestSelect_AnswersWithHeldBooksForThatSelectionOnly(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	for _, b := range []domain.Book{
 		aggregatedBook(1, "asks"),
 		aggregatedBook(1, "bids"),
@@ -206,7 +212,7 @@ func TestSelect_AnswersWithHeldBooksForThatSelectionOnly(t *testing.T) {
 	c := newFakeConn()
 	cl := h.add(c, "test")
 
-	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID}, 0)
 
 	sent := waitSent(t, c, 2)
 	snap, ok := sent[1].(domain.WSSnapshot)
@@ -220,7 +226,7 @@ func TestSelect_AnswersWithHeldBooksForThatSelectionOnly(t *testing.T) {
 }
 
 func TestSelect_ExchangeSelectionExcludesTheAggregatedBook(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	for _, b := range []domain.Book{
 		aggregatedBook(1, "asks"),
 		exchangeBook(1, 8, "asks"),
@@ -231,7 +237,7 @@ func TestSelect_ExchangeSelectionExcludesTheAggregatedBook(t *testing.T) {
 	c := newFakeConn()
 	cl := h.add(c, "test")
 
-	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: 8})
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: 8}, 0)
 
 	snap := waitSent(t, c, 2)[1].(domain.WSSnapshot)
 	require.Len(t, snap.Books, 1)
@@ -239,10 +245,10 @@ func TestSelect_ExchangeSelectionExcludesTheAggregatedBook(t *testing.T) {
 }
 
 func TestPublish_ReachesOnlyClientsWatchingThatBook(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	watching, other, unselected := newFakeConn(), newFakeConn(), newFakeConn()
-	h.selectBooks(h.add(watching, "test"), domain.Selection{PairID: 1, ExchangeID: 8})
-	h.selectBooks(h.add(other, "test"), domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID})
+	h.selectBooks(h.add(watching, "test"), domain.Selection{PairID: 1, ExchangeID: 8}, 0)
+	h.selectBooks(h.add(other, "test"), domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID}, 0)
 	h.add(unselected, "test") // connected but has not chosen yet
 
 	b := exchangeBook(1, 8, "asks")
@@ -263,7 +269,7 @@ func TestPublish_ReachesOnlyClientsWatchingThatBook(t *testing.T) {
 // The aggregated book and a per-exchange book of the same pair and side
 // are different books, not the same one overwritten.
 func TestPublish_KeysAggregatedAndPerExchangeSeparately(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	h.Publish(aggregatedBook(1, "asks"))
 	h.Publish(exchangeBook(1, 8, "asks"))
 
@@ -274,7 +280,7 @@ func TestPublish_KeysAggregatedAndPerExchangeSeparately(t *testing.T) {
 // either, so only the merged flag keeps them apart — the one thing the
 // MergedExchangeID sentinel has to get right.
 func TestPublish_KeysMergedSeparatelyFromAggregated(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	h.Publish(aggregatedBook(1, "asks"))
 	h.Publish(mergedBook(1, "asks"))
 
@@ -282,7 +288,7 @@ func TestPublish_KeysMergedSeparatelyFromAggregated(t *testing.T) {
 }
 
 func TestSelect_MergedSelectionExcludesTheAggregatedBook(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	for _, b := range []domain.Book{
 		aggregatedBook(1, "asks"),
 		mergedBook(1, "asks"),
@@ -293,7 +299,7 @@ func TestSelect_MergedSelectionExcludesTheAggregatedBook(t *testing.T) {
 	c := newFakeConn()
 	cl := h.add(c, "test")
 
-	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.MergedExchangeID})
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.MergedExchangeID}, 0)
 
 	snap := waitSent(t, c, 2)[1].(domain.WSSnapshot)
 	require.Len(t, snap.Books, 1)
@@ -301,12 +307,12 @@ func TestSelect_MergedSelectionExcludesTheAggregatedBook(t *testing.T) {
 }
 
 func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	bad, good := newFakeConn(), newFakeConn()
 	bad.failAfter = 2 // catalog and snapshot land; the update breaks the pipe
 	sel := domain.Selection{PairID: 1}
-	h.selectBooks(h.add(bad, "test"), sel)
-	h.selectBooks(h.add(good, "test"), sel)
+	h.selectBooks(h.add(bad, "test"), sel, 0)
+	h.selectBooks(h.add(good, "test"), sel, 0)
 	waitSent(t, bad, 2)
 
 	h.Publish(aggregatedBook(1, "asks"))
@@ -319,7 +325,7 @@ func TestPublish_DropsClientWhoseWriteFails(t *testing.T) {
 }
 
 func TestSetCatalog_BroadcastsOnlyWhenItChanged(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newFakeConn()
 	h.add(c, "test")
 	waitSent(t, c, 1) // the catalog sent on add
@@ -333,7 +339,7 @@ func TestSetCatalog_BroadcastsOnlyWhenItChanged(t *testing.T) {
 }
 
 func TestRemove_ClosesAndUnregistersConn(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newFakeConn()
 	cl := h.add(c, "test")
 
@@ -346,7 +352,7 @@ func TestRemove_ClosesAndUnregistersConn(t *testing.T) {
 // remove is reached from both the read loop and the write loop, so it has
 // to survive being called twice — closing a channel twice would panic.
 func TestRemove_IsIdempotent(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	cl := h.add(newFakeConn(), "test")
 
 	assert.NotPanics(t, func() {
@@ -360,13 +366,13 @@ func TestRemove_IsIdempotent(t *testing.T) {
 // with no deadline, so one stalled socket froze Publish — and with it the
 // Kafka consumers, which call Publish synchronously.
 func TestPublish_DoesNotBlockOnAStalledClient(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	stalled := newStalledConn() // never resumed: this socket never drains
 	healthy := newFakeConn()
 	sel := domain.Selection{PairID: 1}
-	h.selectBooks(h.add(stalled, "test"), sel)
+	h.selectBooks(h.add(stalled, "test"), sel, 0)
 	waitParked(t, stalled)
-	h.selectBooks(h.add(healthy, "test"), sel)
+	h.selectBooks(h.add(healthy, "test"), sel, 0)
 
 	done := make(chan struct{})
 	go func() {
@@ -389,9 +395,9 @@ func TestPublish_DoesNotBlockOnAStalledClient(t *testing.T) {
 // behind the stalled one, so it got the websocket handshake and then
 // nothing — no catalog, no books, forever.
 func TestAdd_DoesNotBlockOnAStalledClient(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	stalled := newStalledConn()
-	h.selectBooks(h.add(stalled, "test"), domain.Selection{PairID: 1})
+	h.selectBooks(h.add(stalled, "test"), domain.Selection{PairID: 1}, 0)
 	waitParked(t, stalled)
 
 	arriving := newFakeConn()
@@ -413,11 +419,11 @@ func TestAdd_DoesNotBlockOnAStalledClient(t *testing.T) {
 // should skip frames rather than queue them: what it eventually receives
 // must be the newest state, and the queue must not grow with the backlog.
 func TestOutbox_CoalescesUpdatesForTheSameBook(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newStalledConn()
 	cl := h.add(c, "test")
 	waitParked(t, c) // the writer is stuck on the catalog; everything below queues
-	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.selectBooks(cl, domain.Selection{PairID: 1}, 0)
 
 	var last domain.Book
 	for i := 1; i <= 50; i++ {
@@ -439,11 +445,11 @@ func TestOutbox_CoalescesUpdatesForTheSameBook(t *testing.T) {
 
 // Two sides of one book are two keys, so coalescing must not merge them.
 func TestOutbox_KeepsBothSidesOfTheBook(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newStalledConn()
 	cl := h.add(c, "test")
 	waitParked(t, c)
-	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.selectBooks(cl, domain.Selection{PairID: 1}, 0)
 
 	h.Publish(aggregatedBook(1, "asks"))
 	h.Publish(aggregatedBook(1, "bids"))
@@ -461,15 +467,15 @@ func TestOutbox_KeepsBothSidesOfTheBook(t *testing.T) {
 // after it — that would paint a stale book over the fresh one. The same
 // applies to an earlier snapshot: the newest one is the whole answer.
 func TestOutbox_SnapshotSupersedesQueuedUpdates(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newStalledConn()
 	cl := h.add(c, "test")
 	waitParked(t, c)
-	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.selectBooks(cl, domain.Selection{PairID: 1}, 0)
 	h.Publish(aggregatedBook(1, "asks"))
 
 	// The browser switches pair; the queued update belongs to the old one.
-	h.selectBooks(cl, domain.Selection{PairID: 2})
+	h.selectBooks(cl, domain.Selection{PairID: 2}, 0)
 
 	c.resume()
 	sent := waitSent(t, c, 2)
@@ -483,11 +489,11 @@ func TestOutbox_SnapshotSupersedesQueuedUpdates(t *testing.T) {
 // The skipped counter is what the heartbeat reports, and it is the only
 // signal that separates "this browser is slow" from "this pair is quiet".
 func TestOutbox_CountsTheFramesASlowClientNeverSaw(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newStalledConn()
 	cl := h.add(c, "test")
 	waitParked(t, c)
-	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.selectBooks(cl, domain.Selection{PairID: 1}, 0)
 
 	for i := 0; i < 10; i++ {
 		h.Publish(aggregatedBook(1, "asks"))
@@ -504,11 +510,11 @@ func TestOutbox_CountsTheFramesASlowClientNeverSaw(t *testing.T) {
 // The heartbeat runs on a ticker in production, so it must be safe to
 // call while writers are removing clients underneath it.
 func TestLogStats_IsSafeWhileClientsComeAndGo(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	slow := newStalledConn()
 	cl := h.add(slow, "test")
 	waitParked(t, slow)
-	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.selectBooks(cl, domain.Selection{PairID: 1}, 0)
 	h.Publish(aggregatedBook(1, "asks"))
 	h.Publish(aggregatedBook(1, "asks"))
 
@@ -528,10 +534,10 @@ func TestLogStats_IsSafeWhileClientsComeAndGo(t *testing.T) {
 
 // A write with no deadline is what let a stalled socket park forever.
 func TestWrite_SetsADeadlineBeforeEveryWrite(t *testing.T) {
-	h := New()
+	h := New(testLimit)
 	c := newFakeConn()
 	cl := h.add(c, "test")
-	h.selectBooks(cl, domain.Selection{PairID: 1})
+	h.selectBooks(cl, domain.Selection{PairID: 1}, 0)
 	h.Publish(aggregatedBook(1, "asks"))
 
 	waitSent(t, c, 3)
@@ -551,7 +557,7 @@ func TestWriteLoop_PingsIdleClients(t *testing.T) {
 	pingPeriod = time.Millisecond
 	defer func() { pingPeriod = restore }()
 
-	h := New()
+	h := New(testLimit)
 	c := newFakeConn()
 	h.add(c, "test")
 
@@ -565,7 +571,7 @@ func TestWriteLoop_DropsClientWhosePingFails(t *testing.T) {
 	pingPeriod = time.Millisecond
 	defer func() { pingPeriod = restore }()
 
-	h := New()
+	h := New(testLimit)
 	c := newFakeConn()
 	c.failAfter = 1 // the catalog lands, then everything fails
 	h.add(c, "test")
@@ -574,4 +580,82 @@ func TestWriteLoop_DropsClientWhosePingFails(t *testing.T) {
 	require.Eventually(t, func() bool { return c.isClosed() }, 2*time.Second, time.Millisecond,
 		"a client whose ping fails should be dropped")
 	assert.Zero(t, clientCount(h))
+}
+
+// deepBook is a book with more levels than any depth the UI offers, so a
+// test can tell a limited book from an unlimited one.
+func deepBook(pairID int, side string) domain.Book {
+	levels := make([]domain.Level, 0, 300)
+	for i := 0; i < 300; i++ {
+		levels = append(levels, domain.Level{Price: strconv.Itoa(i), Quantity: "1"})
+	}
+	return domain.Book{PairID: pairID, Side: side, Levels: levels}
+}
+
+// The depth is a server-side cut, not something the page does after the
+// fact: a client that asked for 25 levels is sent 25, not 300 it has to
+// throw away.
+func TestSelect_AnswersAtTheDepthTheClientAskedFor(t *testing.T) {
+	h := New(testLimit)
+	b := deepBook(1, "asks")
+	h.latest[b.Key()] = b
+	c := newFakeConn()
+	cl := h.add(c, "test")
+
+	h.selectBooks(cl, domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID}, 25)
+
+	snap := waitSent(t, c, 2)[1].(domain.WSSnapshot)
+	require.Len(t, snap.Books, 1)
+	assert.Len(t, snap.Books[0].Levels, 25)
+	assert.Equal(t, "0", snap.Books[0].Levels[0].Price, "the levels kept are the ones nearest the spread")
+	assert.Len(t, h.latest[b.Key()].Levels, 300, "the stored book keeps every level")
+}
+
+// One book, two browsers, two depths — so the message cannot be built
+// once and shared.
+func TestPublish_SendsEachClientItsOwnDepth(t *testing.T) {
+	h := New(testLimit)
+	shallow, deep := newFakeConn(), newFakeConn()
+	sel := domain.Selection{PairID: 1, ExchangeID: domain.AggregatedExchangeID}
+	h.selectBooks(h.add(shallow, "test"), sel, 25)
+	h.selectBooks(h.add(deep, "test"), sel, 100)
+
+	h.Publish(deepBook(1, "asks"))
+
+	assert.Len(t, waitSent(t, shallow, 3)[2].(domain.WSUpdate).Book.Levels, 25)
+	assert.Len(t, waitSent(t, deep, 3)[2].(domain.WSUpdate).Book.Levels, 100)
+}
+
+// A client asking for a depth nobody offers is served the default, not
+// the whole book: the limit exists to bound what a browser receives, so
+// an unrecognised request must not be the way around it.
+func TestSelect_ADepthTheUIDoesNotOfferFallsBackToTheDefault(t *testing.T) {
+	for _, asked := range []int{0, -1, 5000, 7} {
+		t.Run(strconv.Itoa(asked), func(t *testing.T) {
+			h := New(25)
+			b := deepBook(1, "asks")
+			h.latest[b.Key()] = b
+			c := newFakeConn()
+
+			h.selectBooks(h.add(c, "test"), domain.Selection{PairID: 1}, asked)
+
+			snap := waitSent(t, c, 2)[1].(domain.WSSnapshot)
+			require.Len(t, snap.Books, 1)
+			assert.Len(t, snap.Books[0].Levels, 25)
+		})
+	}
+}
+
+// The page builds its depth dropdown from the catalog, so the choices and
+// the one it opens on have to be in it.
+func TestCatalog_CarriesTheDepthChoices(t *testing.T) {
+	h := New(100)
+	h.SetCatalog(domain.Catalog{Markets: []domain.Market{{ID: 1, Base: "BTC", Quote: "USDT"}}})
+	c := newFakeConn()
+
+	h.add(c, "test")
+
+	cat := waitSent(t, c, 1)[0].(domain.WSCatalog)
+	assert.Equal(t, domain.LevelLimits, cat.LevelLimits)
+	assert.Equal(t, 100, cat.DefaultLevelLimit)
 }

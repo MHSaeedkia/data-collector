@@ -506,3 +506,80 @@ Two rules came out of it, both now enforced in the code:
 **Always mutation-test an e2e test.** Confirmed: with the purge removed it FAILS (times out with
 the error repeating), with the purge present it PASSES in ~64s. An e2e test that has never been
 seen to fail is decoration.
+
+---
+
+## 2026-09-13 — depth limit: the cut happens on the SERVER
+
+User request, branch `feat/web-service-changes`: a dropdown for how many levels per side to show
+(25 / 50 / 100 / 200), default from `.env`, and — stated explicitly — **the limit must be applied
+on the backend, not in the page.** The point is load: a browser that receives 300 levels and
+renders 25 has already paid for the other 275 over the socket and through `JSON.parse`.
+
+### Where the cut is made, and why there
+
+At **fan-out in the hub**, not at ingest and not in the registry:
+
+- `hub.latest` keeps the book whole. Two browsers watching the same pair at 25 and at 200 are
+  ordinary, so a book truncated on the way *in* would serve one of them wrong. The depth belongs
+  to a client, not to a book.
+- So `Publish` builds its `WSUpdate` **inside** the client loop (it used to build one message and
+  share it), and `selectBooks` truncates each book it answers with. Both go through
+  `domain.Book.Limit(n)`, which returns a copy — the receiver is a value and the level array is
+  never written to, because that array is shared by every client.
+
+`Limit` keeps the **first** n levels. That is only "the best n" because all three producers emit
+asks ascending and bids descending ([[book-builder]] sorts on the way out, the merger and job 6
+follow the same platform convention, and `render()` already assumed it). If that convention ever
+changes, this silently starts showing the worst levels instead of the best.
+
+### The depth is NOT part of `Selection`
+
+`Selection` doubles as the key of a stored book (`Book.Key()`), and how deep one browser renders
+is not part of what a book *is*. So the depth rides on `WSSelect` (`"limit"`) and lives on
+`client.limit`, guarded by `h.mu` like `sel`/`selected`. `Selection`, `Matches` and the `latest`
+key are all untouched — the same restraint the `MergedExchangeID` sentinel showed, for the same
+reason.
+
+### The vocabulary is SERVED, not mirrored
+
+`domain.LevelLimits = {25, 50, 100, 200}` and the default ride on the **catalog** message
+(`level_limits` / `default_level_limit`), and `public/index.html` writes out no list of its own.
+This is deliberately the opposite choice from the `AGGREGATED`/`MERGED` constants, which are
+duplicated in the JS and coupled by convention only — the todo item asking whether to serve them
+in the catalog instead now has a working precedent to copy.
+
+The hub stamps both fields in `SetCatalog` (so the registry never learns about depths, and the
+values sit inside the existing `DeepEqual` guard, which means changing the default correctly
+re-broadcasts). `hub.New` now takes the default.
+
+### Invalid depths are replaced and ANNOUNCED, never honoured
+
+Two gates, both falling back rather than clamping:
+
+- `config`: `LEVEL_LIMIT` must parse and be one of `domain.LevelLimits`, else one log line
+  (`config: LEVEL_LIMIT="75" is not one of [25 50 100 200] — using 25`) and the default. A value
+  the dropdown cannot show would leave the UI open on a depth it cannot select back.
+- `hub.limitOr`: a client asking for anything else — including `0`, which is what a browser that
+  has not received a catalog yet sends — gets the default. **A rejected request must not be the
+  way to receive the whole book**, which is what "no limit" would mean here.
+
+`Book.Limit(n)` still treats `n <= 0` as no limit; that is the method's own contract, and the hub
+is what makes sure a client never reaches it with one.
+
+### Defaults and config
+
+Default **25** (user's choice — the cheapest thing to render is the right thing to open on).
+`LEVEL_LIMIT` added to `web/.env.example` and to the `web` service in **both**
+`docker-compose.yml` and `docker-compose.prod.yml` (identical service blocks; leaving prod out
+would have meant the setting existed everywhere except where it runs).
+
+### Status
+
+`make check` green (gofmt, `go vet` incl. the `e2e` tag, `-race -count=1`). 6 new domain tests,
+3 new config tests, 4 new hub tests, 1 new real-websocket test that sends the raw
+`{"type":"select",…,"limit":25}` JSON a browser sends. **Mutation-tested**: making `Book.Limit` a
+no-op fails 11 of them, and dropping the truncation in `Publish`/`selectBooks` fails 3. Smoke-run
+the binary: the page serves with the third dropdown, `Default depth: 100 level(s) per side` with
+`LEVEL_LIMIT=100`, and the rejection line with `LEVEL_LIMIT=75`. **Not run against live Kafka** —
+no book with real depth has been cut yet.

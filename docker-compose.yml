@@ -432,6 +432,7 @@ services:
             KAFKA_BROKER: kafka:29092
             DATABASE_URL: "postgres://postgres:postgres@postgres:5432/markets"
             SCHEMA_REGISTRY_URL: http://schema-registry:8082
+            LEVEL_LIMIT: 25 # levels per side the UI opens on: 25, 50, 100 or 200
         networks:
             - data-collector-net
 
