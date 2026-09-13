@@ -419,10 +419,10 @@ services:
             retries: 3
             start_period: 15s
 
-    web:
-        build: ./web
-        container_name: orderbook-web
-        hostname: orderbook-web
+    orderbook-viewer:
+        build: ./orderbook-viewer
+        container_name: orderbook-viewer
+        hostname: orderbook-viewer
         restart: on-failure
         depends_on:
             kafka:
@@ -431,6 +431,20 @@ services:
                 condition: service_healthy
         ports:
             - "3000:3000" # host: http://localhost:3000
+        # What the three dropdowns open on lives in the service's own .env, so
+        # the SAME file configures `go run .` and this container, and changing
+        # it needs no edit here. Optional: without it the app's built-in
+        # defaults apply (first market, separated, 25 levels).
+        # Needs Compose v2.24+ for `required:`; on older versions the file
+        # must exist (cp orderbook-viewer/.env.example orderbook-viewer/.env).
+        env_file:
+            - path: ./orderbook-viewer/.env
+              required: false
+        # Everything below is how this container reaches the others, and it
+        # deliberately OVERRIDES the env_file: a .env written for running on
+        # the host points at localhost, which is wrong in here. Compose
+        # applies `environment:` after `env_file:`, which is what makes that
+        # work — do not move these two blocks around each other.
         environment:
             PORT: 3000
             KAFKA_BROKER: kafka:29092

@@ -21,7 +21,7 @@ import java.util.List;
  * byte-identical to job 6's. It is not any more: the adjusted event carries the
  * three rates that were applied, so it is a different shape and needs a schema
  * of its own. That is a NEW subject, not an evolution of the aggregated one —
- * job 6's contract with {@code web/} is frozen and must not grow fields because
+ * job 6's contract with {@code orderbook-viewer/} is frozen and must not grow fields because
  * a downstream job wanted them.
  *
  * <p>

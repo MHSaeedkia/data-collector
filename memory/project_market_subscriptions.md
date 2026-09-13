@@ -34,7 +34,7 @@ Consequences worth knowing before changing anything here:
 
 ## Shape
 
-Mirrors `web/` exactly ([[orderbook-web]]): Go module, hexagonal `internal/` packages,
+Mirrors `web/` exactly ([[orderbook-viewer]]): Go module, hexagonal `internal/` packages,
 UI in `public/` baked in with `go:embed`, vendored deps, multi-stage Dockerfile whose
 build stage chains off the test stage so tests cannot be skipped. **One binary, no separate
 frontend** — the user asked for this explicitly.

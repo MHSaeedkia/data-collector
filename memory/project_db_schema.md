@@ -40,9 +40,9 @@ confirmed is not the current target — flat percent per `(exchange_id, market_i
 
 ### To resolve pair_id/exchange_id → display symbols
 `SELECT m.id, b.name AS base, q.name AS quote FROM markets m JOIN currencies b ON m.base_id=b.id JOIN currencies q ON m.quote_id=q.id`.
-This is the join [[orderbook-web]] now uses; before normalization it was `SELECT id, base, quote FROM markets`.
+This is the join [[orderbook-viewer]] now uses; before normalization it was `SELECT id, base, quote FROM markets`.
 
-**Why:** Single source of truth for pairs/exchanges/subscriptions; drives [[kafka-topic-strategy]] topic provisioning and [[orderbook-web]] id→label enrichment.
+**Why:** Single source of truth for pairs/exchanges/subscriptions; drives [[kafka-topic-strategy]] topic provisioning and [[orderbook-viewer]] id→label enrichment.
 **How to apply:** Any code reading pair symbols must join `currencies` via `markets.base_id`/`quote_id` — there is no `base`/`quote` column on `markets` anymore.
 
 ## Suspected seed bug — the `1K_SHIB*` rebase rows (noticed 2026-08-01, NOT fixed)

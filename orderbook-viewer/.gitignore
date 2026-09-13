@@ -1,0 +1,5 @@
+# compiled binary
+/orderbook-viewer
+
+# local config (copy .env.example -> .env and edit)
+/.env

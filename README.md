@@ -32,7 +32,7 @@ Exchanges (nobitex, bitpin, wallex)
 | ZooKeeper        | —               | Flink JobManager HA store       | prod only |
 | Prometheus       | 9090            | Scrapes Flink + exporters       | prod only |
 | Alertmanager     | 9093            | Alert routing (no receiver yet) | prod only |
-| Grafana          | 3001            | Dashboards (3000 is `web`)      | prod only |
+| Grafana          | 3001            | Dashboards (3000 is `orderbook-viewer`) | prod only |
 
 Dev runs one TaskManager with 8 slots; prod runs four with 3 slots each.
 
@@ -158,6 +158,6 @@ cd flink
 # same downstream topics.
 ./run-local.sh job-rebaser
 
-cd ../web
+cd ../orderbook-viewer
 npm i && npm start
 ```

@@ -251,5 +251,5 @@ the WebSocket JSON. **The browser UI does not render them** — plumbed only, ex
 `simulation`.
 
 Related: [[avro-schema]], [[simulation-flag]], [[pair-extractor]], [[type-validator]], [[rebaser]],
-[[precision]], [[book-builder]], [[aggregator]], [[e2e-harness]], [[orderbook-web]],
+[[precision]], [[book-builder]], [[aggregator]], [[e2e-harness]], [[orderbook-viewer]],
 [[bigdecimal-rules]].

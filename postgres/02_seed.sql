@@ -1,16 +1,20 @@
 \c markets
 
 -- seed exchanges
+-- name is each exchange's own English brand spelling, as the financial
+-- press and the exchanges themselves write it (OKX and LBank are styled
+-- that way by the companies; OMPFinex is "Ogen Mashregh Pars" + "Finex").
+-- It is what the order book UI shows. label stays the Persian display name.
 INSERT INTO exchanges (id, name, label) VALUES
-(1, 'nobitex', 'نوبیتکس'),
-(2, 'bitpin', 'بیت پین'),
-(3, 'wallex', 'والکس'),
-(4, 'ramzinex', 'رمزینکس'),
-(5, 'bitget', 'بیت گت'),
-(6, 'bybit', 'بای بیت'),
-(7, 'ompfinex', 'او ام پی فینکس'),
-(8, 'okx', 'اوکی ایکس'),
-(9, 'lbank', 'ال بانک');
+(1, 'Nobitex', 'نوبیتکس'),
+(2, 'Bitpin', 'بیت پین'),
+(3, 'Wallex', 'والکس'),
+(4, 'Ramzinex', 'رمزینکس'),
+(5, 'Bitget', 'بیت گت'),
+(6, 'Bybit', 'بای بیت'),
+(7, 'OMPFinex', 'او ام پی فینکس'),
+(8, 'OKX', 'اوکی ایکس'),
+(9, 'LBank', 'ال بانک');
 SELECT setval(pg_get_serial_sequence('exchanges', 'id'), (SELECT MAX(id) FROM exchanges));
 
 -- ===== currencies =====

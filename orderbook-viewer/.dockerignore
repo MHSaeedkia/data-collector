@@ -1,0 +1,6 @@
+# not needed inside the image
+/orderbook-viewer
+README.md
+Dockerfile
+.dockerignore
+.gitignore

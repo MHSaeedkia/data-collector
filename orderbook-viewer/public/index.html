@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Live Order Book</title>
+		<style>
+			:root {
+				--bg: #0f1419;
+				--panel: #1a212b;
+				--line: #2a3340;
+				--ask: #ef5350;
+				--bid: #26a69a;
+				--muted: #8a97a6;
+				--text: #e6edf3;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--text);
+				font-family: "SF Mono", Menlo, Consolas, monospace;
+				font-size: 13px;
+			}
+			header {
+				display: flex;
+				align-items: center;
+				gap: 16px;
+				padding: 14px 20px;
+				border-bottom: 1px solid var(--line);
+				background: var(--panel);
+				position: fixed;
+				top: 0;
+				left: 0;
+				right: 0;
+				z-index: 10;
+			}
+			header h1 {
+				font-size: 15px;
+				margin: 0;
+				font-weight: 600;
+			}
+			select {
+				background: var(--bg);
+				color: var(--text);
+				border: 1px solid var(--line);
+				border-radius: 6px;
+				padding: 6px 10px;
+				font-family: inherit;
+				font-size: 13px;
+			}
+			.status {
+				margin-left: auto;
+				color: var(--muted);
+				font-size: 12px;
+			}
+			.dot {
+				display: inline-block;
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: var(--ask);
+				margin-right: 6px;
+			}
+			.dot.on {
+				background: var(--bid);
+			}
+			main {
+				max-width: 720px;
+				margin: 0 auto;
+				padding: 20px;
+				margin-top: 53px;
+			}
+			.book {
+				background: var(--panel);
+				border: 1px solid var(--line);
+				border-radius: 10px;
+			}
+			table {
+				width: 100%;
+				border-collapse: collapse;
+				/* Asks and bids are two separate tables, so with automatic
+				   layout each sizes its columns to its OWN content and the
+				   two stop lining up — most visibly in the merged view,
+				   where a cell is empty whenever one exchange made the
+				   level. Fixed layout gives both tables the same geometry
+				   whatever is in them. */
+				table-layout: fixed;
+			}
+			th,
+			td {
+				padding: 5px 16px;
+				text-align: right;
+			}
+			th {
+				color: var(--text);
+				font-weight: 500;
+				font-size: 11px;
+				text-transform: uppercase;
+				letter-spacing: 0.04em;
+			}
+			thead th {
+				position: sticky;
+				top: 59px;
+				background: var(--panel);
+				z-index: 5;
+				color: var(--text);
+				font-weight: bold;
+			}
+			thead th:first-child {
+				border-top-left-radius: 10px;
+			}
+			thead th:last-child {
+				border-top-right-radius: 10px;
+			}
+			th.exch,
+			td.exch {
+				text-align: left;
+				/* Fixed at a width that holds the longest exchange name, so
+				   the price and quantity columns never move when this one
+				   is empty. */
+				width: 120px;
+			}
+
+			tbody tr {
+				border-top: 1px solid var(--line);
+			}
+
+			td {
+				color: var(--muted);
+			}
+			.asks td.price {
+				color: var(--ask);
+			}
+			.bids td.price {
+				color: var(--bid);
+			}
+			.spread {
+				display: flex;
+				justify-content: space-between;
+				padding: 10px 16px;
+				background: var(--bg);
+				color: var(--muted);
+				font-size: 12px;
+				border-top: 1px solid var(--line);
+				border-bottom: 1px solid var(--line);
+			}
+			.empty {
+				padding: 30px;
+				text-align: center;
+				color: var(--muted);
+			}
+			.meta {
+				color: var(--muted);
+				font-size: 11px;
+				white-space: nowrap;
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>Live Order Book</h1>
+			<select id="pair"></select>
+			<select id="exchange"></select>
+			<select id="limit"></select>
+			<span class="meta" id="meta"></span>
+			<span class="status"
+				><span class="dot" id="dot"></span
+				><span id="conn">connecting…</span></span
+			>
+		</header>
+		<main>
+			<div class="book" id="book">
+				<div class="empty">Waiting for data…</div>
+			</div>
+		</main>
+
+		<script>
+			// The server pushes only the pair+exchange this client selected,
+			// so we hold exactly one book per side and the dropdown contents
+			// come from the catalog message rather than from the data.
+			let catalog = { markets: [], exchanges: [] };
+			// The exchange_id vocabulary, kept in step with the constants of
+			// the same name in internal/domain: an exchange_id is either a
+			// real exchange (postgres ids, from 1 up) or one of the two
+			// cross-exchange views below. Never write the bare numbers.
+			const AGGREGATED = 0; // job 6's union: levels side by side
+			const MERGED = -1; // the merger's sum: one level per price
+			// All three start empty and are filled from the catalog: which
+			// pair, which exchange and which depth the page opens on are
+			// configured on the server, not decided here.
+			let selectedPair = null; // market id
+			let selectedExchange = null;
+			// How many levels per side to ask for. The server applies it
+			// before sending, so this is a request, not a filter: the choices
+			// and the one to start on both come from the catalog, which is
+			// why no list of depths is written out here.
+			let selectedLimit = null;
+			let books = { asks: null, bids: null };
+			let ws = null;
+
+			const $pair = document.getElementById("pair");
+			const $exchange = document.getElementById("exchange");
+			const $limit = document.getElementById("limit");
+			const $book = document.getElementById("book");
+			const $meta = document.getElementById("meta");
+			const $dot = document.getElementById("dot");
+			const $conn = document.getElementById("conn");
+
+			// The mirror of domain.Book.ExchangeID(). Merged is checked first
+			// because `exchange` is absent on both cross-exchange views.
+			function bookExchangeID(book) {
+				if (book.merged) return MERGED;
+				return book.exchange ? book.exchange.id : AGGREGATED;
+			}
+
+			function store(book) {
+				// A book for the previous selection can still be in flight
+				// when the dropdown changes; drop it rather than render it.
+				if (!book || !book.side) return;
+				if (
+					book.pair_id !== selectedPair ||
+					bookExchangeID(book) !== selectedExchange
+				)
+					return;
+				books[book.side] = book;
+			}
+
+			// A `separator: true` entry renders as an unselectable rule. A
+			// disabled <option> is used rather than <hr>, which only newer
+			// browsers draw inside a <select>.
+			function fillSelect($el, options, value) {
+				$el.innerHTML = "";
+				for (const o of options) {
+					const opt = document.createElement("option");
+					if (o.separator) {
+						opt.disabled = true;
+						opt.textContent = "──────────";
+					} else {
+						opt.value = o.value;
+						opt.textContent = o.text;
+					}
+					$el.appendChild(opt);
+				}
+				$el.value = String(value);
+			}
+
+			// What a dropdown should be showing: keep the current value while
+			// it is still on offer, else the server's default, else the
+			// fallback. Every option list goes through this, so "the default
+			// applies on first load and a vanished selection recovers" is
+			// written once.
+			//
+			// A separator carries NO value, and `undefined` is also what a
+			// catalog without defaults gives — so a bare `some(o => o.value
+			// === wanted)` matched the separator, "selected" undefined, and
+			// left the exchange dropdown permanently blank (2026-09-13).
+			// Both guards below exist because of that: separators are not
+			// selectable, and undefined is not a value.
+			function pickOption(options, current, preferred, fallback) {
+				const offered = (v) =>
+					v !== undefined &&
+					v !== null &&
+					options.some((o) => !o.separator && o.value === v);
+				if (offered(current)) return current;
+				if (offered(preferred)) return preferred;
+				return fallback;
+			}
+
+			function refreshDropdowns() {
+				const markets = catalog.markets || [];
+				const pairOptions = markets.map((m) => ({
+					value: m.id,
+					text: `${m.base}/${m.quote}`,
+				}));
+				// Falls back to the first market, which is also what the
+				// server asks for when it resolved no DEFAULT_PAIR (it sends
+				// id 0, and 0 is not a market id).
+				selectedPair = pickOption(
+					pairOptions,
+					selectedPair,
+					catalog.default_pair_id,
+					markets.length ? markets[0].id : null,
+				);
+				fillSelect($pair, pairOptions, selectedPair);
+				// The exchanges people trade on come first, by name; the two
+				// cross-exchange views are a different kind of thing, so they
+				// sit below a rule — also alphabetically, merged then
+				// separated. Sorting is done here rather than in the catalog
+				// because the order of this list is the page's business; the
+				// catalog stays sorted by id, which is what makes it stable.
+				const exchangeOptions = [
+					...(catalog.exchanges || [])
+						.map((e) => ({ value: e.id, text: e.name }))
+						.sort((a, b) =>
+							a.text.localeCompare(b.text, undefined, {
+								sensitivity: "base",
+							}),
+						),
+					{ separator: true },
+					{ value: MERGED, text: "All exchanges (merged)" },
+					{ value: AGGREGATED, text: "All exchanges (separated)" },
+				];
+				selectedExchange = pickOption(
+					exchangeOptions,
+					selectedExchange,
+					catalog.default_exchange_id,
+					AGGREGATED,
+				);
+				fillSelect($exchange, exchangeOptions, selectedExchange);
+				const limitOptions = (catalog.level_limits || []).map((n) => ({
+					value: n,
+					text: `${n} levels`,
+				}));
+				selectedLimit = pickOption(
+					limitOptions,
+					selectedLimit,
+					catalog.default_level_limit,
+					limitOptions.length ? limitOptions[0].value : null,
+				);
+				fillSelect($limit, limitOptions, selectedLimit);
+			}
+
+			// Tell the server what to send us, and clear what we hold: the
+			// books on screen belong to the old selection.
+			function sendSelect() {
+				books = { asks: null, bids: null };
+				render();
+				if (selectedPair === null) return;
+				if (!ws || ws.readyState !== WebSocket.OPEN) return;
+				ws.send(
+					JSON.stringify({
+						type: "select",
+						pair_id: selectedPair,
+						exchange_id: selectedExchange,
+						limit: selectedLimit,
+					}),
+				);
+			}
+
+			function decimalPlaces(str) {
+				const i = String(str).indexOf(".");
+				return i === -1 ? 0 : String(str).length - i - 1;
+			}
+
+			function padDecimals(str, places) {
+				str = String(str);
+				const dot = str.indexOf(".");
+				const current = dot === -1 ? 0 : str.length - dot - 1;
+				if (current === places) return str;
+				if (dot === -1)
+					return places > 0 ? `${str}.${"0".repeat(places)}` : str;
+				return str + "0".repeat(places - current);
+			}
+
+			// On a merged level the question is how MANY exchanges were
+			// summed into this quantity: one contributor is the ordinary
+			// case and adds nothing to read, so it stays blank and only a
+			// real sum shows a number. The cell is still emitted either way,
+			// which is what keeps the column aligned.
+			function exchangeCell(l) {
+				if (l.exchanges) {
+					return l.exchanges.length > 1 ? String(l.exchanges.length) : "";
+				}
+				return l.exchange.name;
+			}
+
+			function rows(levels, priceDecimals, qtyDecimals, showExchange) {
+				return levels
+					.map(
+						(l) =>
+							`<tr><td class="price">${padDecimals(l.price, priceDecimals)}</td><td>${padDecimals(l.quantity, qtyDecimals)}</td>${showExchange ? `<td class="exch">${exchangeCell(l)}</td>` : ""}</tr>`,
+					)
+					.join("");
+			}
+
+			function render() {
+				if (selectedPair === null) {
+					$book.innerHTML =
+						'<div class="empty">Waiting for data…</div>';
+					$meta.textContent = "";
+					return;
+				}
+				const asks = books.asks;
+				const bids = books.bids;
+				if (!asks && !bids) {
+					$book.innerHTML =
+						'<div class="empty">No data for this selection yet…</div>';
+					$meta.textContent = "";
+					return;
+				}
+				// The exchange column is only worth its width when the book
+				// mixes exchanges — the two cross-exchange views, not a
+				// single exchange's own book (where it is one constant value).
+				const showExchange =
+					selectedExchange === AGGREGATED ||
+					selectedExchange === MERGED;
+
+				// asks come ascending (lowest first); show highest at top so best ask sits by the spread.
+				const askLevels = asks ? [...asks.levels].reverse() : [];
+				const bidLevels = bids ? bids.levels : []; // already descending (highest first)
+
+				const bestAsk =
+					asks && asks.levels.length
+						? parseFloat(asks.levels[0].price)
+						: null;
+				const bestBid =
+					bids && bids.levels.length
+						? parseFloat(bids.levels[0].price)
+						: null;
+				const spread =
+					bestAsk != null && bestBid != null
+						? bestAsk - bestBid
+						: null;
+
+				const allLevels = [...askLevels, ...bidLevels];
+				const priceDecimals = Math.max(
+					0,
+					...allLevels.map((l) => decimalPlaces(l.price)),
+				);
+				const qtyDecimals = Math.max(
+					0,
+					...allLevels.map((l) => decimalPlaces(l.quantity)),
+				);
+
+				const head = `<tr><th>Price</th><th>Qty</th>${showExchange ? `<th class="exch">${selectedExchange === MERGED ? "Exchanges" : "Exchange"}</th>` : ""}</tr>`;
+				$book.innerHTML = `
+        <table class="asks"><thead>${head}</thead><tbody>${rows(askLevels, priceDecimals, qtyDecimals, showExchange)}</tbody></table>
+        <div class="spread">
+          <span>spread</span>
+          <span>${spread != null ? spread.toLocaleString(undefined, { maximumFractionDigits: 8 }) : "—"}</span>
+        </div>
+        <table class="bids"><tbody>${rows(bidLevels, priceDecimals, qtyDecimals, showExchange)}</tbody></table>
+      `;
+
+				$meta.textContent = `${askLevels.length} asks · ${bidLevels.length} bids`;
+			}
+
+			$pair.addEventListener("change", () => {
+				selectedPair = Number($pair.value);
+				sendSelect();
+			});
+
+			$exchange.addEventListener("change", () => {
+				selectedExchange = Number($exchange.value);
+				sendSelect();
+			});
+
+			// A new depth is a new selection: the server answers with a
+			// snapshot cut to it, so there is nothing to re-render locally.
+			$limit.addEventListener("change", () => {
+				selectedLimit = Number($limit.value);
+				sendSelect();
+			});
+
+			function connect() {
+				ws = new WebSocket(`ws://${location.host}/ws`);
+				ws.onopen = () => {
+					$dot.classList.add("on");
+					$conn.textContent = "live";
+					sendSelect(); // re-subscribe after a reconnect
+				};
+				ws.onclose = () => {
+					$dot.classList.remove("on");
+					$conn.textContent = "disconnected — retrying";
+					setTimeout(connect, 2000);
+				};
+				ws.onmessage = (ev) => {
+					const msg = JSON.parse(ev.data);
+					if (msg.type === "catalog") {
+						catalog = msg;
+						const was = selectedPair;
+						const wasExchange = selectedExchange;
+						const wasLimit = selectedLimit;
+						refreshDropdowns();
+						// Only re-subscribe if the catalog moved us off what
+						// we were on — first load, where all three come from
+						// the server's defaults, or one of them disappeared.
+						if (
+							selectedPair !== was ||
+							selectedExchange !== wasExchange ||
+							selectedLimit !== wasLimit
+						) {
+							sendSelect();
+							return;
+						}
+					} else if (msg.type === "snapshot") {
+						books = { asks: null, bids: null };
+						msg.books.forEach(store);
+					} else if (msg.type === "update") {
+						store(msg.book);
+					}
+					render();
+				};
+			}
+			// The dropdowns stay empty until the first catalog: they are
+			// filled ONLY from one. Calling refreshDropdowns() here would
+			// settle on a fallback before the server has said what it wants
+			// shown, and that choice would then outrank DEFAULT_EXCHANGE
+			// when the catalog arrived a moment later.
+			render();
+			connect();
+		</script>
+	</body>
+</html>
