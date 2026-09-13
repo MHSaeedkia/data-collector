@@ -46,6 +46,10 @@ carries an explicit zone label (e.g. `13:56:00 GMT+3:30`) and can't be misread a
 If displayed times ever look shifted, the bug is upstream in how the producer stamps `event_time`,
 not in the frontend formatting.
 
+**⚠ 2026-09-13 — the page no longer DISPLAYS `event_time`** (user request; see that section below).
+It still crosses the wire on every book, unchanged. The paragraph above is kept because it is the
+answer the moment anyone renders it again.
+
 ## ID → display resolution (key consequence of the ID-only pipeline)
 
 The Flink output carries only `pair_id` and per-level `exchange_id` — no `base`, `quote`, or
@@ -583,3 +587,17 @@ no-op fails 11 of them, and dropping the truncation in `Publish`/`selectBooks` f
 the binary: the page serves with the third dropdown, `Default depth: 100 level(s) per side` with
 `LEVEL_LIMIT=100`, and the rejection line with `LEVEL_LIMIT=75`. **Not run against live Kafka** —
 no book with real depth has been cut yet.
+
+---
+
+## 2026-09-13 — the counts moved into the header
+
+User request, same branch: the `asks · bids · event_time` line under the book moves up into the
+header row with the dropdowns, and `event_time` comes off it. So `#meta` is now a `<span>` in
+`<header>` between the depth dropdown and the connection status, its CSS lost the
+`margin-top`/`text-align: right` that only made sense under the book, and `render()` no longer
+computes the max event time at all.
+
+Nothing on the server changed: `event_time` is still on every book in the websocket JSON, it is
+simply not drawn. `main { margin-top: 53px }` still matches the header, which the added span does
+not grow — it is 11px text in a row of 32px selects.

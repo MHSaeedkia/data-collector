@@ -142,10 +142,9 @@
 				color: var(--muted);
 			}
 			.meta {
-				margin-top: 10px;
 				color: var(--muted);
 				font-size: 11px;
-				text-align: right;
+				white-space: nowrap;
 			}
 		</style>
 	</head>
@@ -155,6 +154,7 @@
 			<select id="pair"></select>
 			<select id="exchange"></select>
 			<select id="limit"></select>
+			<span class="meta" id="meta"></span>
 			<span class="status"
 				><span class="dot" id="dot"></span
 				><span id="conn">connecting…</span></span
@@ -164,7 +164,6 @@
 			<div class="book" id="book">
 				<div class="empty">Waiting for data…</div>
 			</div>
-			<div class="meta" id="meta"></div>
 		</main>
 
 		<script>
@@ -374,11 +373,7 @@
         <table class="bids"><tbody>${rows(bidLevels, priceDecimals, qtyDecimals, showExchange)}</tbody></table>
       `;
 
-				const t = Math.max(
-					asks ? asks.event_time : 0,
-					bids ? bids.event_time : 0,
-				);
-				$meta.textContent = `${askLevels.length} asks · ${bidLevels.length} bids · event_time ${t ? new Date(t).toLocaleTimeString(undefined, { timeZoneName: "short" }) : "—"}`;
+				$meta.textContent = `${askLevels.length} asks · ${bidLevels.length} bids`;
 			}
 
 			$pair.addEventListener("change", () => {
