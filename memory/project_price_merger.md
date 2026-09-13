@@ -90,3 +90,75 @@ Deliberately **not** done, needs a decision:
 - ~~The web UI does not consume `-merged`~~ **done 2026-08-24**: a third entry in [[orderbook-web]]'s
   exchange dropdown, `exchange_id = -1` on the wire. Still NOT verified against live Kafka on either
   side — no merged record has ever been produced AND consumed for real.
+
+## 2026-09-13 — "merged spread ≠ aggregated spread" is LAG, not merge logic (measured live)
+
+User report: with a single-exchange best level on each side, the merged and aggregated spreads in
+the UI should match, and they don't. **Diagnosis (read-only on the dev server): the merger is
+falling behind job 6, and each side falls behind by a different amount.** Nothing was changed.
+
+- **Throughput deficit, measured from topic end offsets over 65 s:** all `p*-{side}` topics grew
+  **908 rec/s**, `-merged` **727 rec/s**, `-adjusted` **474 rec/s**. Both jobs map 1 record to 1
+  record, so output below input means a growing backlog. It is uneven per side: over the same
+  65 s, `p1-asks-merged` got +462 and `p1-bids-merged` +237, while job 6 wrote ~1970 to each.
+- **Event-time gap on pair 1:** `p1-asks-merged` was **~17 min** behind `p1-asks`,
+  `p1-bids-merged` **~26 min**. About 20 min later, `-asks-merged` was ~23 min behind, so the
+  gap keeps growing and the job never catches up. The UI therefore subtracts a bid from one
+  minute from an ask from another.
+- **Cause:** CPU starvation. Host run queue was 30–31 on 8 CPUs (~4% idle), and the TaskManager
+  held ~2.7 cores for all 8 jobs. Swap was full but not actively paging. Each job runs its whole
+  source→merge→sink chain in ONE thread at parallelism 1, and that thread got ~27% of a core.
+  Every record is a ~750-level Avro book, fully decoded, BigDecimal-parsed, sorted and
+  re-encoded. Job 5 (`ex5`/`ex8` snapshots, ~9 s old, which is about the console-consumer's
+  startup time) and job 6 (within ~20 s) were current.
+- **The merge function was NOT proven correct on live data.** Pairing a merged record with its
+  parent through `source_id` failed: job 6's `event_time` is the MAX across books and isn't
+  monotonic, so binary search by event time doesn't work. Its correctness rests on code review
+  plus the 16 unit tests.
+
+Traps that cost time, so nobody re-derives them:
+- **Kafka `CreateTime` on every Flink output is inherited from the upstream record**, not the time
+  it was written. It says nothing about freshness; use end-offset deltas instead.
+- **Flink REST vertex metrics read 0 for every rate on every job** (`numRecordsInPerSecond`,
+  `records-lag-max`, busy/backpressure), even while topics grow. They are useless for
+  diagnosis here; cause not investigated.
+- Flink REST on the dev server is host port **7070**, not 8081.
+- `kafka-get-offsets --topic '<regex>'` works; `--topic-partitions` with a regex returns nothing.
+
+Side findings, not fixed:
+- **ex9/lbank `event_time` is +8 h (28 790 s ahead of wall clock).** This is the risk
+  [[project_pair_extractor]] flagged: `TS` is read as UTC but is really UTC+8. Job 6 takes the
+  max, so every pair with lbank carries an event_time 8 h in the future, merged and adjusted too.
+- `p1` aggregated looked **crossed** in one sample: lbank best ask 77171.64 < bybit best bid
+  77315.1. Unverified whether that is a real price gap or a stale lbank book.
+- **How to raise merger parallelism** (answered 2026-09-13, not applied). `run-job.sh` already
+  reads `PARALLELISM` (default 1): `PARALLELISM=N ./flink/run-job.sh merger`. It does NOT cancel
+  the running copy first, so cancel the old merger or two of them write `-merged`. It needs N-1
+  free slots, and the dev TaskManager is 8/8. Each extra reader brings its own fetch buffer
+  (up to 8 MB) into the ~287 MB direct-memory budget. Per-topic order holds, because every input
+  topic has one partition, is owned by one reader, and source→map→sink are chained. **More
+  threads do not add cores:** on a CPU-saturated host this takes CPU away from job 6.
+- **Slots raised 8 → 12 in `docker-compose.yml`** (2026-09-13, user request, NOT deployed). The
+  user's target is merger parallelism **5**, and 7 other jobs × 1 + 5 = 12. Process memory
+  (2g) was deliberately left alone, which leaves the direct-memory risk open.
+  `docker-compose.prod.yml` already has 4 TMs × 3 = 12 slots, so it is unchanged. The comments in
+  `MergerJob`/`AggregatorJob`/`AdjustmentJob` that say "8 slots" are now stale, and were left
+  untouched.
+- **Makefile now sets parallelism per job** (2026-09-13, user request). `PARALLELISM_<job>` falls
+  back to `DEFAULT_PARALLELISM := 1`, and `PARALLELISM_merger := 5`. One helper,
+  `$(call submit_jobs,<jobs>)`, replaced the four copied `for` loops (refresh-normalizer,
+  run-normalizer-jobs, run-all-jobs, prod-deploy). **The helper is used by prod-deploy too, so
+  prod also gets merger = 5, which fits its 12 slots exactly.** Override per run with
+  `make run-all-jobs PARALLELISM_merger=3`. ⚠ Keep the parallelism sum ≤ the slot count, which
+  nothing checks. ⚠ macOS `make` is GNU 3.81 (no `--eval`); test helpers through a wrapper
+  makefile that `include`s the real one. Verified with a fake `FLINK_RUN`: correct values
+  reach the script, and a failure stops the chain with a non-zero exit.
+- **More CPU for the TaskManager** (answered 2026-09-13, nothing applied). No container in
+  EITHER compose file has a CPU limit (prod sets memory limits only), so the TaskManager may
+  already use all 8 cores. The problem is contention, not a cap, and "more CPU" can only mean
+  more WEIGHT (`cpu_shares`, the default is 1024), capping neighbours (`cpus:`), pinning
+  (`cpuset`), or offloading. The zero-sum catch: Kafka and NiFi feed the pipeline, so starving
+  them moves the lag upstream. `alloy` (~1 core), grafana, loki and portainer run on the dev box
+  but are NOT defined in this repo. NiFi stays out of scope ([[project_flink_production]]).
+- Structural: asks and bids are separate records on separate topics, so ANY independent consumer
+  can pair two sides from different moments. Lag makes it minutes instead of milliseconds.

@@ -7,6 +7,16 @@ NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job
 # adjustment and merger both read job 6's p{id}-{side}, so both are downstream of it and go first.
 ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)
 
+# Per-job parallelism: PARALLELISM_<job>, falling back to DEFAULT_PARALLELISM. Every job needs that
+# many task slots, so the total must fit taskmanager.numberOfTaskSlots (12 in docker-compose.yml).
+# Override from the command line, e.g. `make run-all-jobs PARALLELISM_merger=3`.
+DEFAULT_PARALLELISM := 1
+# At parallelism 1 the merger fell behind job 6 (908 rec/s in, 727 out, measured 2026-09-13).
+PARALLELISM_merger := 5
+
+# $(call submit_jobs,<jobs>) submits each job in the order given, stopping at the first failure.
+submit_jobs = $(foreach job,$(1),PARALLELISM=$(or $(PARALLELISM_$(job)),$(DEFAULT_PARALLELISM)) $(FLINK_RUN) $(job) || exit 1;)
+
 # Avro schemas + Kafka topics. warmup/ is a Go project, replacing the old scripts/warmup.sh: the
 # shell version spawned a JVM per topic through `docker exec kafka kafka-topics` and took about an
 # hour at ~3000 topics, where the admin API takes them in batches. Settings come from warmup/.env,
@@ -22,18 +32,18 @@ refresh-normalizer:
 	docker compose -f docker-compose.yml down -v
 	docker compose -f docker-compose.yml up --build -d
 	@$(MAKE) --no-print-directory warmup
-	@for job in $(NORMALIZER_JOBS); do $(FLINK_RUN) $$job || exit 1; done
+	@$(call submit_jobs,$(NORMALIZER_JOBS))
 
 run-normalizer-jobs:
 	-git pull origin
 	./scripts/cancel-flink-jobs.sh
-	@for job in $(NORMALIZER_JOBS); do $(FLINK_RUN) $$job || exit 1; done
+	@$(call submit_jobs,$(NORMALIZER_JOBS))
 
 # Everything on the cluster: the normalizer pipeline plus flink/merger's summed view.
 run-all-jobs:
 	-git pull origin
 	./scripts/cancel-flink-jobs.sh
-	@for job in $(ALL_JOBS); do $(FLINK_RUN) $$job || exit 1; done
+	@$(call submit_jobs,$(ALL_JOBS))
 
 # ---------------------------------------------------------------------------
 # Production — docker-compose.prod.yml
@@ -57,7 +67,7 @@ prod-up:
 prod-deploy: prod-up
 	@$(MAKE) --no-print-directory warmup
 	./scripts/cancel-flink-jobs.sh
-	@for job in $(ALL_JOBS); do $(FLINK_RUN) $$job || exit 1; done
+	@$(call submit_jobs,$(ALL_JOBS))
 	@$(MAKE) --no-print-directory prod-verify
 
 # run-job.sh exits as soon as one job reports RUNNING and never rechecks. This asserts the whole
