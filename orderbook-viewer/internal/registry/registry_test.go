@@ -197,15 +197,15 @@ func TestEnrich_PreservesLevelOrderAndFields(t *testing.T) {
 	assert.Equal(t, int64(123), got.EventTime)
 }
 
-// The defaults are written as names in .env — an id there would say
-// nothing without the database open beside it — so postgres is what turns
-// them into the ids the browser selects on.
-func TestCatalog_ResolvesTheConfiguredDefaultPairBySymbol(t *testing.T) {
+// The defaults are database ids — the vocabulary the whole platform
+// speaks — so the registry's job is to check that postgres actually has
+// them, not to translate anything.
+func TestCatalog_KeepsAConfiguredPairIDThatExists(t *testing.T) {
 	repo := &fakeRepo{markets: map[int]domain.Market{
 		1: {ID: 1, Base: "BTC", Quote: "USDT"},
 		2: {ID: 2, Base: "ETH", Quote: "USDT"},
 	}}
-	r := New(repo, domain.Defaults{Pair: "eth/usdt"}) // case is not the point
+	r := New(repo, domain.Defaults{PairID: 2})
 	r.Refresh(context.Background())
 
 	assert.Equal(t, 2, r.Catalog().DefaultPairID)
@@ -217,8 +217,9 @@ func TestCatalog_UnknownOrUnsetDefaultPairIsZero(t *testing.T) {
 	repo := &fakeRepo{markets: map[int]domain.Market{1: {ID: 1, Base: "BTC", Quote: "USDT"}}}
 
 	for name, defaults := range map[string]domain.Defaults{
-		"unset":   {},
-		"unknown": {Pair: "DOGE/USDT"},
+		"unset":    {},
+		"unknown":  {PairID: 99},
+		"negative": {PairID: -3},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := New(repo, defaults)
@@ -230,29 +231,24 @@ func TestCatalog_UnknownOrUnsetDefaultPairIsZero(t *testing.T) {
 }
 
 // The exchange dropdown offers two cross-exchange views alongside the
-// real exchanges, so DEFAULT_EXCHANGE has to be able to name them.
-func TestCatalog_ResolvesTheConfiguredDefaultExchange(t *testing.T) {
-	repo := &fakeRepo{exchanges: map[int]domain.Exchange{8: {ID: 8, Name: "okx"}}}
+// real exchanges, and the exchange_id vocabulary already names them, so
+// DEFAULT_EXCHANGE_ID reaches them with no special spelling.
+func TestCatalog_ChecksTheConfiguredDefaultExchangeID(t *testing.T) {
+	repo := &fakeRepo{exchanges: map[int]domain.Exchange{8: {ID: 8, Name: "OKX"}}}
 
-	for _, tc := range []struct {
-		configured string
+	for name, tc := range map[string]struct {
+		configured int
 		want       int
 	}{
-		{"", domain.AggregatedExchangeID},
-		{"separated", domain.AggregatedExchangeID},
-		{"SEPARATED", domain.AggregatedExchangeID},
-		{"merged", domain.MergedExchangeID},
-		{"MERGED", domain.MergedExchangeID},
-		{"okx", 8},
-		{"OKX", 8},
-		{"kraken", domain.AggregatedExchangeID}, // not an exchange we know
-		// "aggregated" is the pipeline's word, not the page's, and is no
-		// longer a spelling DEFAULT_EXCHANGE takes. It lands on the same
-		// view regardless — through the fallback, not through a match.
-		{"aggregated", domain.AggregatedExchangeID},
+		"unset":               {0, domain.AggregatedExchangeID},
+		"separated":           {domain.AggregatedExchangeID, domain.AggregatedExchangeID},
+		"merged":              {domain.MergedExchangeID, domain.MergedExchangeID},
+		"a real exchange":     {8, 8},
+		"an exchange we lack": {99, domain.AggregatedExchangeID},
+		"nonsense":            {-7, domain.AggregatedExchangeID},
 	} {
-		t.Run(tc.configured, func(t *testing.T) {
-			r := New(repo, domain.Defaults{Exchange: tc.configured})
+		t.Run(name, func(t *testing.T) {
+			r := New(repo, domain.Defaults{ExchangeID: tc.configured})
 			r.Refresh(context.Background())
 
 			assert.Equal(t, tc.want, r.Catalog().DefaultExchangeID)
@@ -260,12 +256,12 @@ func TestCatalog_ResolvesTheConfiguredDefaultExchange(t *testing.T) {
 	}
 }
 
-// A cold start with postgres down cannot resolve a name, and must not
-// pick something arbitrary instead. Once the maps arrive the default
-// starts working, and the catalog changing is what re-broadcasts it.
-func TestCatalog_ResolvesTheDefaultsOncePostgresAnswers(t *testing.T) {
+// A cold start with postgres down cannot check an id, and must not pick
+// something arbitrary instead. Once the maps arrive the default starts
+// working, and the catalog changing is what re-broadcasts it.
+func TestCatalog_ChecksTheDefaultsOncePostgresAnswers(t *testing.T) {
 	repo := &fakeRepo{marketsErr: errors.New("connection refused")}
-	r := New(repo, domain.Defaults{Pair: "BTC/USDT"})
+	r := New(repo, domain.Defaults{PairID: 7})
 	r.Refresh(context.Background())
 	require.Zero(t, r.Catalog().DefaultPairID)
 

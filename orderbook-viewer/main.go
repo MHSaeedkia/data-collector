@@ -105,8 +105,8 @@ func main() {
 	log.Printf("Order book UI:    http://localhost:%s", cfg.Port)
 	log.Printf("Kafka broker:     %s", cfg.KafkaBroker)
 	log.Printf("Schema registry:  %s", cfg.SchemaRegistryURL)
-	log.Printf("Opens on:         pair %q, exchange %q, %d level(s) per side",
-		cfg.Defaults.Pair, cfg.Defaults.Exchange, cfg.Defaults.LevelLimit)
+	log.Printf("Opens on:         pair_id %d, exchange_id %d, %d level(s) per side (the registry names them once it has them)",
+		cfg.Defaults.PairID, cfg.Defaults.ExchangeID, cfg.Defaults.LevelLimit)
 	log.Printf("Reading LIVE records only (latest offset) — no history is replayed on start")
 	log.Printf("Heartbeat every %s; registry refresh every %s", statsPeriod, registryRefresh)
 	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {

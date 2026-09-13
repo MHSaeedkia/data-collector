@@ -202,31 +202,21 @@ type Catalog struct {
 }
 
 // Defaults are the three dropdown values the page opens on, exactly as
-// configured (see internal/config). Pair and Exchange are written the way
-// a person writes them in .env — "BTC/USDT", "okx", "aggregated",
-// "merged" — never as ids: an id in a hand-edited file says nothing
-// without the database open next to it. Resolving those names is the
-// registry's job, because postgres is where the names live.
+// configured (see internal/config). PairID and ExchangeID are DATABASE
+// IDS — `markets.id` and `exchanges.id` — because ids are what this whole
+// platform speaks and what the browser selects on; a name would have to
+// be resolved to one anyway, and two spellings of the same setting is how
+// they drift apart.
+//
+// ExchangeID uses the vocabulary at the top of this file: a real exchange
+// id, AggregatedExchangeID (0) for the separated view, MergedExchangeID
+// (-1) for the merged one. PairID 0 means nothing was configured — 0 is
+// not a market id — and the page then opens on the first market.
 type Defaults struct {
-	Pair       string
-	Exchange   string
+	PairID     int
+	ExchangeID int
 	LevelLimit int
 }
-
-// The two views the exchange dropdown offers besides a real exchange,
-// spelled as DEFAULT_EXCHANGE takes them and as the dropdown shows them.
-//
-// SeparatedName is the user's word for the view AggregatedExchangeID
-// identifies — job 6's union, where every exchange's levels sit side by
-// side, each keeping its own exchange. The pipeline calls that job the
-// aggregator and the wire vocabulary above follows it; the page says
-// "separated", because to a reader of the book the levels are exactly
-// that. Only the words a person sees changed (2026-09-13); nothing on the
-// wire did.
-const (
-	SeparatedName = "separated"
-	MergedName    = "merged"
-)
 
 // The websocket message shapes. Server -> client: catalog, snapshot,
 // update. Client -> server: select.

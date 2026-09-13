@@ -20,11 +20,11 @@ type Config struct {
 	KafkaBroker       string
 	DatabaseURL       string
 	SchemaRegistryURL string
-	// Defaults are the three dropdown values the page opens on. Pair and
-	// Exchange are passed on as written: they name rows in postgres, which
-	// this package cannot reach, so the registry is what resolves them (and
-	// what reports a name that matches nothing). Only the depth can be
-	// checked here, because the depths on offer are a fixed list.
+	// Defaults are the three dropdown values the page opens on. The two ids
+	// are only parsed here, not judged: whether a pair or exchange id
+	// EXISTS is a question for postgres, so the registry checks them (and
+	// reports an id that is not there). Only the depth can be checked here,
+	// because the depths on offer are a fixed list.
 	Defaults domain.Defaults
 }
 
@@ -59,8 +59,8 @@ func FromEnv() Config {
 		DatabaseURL:       env("DATABASE_URL", defaultDatabaseURL),
 		SchemaRegistryURL: env("SCHEMA_REGISTRY_URL", defaultSchemaRegistryURL),
 		Defaults: domain.Defaults{
-			Pair:       strings.TrimSpace(os.Getenv("DEFAULT_PAIR")),
-			Exchange:   strings.TrimSpace(os.Getenv("DEFAULT_EXCHANGE")),
+			PairID:     intEnv("DEFAULT_PAIR_ID", 0),
+			ExchangeID: intEnv("DEFAULT_EXCHANGE_ID", domain.AggregatedExchangeID),
 			LevelLimit: levelLimit(),
 		},
 	}
@@ -80,6 +80,23 @@ func levelLimit() int {
 	if err != nil || !domain.ValidLevelLimit(n) {
 		log.Printf("config: DEFAULT_LEVEL_LIMIT=%q is not one of %v — using %d", raw, domain.LevelLimits, defaultLevelLimit)
 		return defaultLevelLimit
+	}
+	return n
+}
+
+// intEnv reads a numeric setting. A value that is not a number is
+// announced and replaced rather than quietly ignored — a server that
+// opened on a different pair than the one configured, with nothing in the
+// log to say why, is the failure this avoids.
+func intEnv(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("config: %s=%q is not a number — using %d", key, raw, fallback)
+		return fallback
 	}
 	return n
 }

@@ -618,17 +618,16 @@ User request: "the default values for all three dropdowns must be configurable v
 So `DEFAULT_PAIR`, `DEFAULT_EXCHANGE`, `DEFAULT_LEVEL_LIMIT` — and the depth var added hours
 earlier was renamed from `LEVEL_LIMIT` into that family (user's call; nothing was deployed yet).
 
-### Names in `.env`, ids on the wire
+### ~~Names in `.env`~~ → ids (REVERSED the same day, see the last section)
 
-The user chose **symbols over ids** for the pair: `DEFAULT_PAIR=BTC/USDT`, not `DEFAULT_PAIR_ID=2`
-— an id in a hand-edited file says nothing without the database open beside it. `DEFAULT_EXCHANGE`
-follows the same principle: an exchange NAME as postgres spells it, or the words `separated` /
-`merged` for the two cross-exchange views (`domain.SeparatedName` / `MergedName` — `separated`
-was `aggregated` for the first hours of the same day, see the section below). Matching is
-case-insensitive and the value is trimmed, because a `.env` is hand-edited.
+First cut: the user chose symbols over ids — `DEFAULT_PAIR=BTC/USDT`, `DEFAULT_EXCHANGE=okx` /
+`separated` / `merged`, resolved case-insensitively against postgres. **They reversed it hours
+later, after seeing it run: the settings are database IDS now** (`DEFAULT_PAIR_ID`,
+`DEFAULT_EXCHANGE_ID`). Everything below about WHERE the resolution happens still holds; only what
+is being resolved changed, from a name to an id that must exist.
 
-The browser still receives **ids** (`default_pair_id`, `default_exchange_id` on the catalog): the
-page's whole vocabulary is ids, and nothing about the wire changed.
+The browser receives **ids** either way (`default_pair_id`, `default_exchange_id` on the catalog):
+the page's whole vocabulary is ids, and nothing about the wire ever changed.
 
 ### The registry resolves them, and now owns the whole catalog
 
@@ -848,3 +847,34 @@ anything in `orderbook-viewer/.env`** — `godotenv.Load` does not override a va
 already set. `.env` is also not in the image (`.dockerignore` does not exclude it, but nothing
 copies it either — the Dockerfile copies only what it builds). So for a container, the compose
 file is where these belong.
+
+---
+
+## 2026-09-13 — the defaults are database ids, not names
+
+Same day, after seeing the name version running: **"use plain text in DEFAULT_EXCHANGE=separated
+and DEFAULT_PAIR=BTC/USDT is not good idea, I need to set their id from db."** So `DEFAULT_PAIR` →
+`DEFAULT_PAIR_ID` (a `markets.id`) and `DEFAULT_EXCHANGE` → `DEFAULT_EXCHANGE_ID` (an
+`exchanges.id`, or `0`/`-1` for the two views).
+
+The user is right and the earlier reasoning ("an id in a hand-edited file says nothing") was
+weighed against the wrong thing: **the whole platform speaks ids** — topics, Avro records, the
+`exchange_id` vocabulary, the browser's own select message. The two views already HAD ids in that
+vocabulary (`AggregatedExchangeID` 0, `MergedExchangeID` -1), so an id-shaped setting reaches them
+with no special spelling at all, while the name version needed `SeparatedName`/`MergedName`
+constants to sit beside them saying the same thing differently. Those constants are now deleted —
+one spelling of each concept again.
+
+What each layer does now:
+
+- `config` only PARSES (`intEnv`), it does not judge: whether an id exists is postgres's answer.
+  A non-numeric value is announced (`config: DEFAULT_EXCHANGE_ID="okx" is not a number — using 0`)
+  and replaced.
+- `registry.resolveDefaults` checks the ids against the maps — a map lookup now, not a scan — and
+  keeps `AggregatedExchangeID`/`0` when the id is not there.
+- The log line reverses direction and became MORE useful: it now says what the id IS
+  (`registry: DEFAULT_EXCHANGE_ID=8 is OKX`), which is exactly the thing a reader of the config
+  file cannot see. Still transition-only.
+
+Nothing else moved: the catalog fields, the browser, the fallbacks and `pickOption` are unchanged,
+because all of that was already id-based.

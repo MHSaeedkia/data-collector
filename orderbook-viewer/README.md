@@ -53,20 +53,19 @@ module proxy; run `go mod vendor` after changing dependencies.
 - `DATABASE_URL` — postgres DSN (default `postgres://postgres:postgres@localhost:5432/markets`)
 - `SCHEMA_REGISTRY_URL` — Confluent Schema Registry URL (default `http://localhost:8082`, the
   host-exposed listener), used to resolve each record's Avro writer schema by id
-- `DEFAULT_PAIR` — the market the pair dropdown opens on, as a `base/quote` symbol
-  (`BTC/USDT`, case-insensitive). Unset, or a symbol no market matches, means the first market
-  in the list
-- `DEFAULT_EXCHANGE` — the exchange dropdown's starting entry: an exchange name (`okx`), or
-  `separated` / `merged` for the two cross-exchange views. Unset or unknown means `separated`
-  (job 6's union — the pipeline's own word for it is "aggregated", the page's word is
-  "separated", and only the page's word is typed here)
+- `DEFAULT_PAIR_ID` — the market the pair dropdown opens on, as a `markets.id`. Unset, or an id
+  no market has, means the first market in the list
+- `DEFAULT_EXCHANGE_ID` — the exchange dropdown's starting entry, as an `exchanges.id`, or one of
+  the two cross-exchange views: `0` = separated (job 6's union), `-1` = merged. Unset or unknown
+  means `0`
 - `DEFAULT_LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one
   of the depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and
   replaced by the default, since the page could not select it back
 
-`DEFAULT_PAIR` and `DEFAULT_EXCHANGE` are names, not ids: an id in a hand-edited file says
-nothing without the database open next to it. The registry resolves them against postgres on
-every refresh and says once, in the log, what each one became — or that it matched nothing.
+Both are **ids**, the vocabulary the rest of the platform speaks, so nothing has to be translated
+and there is only one spelling of each setting. The registry checks them against postgres on every
+refresh and says once, in the log, what the id turned out to be —
+`registry: DEFAULT_EXCHANGE_ID=8 is OKX` — or that postgres does not have it.
 
 ## Notes
 
@@ -108,8 +107,8 @@ every refresh and says once, in the log, what each one became — or that it mat
   number. The cell is emitted either way, and both tables use a fixed layout with a fixed-width
   exchange column, because asks and bids are two separate tables and would otherwise size that
   column to their own content and stop lining up.
-- **All three dropdowns open on a configured default** (`DEFAULT_PAIR`, `DEFAULT_EXCHANGE`,
-  `DEFAULT_LEVEL_LIMIT`). The `catalog` message carries the resolved ids, so the page decides
+- **All three dropdowns open on a configured default** (`DEFAULT_PAIR_ID`,
+  `DEFAULT_EXCHANGE_ID`, `DEFAULT_LEVEL_LIMIT`). The `catalog` message carries the resolved ids, so the page decides
   nothing for itself; it only falls back — to the first market, or to the aggregated view — when
   what it was given is not in the list it was given.
 - **The server pushes each browser only the pair+exchange it selected.** The browser sends

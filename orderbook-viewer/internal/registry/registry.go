@@ -7,7 +7,6 @@ import (
 	"log"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 
 	"orderbook-viewer/internal/domain"
@@ -19,9 +18,9 @@ import (
 type Registry struct {
 	repo ports.MarketRepository
 	// defaults are the dropdown values the page opens on, as configured.
-	// Pair and Exchange arrive as names and are resolved against the maps
-	// below on every refresh — they are unresolvable until postgres has
-	// answered at least once, which on a cold start it may not have.
+	// The two ids are checked against the maps below on every refresh —
+	// they are uncheckable until postgres has answered at least once,
+	// which on a cold start it may not have.
 	defaults domain.Defaults
 
 	mu        sync.RWMutex
@@ -35,12 +34,12 @@ type Registry struct {
 	// lastErr is the previous failure per load, so a repeating error is
 	// reported once rather than on every tick.
 	lastErr map[string]string
-	// defaultPairID/defaultExchangeID are the resolved defaults, recomputed
+	// defaultPairID/defaultExchangeID are the checked defaults, recomputed
 	// on each refresh, and resolvedID is what they were last reported as —
 	// the same "say it on the transition" discipline as lastErr.
 	defaultPairID     int
 	defaultExchangeID int
-	resolvedID        map[string]int
+	resolvedID        map[string]string
 }
 
 func New(repo ports.MarketRepository, defaults domain.Defaults) *Registry {
@@ -52,7 +51,7 @@ func New(repo ports.MarketRepository, defaults domain.Defaults) *Registry {
 		stale:             map[string]bool{},
 		lastErr:           map[string]string{},
 		defaultExchangeID: domain.AggregatedExchangeID,
-		resolvedID:        map[string]int{},
+		resolvedID:        map[string]string{},
 	}
 }
 
@@ -72,55 +71,55 @@ func (r *Registry) Refresh(ctx context.Context) {
 	r.resolveDefaults()
 }
 
-// resolveDefaults turns the configured names into ids against the maps
-// just loaded. It runs on every refresh rather than once at startup
-// because postgres may not have answered yet when the process comes up,
-// and because a market or exchange can be renamed under us. Callers hold
-// the write lock.
+// resolveDefaults checks the configured ids against the maps just loaded
+// and keeps the ones postgres actually has. It runs on every refresh
+// rather than once at startup because postgres may not have answered yet
+// when the process comes up, and because a market or exchange can be
+// deleted under us. Callers hold the write lock.
 func (r *Registry) resolveDefaults() {
 	r.defaultPairID = 0
-	if want := r.defaults.Pair; want != "" {
-		for id, m := range r.markets {
-			if strings.EqualFold(m.Base+"/"+m.Quote, want) {
-				r.defaultPairID = id
-				break
-			}
+	if want := r.defaults.PairID; want != 0 {
+		m, ok := r.markets[want]
+		if ok {
+			r.defaultPairID = want
 		}
-		r.logResolved("DEFAULT_PAIR", want, r.defaultPairID, r.defaultPairID != 0)
+		r.logResolved("DEFAULT_PAIR_ID", want, m.Base+"/"+m.Quote, ok)
 	}
 
 	r.defaultExchangeID = domain.AggregatedExchangeID
-	switch want := r.defaults.Exchange; {
-	case want == "" || strings.EqualFold(want, domain.SeparatedName):
-	case strings.EqualFold(want, domain.MergedName):
+	switch want := r.defaults.ExchangeID; want {
+	case domain.AggregatedExchangeID: // the separated view; nothing to look up
+	case domain.MergedExchangeID:
 		r.defaultExchangeID = domain.MergedExchangeID
 	default:
-		found := false
-		for id, e := range r.exchanges {
-			if strings.EqualFold(e.Name, want) {
-				r.defaultExchangeID, found = id, true
-				break
-			}
+		e, ok := r.exchanges[want]
+		if ok {
+			r.defaultExchangeID = want
 		}
-		r.logResolved("DEFAULT_EXCHANGE", want, r.defaultExchangeID, found)
+		r.logResolved("DEFAULT_EXCHANGE_ID", want, e.Name, ok)
 	}
 }
 
-// logResolved reports what a configured name turned into, once — when the
-// answer changes, not on every 10s refresh. A name that matches nothing is
-// worth saying out loud: the page silently opening on a different pair
-// than the one in .env is otherwise indistinguishable from a typo nobody
-// made. Callers hold the write lock.
-func (r *Registry) logResolved(what, want string, id int, ok bool) {
-	if prev, seen := r.resolvedID[what]; seen && prev == id {
-		return
-	}
-	r.resolvedID[what] = id
+// logResolved names what a configured id turned out to BE, once — when
+// the answer changes, not on every 10s refresh. Saying the name is the
+// point: an id in a config file is unreadable on its own, and the page
+// silently opening on a different pair than the one configured is
+// otherwise indistinguishable from a typo nobody made. Callers hold the
+// write lock.
+func (r *Registry) logResolved(what string, want int, name string, ok bool) {
+	state := name
 	if !ok {
-		log.Printf("registry: %s=%q matches nothing postgres knows (yet) — the page falls back", what, want)
+		state = ""
+	}
+	if prev, seen := r.resolvedID[what]; seen && prev == state {
 		return
 	}
-	log.Printf("registry: %s=%q is id %d", what, want, id)
+	r.resolvedID[what] = state
+	if !ok {
+		log.Printf("registry: %s=%d is not in postgres (yet) — the page falls back", what, want)
+		return
+	}
+	log.Printf("registry: %s=%d is %s", what, want, name)
 }
 
 // logErr prints a query failure once per run of identical failures, not

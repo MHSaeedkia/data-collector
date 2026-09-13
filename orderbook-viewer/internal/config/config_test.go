@@ -16,7 +16,7 @@ import (
 // other or depend on the shell they happen to run in.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"PORT", "KAFKA_BROKER", "DATABASE_URL", "SCHEMA_REGISTRY_URL", "DEFAULT_LEVEL_LIMIT", "DEFAULT_PAIR", "DEFAULT_EXCHANGE"} {
+	for _, key := range []string{"PORT", "KAFKA_BROKER", "DATABASE_URL", "SCHEMA_REGISTRY_URL", "DEFAULT_LEVEL_LIMIT", "DEFAULT_PAIR_ID", "DEFAULT_EXCHANGE_ID"} {
 		prev, had := os.LookupEnv(key)
 		require.NoError(t, os.Unsetenv(key))
 		t.Cleanup(func() {
@@ -39,8 +39,8 @@ func TestFromEnv_FallsBackToDefaultsWhenUnset(t *testing.T) {
 	assert.Equal(t, defaultDatabaseURL, cfg.DatabaseURL)
 	assert.Equal(t, defaultSchemaRegistryURL, cfg.SchemaRegistryURL)
 	assert.Equal(t, defaultLevelLimit, cfg.Defaults.LevelLimit)
-	assert.Empty(t, cfg.Defaults.Pair, "unset means: let the page take the first market")
-	assert.Empty(t, cfg.Defaults.Exchange)
+	assert.Zero(t, cfg.Defaults.PairID, "unset means: let the page take the first market")
+	assert.Equal(t, domain.AggregatedExchangeID, cfg.Defaults.ExchangeID)
 }
 
 func TestFromEnv_UsesEnvironmentWhenSet(t *testing.T) {
@@ -50,8 +50,8 @@ func TestFromEnv_UsesEnvironmentWhenSet(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
 	t.Setenv("SCHEMA_REGISTRY_URL", "http://registry:8082")
 	t.Setenv("DEFAULT_LEVEL_LIMIT", "100")
-	t.Setenv("DEFAULT_PAIR", "  BTC/USDT  ") // padding is a .env typo, not a symbol
-	t.Setenv("DEFAULT_EXCHANGE", "okx")
+	t.Setenv("DEFAULT_PAIR_ID", "  2  ") // padding is a .env typo, not a value
+	t.Setenv("DEFAULT_EXCHANGE_ID", "8")
 
 	cfg := FromEnv()
 
@@ -60,21 +60,34 @@ func TestFromEnv_UsesEnvironmentWhenSet(t *testing.T) {
 	assert.Equal(t, "postgres://x", cfg.DatabaseURL)
 	assert.Equal(t, "http://registry:8082", cfg.SchemaRegistryURL)
 	assert.Equal(t, 100, cfg.Defaults.LevelLimit)
-	assert.Equal(t, "BTC/USDT", cfg.Defaults.Pair)
-	assert.Equal(t, "okx", cfg.Defaults.Exchange)
+	assert.Equal(t, 2, cfg.Defaults.PairID)
+	assert.Equal(t, 8, cfg.Defaults.ExchangeID)
 }
 
-// The pair and exchange names are passed on as written: only postgres can
-// say whether they exist, so this package must not pretend to judge them.
-func TestFromEnv_PassesTheNamedDefaultsThroughUnjudged(t *testing.T) {
+// Whether an id EXISTS is postgres's answer, not this package's: ids that
+// no row carries are passed on and checked by the registry.
+func TestFromEnv_PassesUnknownIDsThroughUnjudged(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DEFAULT_PAIR", "NOPE/NOPE")
-	t.Setenv("DEFAULT_EXCHANGE", "not-an-exchange")
+	t.Setenv("DEFAULT_PAIR_ID", "999")
+	t.Setenv("DEFAULT_EXCHANGE_ID", "-1") // the merged view
 
 	cfg := FromEnv()
 
-	assert.Equal(t, "NOPE/NOPE", cfg.Defaults.Pair)
-	assert.Equal(t, "not-an-exchange", cfg.Defaults.Exchange)
+	assert.Equal(t, 999, cfg.Defaults.PairID)
+	assert.Equal(t, -1, cfg.Defaults.ExchangeID)
+}
+
+// A value that is not a number is a typo, and silently opening on
+// something else is what the log line exists to prevent.
+func TestFromEnv_NonNumericIDsFallBack(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DEFAULT_PAIR_ID", "BTC/USDT")
+	t.Setenv("DEFAULT_EXCHANGE_ID", "okx")
+
+	cfg := FromEnv()
+
+	assert.Zero(t, cfg.Defaults.PairID)
+	assert.Equal(t, domain.AggregatedExchangeID, cfg.Defaults.ExchangeID)
 }
 
 // A depth the dropdown does not offer would leave the UI open on a value
@@ -98,7 +111,7 @@ func TestDefaultLevelLimit_IsOneOfTheOfferedDepths(t *testing.T) {
 func TestLoad_ReadsValuesFromEnvFile(t *testing.T) {
 	clearEnv(t)
 	path := filepath.Join(t.TempDir(), ".env")
-	require.NoError(t, os.WriteFile(path, []byte("PORT=9000\nKAFKA_BROKER=kafka:29092\nDATABASE_URL=postgres://file\nSCHEMA_REGISTRY_URL=http://file:8082\nDEFAULT_LEVEL_LIMIT=200\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("PORT=9000\nKAFKA_BROKER=kafka:29092\nDATABASE_URL=postgres://file\nSCHEMA_REGISTRY_URL=http://file:8082\nDEFAULT_LEVEL_LIMIT=200\nDEFAULT_PAIR_ID=3\n"), 0o600))
 
 	cfg := Load(path)
 
@@ -107,6 +120,7 @@ func TestLoad_ReadsValuesFromEnvFile(t *testing.T) {
 	assert.Equal(t, "postgres://file", cfg.DatabaseURL)
 	assert.Equal(t, "http://file:8082", cfg.SchemaRegistryURL)
 	assert.Equal(t, 200, cfg.Defaults.LevelLimit)
+	assert.Equal(t, 3, cfg.Defaults.PairID)
 }
 
 func TestLoad_MissingFileFallsBackToDefaults(t *testing.T) {
