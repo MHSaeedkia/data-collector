@@ -1349,3 +1349,23 @@ formulas.** Applied:
   OS and page cache.
 Not deployed, not observed. Still unaddressed: no CPU limits on the 8-core box, and taskmanager-2/-4 were idle
 before this change (spreading unverified).
+
+## 2026-09-14 — `NoResourceAvailableException` on the prod-shaped server: jobs SUBMITTED over the slot budget
+
+Diagnosed live via read-only Flink REST on 192.168.150.31 (stack = `docker-compose.prod.yml`, HEAD `9bcab11`).
+**Not a slot leak and not a TaskManager flake.** All 4 TMs were registered and healthy, 16/16 slots allocated, and
+4 jobs sat in `RESTARTING` hitting `Could not acquire the minimum required resources` every 5 min (M1 max backoff).
+
+Running vertex parallelism did **not** match the Makefile: **`normalizer-aggregator` @ 8** (Makefile 2) and
+**`normalizer-book-builder` @ 4** (Makefile 1). Submitted total = adjustment 3 + merger 4 + aggregator 8 +
+book-builder 4 + 4×1 = **23 > 16**. Downstream-first submission means the downstream jobs took the slots first and the
+UPSTREAM stages starved (type-validator, rebaser, precision, book-builder). So the pipeline was dead while
+aggregator/merger/adjustment still showed `RUNNING`, and `numRunningJobs` alone would have missed it. No
+`setParallelism` exists in any Java source, so the 8/4 came from the submission (`make ... PARALLELISM_<job>=` override,
+a locally edited Makefile, or the UI). **Which one is unverified**, because further server reads were denied in-session.
+
+**Diagnostic recipe (fast, read-only):** `/overview` for `slots-available`, then per job
+`/jobs/<id>` → `[.vertices[].parallelism] | max` (with default slot sharing, that is the slots the job needs), and
+compare the sum to `slots-total`. `/taskmanagers/<id>` → `allocatedSlots[].jobId` shows who holds them.
+**Rule: with default slot sharing a job needs max(vertex parallelism) slots, and the sum over all jobs must be
+≤ slots-total. Prod has 16, so the Makefile's 14 leaves only 2 slots of headroom.**

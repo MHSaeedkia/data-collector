@@ -212,3 +212,12 @@ Three bugs the first version shipped with, all worth not repeating (2026-08-19):
 
 **Why:** NiFi → Kafka → Flink pipeline for collecting and normalizing exchange order book data (asks + bids) across up to 200 trading pairs.
 **How to apply:** Use this structure for all Kafka topic definitions, NiFi routing logic, and Flink source configurations in this project.
+
+## 2026-09-14 — `scripts/watch-topic.sh <topic>` (user request)
+
+Live tail of partition 0 through `kafka-console-consumer` inside the `kafka` container, printing partition, offset and
+CreateTime with the value hidden (Avro). Written because Kafka UI's live mode looked like it showed offsets out of order.
+That is not possible within one partition, and every warmup topic has 1 partition. CreateTime being non-monotonic is
+expected, since Flink inherits the input timestamp. Bootstrap `kafka:29092` / `KAFKA_CONTAINER` env overrides match
+`purge-topics.sh`. Hard-codes partition 0 because topics are single-partition. Only the syntax and usage path were checked; it was
+NOT run against a broker.
