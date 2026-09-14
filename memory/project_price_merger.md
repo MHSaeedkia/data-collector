@@ -119,6 +119,8 @@ falling behind job 6, and each side falls behind by a different amount.** Nothin
 Traps that cost time, so nobody re-derives them:
 - **Kafka `CreateTime` on every Flink output is inherited from the upstream record**, not the time
   it was written. It says nothing about freshness; use end-offset deltas instead.
+  **2026-09-14: the broker is switched to `LogAppendTime` (not deployed yet)**, see [[kafka-topic-strategy]] § 2026-09-14.
+  Once it is deployed, the record timestamp is each hop's append time, but it still does not show lag, so keep using offsets.
 - **Flink REST vertex metrics read 0 for every rate on every job** (`numRecordsInPerSecond`,
   `records-lag-max`, busy/backpressure), even while topics grow. They are useless for
   diagnosis here; cause not investigated.

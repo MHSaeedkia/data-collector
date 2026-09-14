@@ -218,7 +218,7 @@ Three bugs the first version shipped with, all worth not repeating (2026-08-19):
 Live tail of partition 0 through `kafka-console-consumer` inside the `kafka` container, printing partition, offset and
 CreateTime with the value hidden (Avro). Written because Kafka UI's live mode looked like it showed offsets out of order.
 That is not possible within one partition, and every warmup topic has 1 partition. CreateTime being non-monotonic is
-expected, since Flink inherits the input timestamp. Bootstrap `kafka:29092` / `KAFKA_CONTAINER` env overrides match
+expected, since Flink inherits the input timestamp (**before 2026-09-14; the broker is now `LogAppendTime`, see § 2026-09-14 broker-wide `LogAppendTime`**). Bootstrap `kafka:29092` / `KAFKA_CONTAINER` env overrides match
 `purge-topics.sh`. Hard-codes partition 0 because topics are single-partition. Only the syntax and usage path were checked; it was
 NOT run against a broker.
 Same day it gained a human-readable prefix (`YYYY-MM-DD HH:MM:SS.mmm +zzzz`). The conversion happens in the HOST shell, so
@@ -241,3 +241,33 @@ job's stdin at /dev/null (without it the consumer was killed instantly). The scr
 the stdin pipe and it closes on ANY exit. Output is now `... partition=N  offset=N  create_ms=N`. Verified against real
 `docker exec` with a stub consumer: out-of-order → exit 2, consumer exits 3 → exit 3, real Ctrl-C through a pty → clean lines
 and 0 consumers left in the container in all three cases. Still NOT run against the real broker since the fix.
+
+## 2026-09-14 — broker-wide `LogAppendTime` (user decision, NOT deployed)
+
+**Problem:** under the default `CreateTime`, every Flink output topic carried the input record's timestamp, copied
+from job 1's input all the way to `-adjusted`. The cause: `KafkaSource` puts the input record's timestamp on the
+Flink record, and `KafkaSink` passes it to the `ProducerRecord`. `KafkaRecordSerializationSchemaBuilder` (5.0.0-2.2)
+has no timestamp setter, which was checked in the jar.
+
+**Rejected, by the user:** wrapping each sink's record serializer in Java to stamp `currentTimeMillis()`. It was
+written, tested, and then fully reverted: *"let Kafka do it, not us in Java"*. **Don't re-propose it.**
+
+**Chosen:** `KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime` on the broker in BOTH `docker-compose.yml` and
+`docker-compose.prod.yml`. The broker overwrites the producer's timestamp with its append time, so every hop gets a
+fresh one with no code change. warmup sets only `retention.ms` per topic, so this broker default reaches EVERY topic,
+including NiFi's `ex{id}-raw`, `control-plane`, e2e topics, and internal topics.
+
+- **The payload `event_time` is NOT touched.** The user said explicitly that it stays as it is.
+- Kafka has no timestamp HEADER. `timestamp` plus `timestampType` are built-in record fields, and headers are user k/v.
+- Only a broker restart (recreating the container) applies it. A topic-level `message.timestamp.type` override would
+  beat it, and nothing sets one today.
+- No code reads record timestamps except [[staleness-exporter]] (`records[-1].timestamp`). It now measures when the
+  broker last appended to a topic, which is NOT how far behind a job is: a job writing steadily but minutes behind looks fresh.
+- Time-based retention now runs on append time, which is more accurate than inherited old CreateTimes.
+- Not verified that `LogAppendTime` on `__consumer_offsets`/`__transaction_state` is harmless. Kafka reads offset
+  commit/expiry times from the record VALUE, so it is expected to be fine, but that is unconfirmed.
+- `orderbook-viewer/internal/e2e/docker-compose.e2e.yml` was left on CreateTime; nothing there reads timestamps.
+- **NOT run against a broker.** Only `docker compose config` was checked. Verify after deploy:
+  `kafka-configs --bootstrap-server kafka:29092 --entity-type brokers --entity-name 1 --describe --all | grep log.message.timestamp.type`,
+  then confirm that `scripts/watch-topic.sh p1-asks-adjusted` shows a `create_ms` close to wall clock
+  (the console consumer prints the label `LogAppendTime:` instead of `CreateTime:`; check that the script's parser handles that).

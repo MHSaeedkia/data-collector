@@ -186,6 +186,11 @@ services:
             KAFKA_HEAP_OPTS: "-Xmx2G -Xms512m"
             KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
             KAFKA_PRODUCER_ID_EXPIRATION_MS: 3600000
+
+            # Record timestamp = the time the broker appended the record, not the producer's.
+            # Flink sinks reuse the timestamp of the record they read, so under CreateTime every
+            # downstream topic carried job 1's input time. Payload `event_time` is unaffected.
+            KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime
             CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qg==
         volumes:
             - data-collector-kafka-data:/var/lib/kafka/data
