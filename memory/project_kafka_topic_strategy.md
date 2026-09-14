@@ -270,4 +270,8 @@ including NiFi's `ex{id}-raw`, `control-plane`, e2e topics, and internal topics.
 - **NOT run against a broker.** Only `docker compose config` was checked. Verify after deploy:
   `kafka-configs --bootstrap-server kafka:29092 --entity-type brokers --entity-name 1 --describe --all | grep log.message.timestamp.type`,
   then confirm that `scripts/watch-topic.sh p1-asks-adjusted` shows a `create_ms` close to wall clock
-  (the console consumer prints the label `LogAppendTime:` instead of `CreateTime:`; check that the script's parser handles that).
+  (the console consumer prints the label `LogAppendTime:` instead of `CreateTime:`).
+- **`watch-topic.sh` fixed the same day (user request):** it used to strip only `CreateTime:`, so under `LogAppendTime`
+  the readable date was lost and the raw line passed through (the offset check did NOT break, it is independent).
+  It now strips `*Time:`, so both labels work. Verified with a stub `docker` (both labels, `NO_TIMESTAMP` passthrough, duplicate offset → exit 2)
+  under Homebrew bash, not against a broker. The output label is still `create_ms` even when the value is append time.

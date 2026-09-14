@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Live-tails one topic partition, printing CreateTime, partition and offset per record, in the
+# Live-tails one topic partition, printing the record timestamp, partition and offset per record, in the
 # order the broker returns them. Use it instead of Kafka UI's live mode when the order matters.
 # Values are hidden because they are Avro binary.
 #
@@ -12,8 +12,8 @@
 #
 # Offsets within one partition always increase. If one does not (equal to or below the previous
 # offset), the script prints both offsets, stops the consumer and exits 2. A jump forward is not
-# out of order and does not stop it. CreateTime is not checked: Flink carries the input record's
-# timestamp through instead of stamping the write time, so it is not monotonic.
+# out of order and does not stop it. The timestamp is not checked: under CreateTime Flink carries
+# the input record's timestamp through, so it is not monotonic (the broker is LogAppendTime now).
 #
 # Needs bash >= 4.2 (printf's %(...)T formats without forking `date` per record).
 set -euo pipefail
@@ -54,7 +54,7 @@ exec 3<&"${CONSUMER[0]}"
 
 prev=""
 while IFS=$'\t' read -r ts partition offset _; do
-    ms="${ts#CreateTime:}"
+    ms="${ts#*Time:}" # CreateTime:<ms> or LogAppendTime:<ms>, depending on the topic's timestamp type
     n="${offset#Offset:}"
     if [[ "$ms" =~ ^[0-9]+$ && "$n" =~ ^[0-9]+$ ]]; then
         printf -v when '%(%Y-%m-%d %H:%M:%S)T' "$((ms / 1000))"

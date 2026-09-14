@@ -1312,5 +1312,5 @@ the dated § in `memory/project_pair_extractor.md`.
 ## kafka — fresh record timestamp per hop (2026-09-14)
 
 - [x] **Broker `LogAppendTime`** (user decision): `KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime` in `docker-compose.yml` + `docker-compose.prod.yml`, so each Flink hop's output gets its own append time instead of job 1's inherited CreateTime. The Java per-sink wrapper was tried and reverted. `event_time` untouched. See [[kafka-topic-strategy]] § 2026-09-14
-- [ ] **Deploy and verify**: recreate the kafka container, check `log.message.timestamp.type` with `kafka-configs --describe --all`, then run `scripts/watch-topic.sh p1-asks-adjusted` and check the timestamp ≈ wall clock. Also check that `watch-topic.sh` parses the `LogAppendTime:` label (it may expect `CreateTime:`)
+- [ ] **Deploy and verify**: recreate the kafka container, check `log.message.timestamp.type` with `kafka-configs --describe --all`, then run `scripts/watch-topic.sh p1-asks-adjusted` and check the timestamp ≈ wall clock. (`watch-topic.sh` already parses the `LogAppendTime:` label, fixed same day)
 - [ ] Staleness exporter now sees append recency, not upstream lag. Decide whether a lag signal is needed
