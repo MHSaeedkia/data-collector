@@ -1313,3 +1313,39 @@ the same `<dir>_data-collector-nifi-*` volumes. Checked by diffing `docker compo
   nifi service (build/env/volumes/ports/logging/healthcheck) is identical in both files. Keep it that way: any
   NiFi env change goes into both files.
 - `docker compose ... down -v` with EITHER file deletes the shared NiFi volumes.
+
+## 2026-09-14 — prod TaskManager memory: 4g per slot (user rule)
+
+User rule: **TaskManager process memory = 4g × slots.** With 8 slots that's `taskmanager.memory.process.size: 32g`,
+container `memory:` 33g (still 1g above process.size, as M2a requires), on all four TMs. **Change the slot count
+and process.size together.** The four TMs commit 132g. **Host RAM still NOT verified.** ssh to
+192.168.150.31 timed out during the banner exchange when I tried to run `free -g`. Before this, the server was
+also found running an old checkout (`158acf3`, 3 slots): its `origin` remote is GitHub and fails auth, and
+`gitlab` has the real main.
+Approximate Flink split per TM at 32g (Flink defaults, not measured): jvm-overhead capped at 1g, metaspace 256m,
+network capped at 1g, managed 0.1 ≈ 3g, so task heap is ≈ 26g, or ~3.3g per slot.
+
+### ⚠ Same day, host measured: the 4g/slot sizing does NOT fit
+`free -g` / `docker stats` on 192.168.150.31 (2026-09-14): **31 GiB RAM, 8 cores, 0 available, 1 GiB swap full.**
+Actual usage: NiFi 4.1 GiB (heap max 8g), Kafka 3.4 GiB (Xms=Xmx 4g), JobManager 1.4, kafka-ui 1.0, the rest ~1.5;
+taskmanager-1/-3 ~4.7–4.9 GiB, **taskmanager-2/-4 ~160 MiB (idle, no tasks)**. So one 33g TM limit is already
+larger than the whole host, and even the old 4 × 9g overcommitted it. The realistic Flink budget is ~12–14g across ALL TMs.
+The 32g/33g values were NOT reverted; the user was asked to choose between less memory per slot, shrinking NiFi/Kafka
+heaps, or bigger hardware. Don't deploy 32g to this host.
+
+## 2026-09-14 — FINAL: prod file sized to the measured host (supersedes the 4g/slot rule and 4 × 8 slots above)
+
+User: "adjust based on available resources, nothing more nothing less" — and was annoyed that sizing had ignored the
+server. **Rule: size docker-compose.prod.yml from the measured host (31 GiB RAM, 8 cores), never from per-slot
+formulas.** Applied:
+- TaskManagers: **4 × 4 slots = 16** (parallelism sum 14), `process.size: 3g`, container limit `3500m`.
+  Slots went down from 8 because at 3g a TM that got 8 subtasks would not fit them. At 3g, heap is ≈1.75g and
+  direct memory ≈380m per TM (dev ran 12+ subtasks on ~1.1g heap / 287m direct).
+- Kafka `-Xmx2G -Xms2G` (was 4G; dev runs at 2G, and the broker leans on page cache).
+- NiFi heap **6g** (was 8g, measured using 4.1 GiB). ⚠ This is now DIFFERENT from docker-compose.yml's 8g, which
+  bends the "NiFi env identical" note above. Heap is harmless: start.sh rewrites bootstrap.conf in the shared
+  conf volume on every start, so each file applies its own value. The flow/state volumes are untouched.
+- Worst-case budget: TMs 14g + NiFi ~7g + Kafka ~2.7g + JM ~1.6g + rest ~2.5g ≈ 27.8g, which leaves ~3.5g for the
+  OS and page cache.
+Not deployed, not observed. Still unaddressed: no CPU limits on the 8-core box, and taskmanager-2/-4 were idle
+before this change (spreading unverified).
