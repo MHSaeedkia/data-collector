@@ -221,3 +221,14 @@ That is not possible within one partition, and every warmup topic has 1 partitio
 expected, since Flink inherits the input timestamp. Bootstrap `kafka:29092` / `KAFKA_CONTAINER` env overrides match
 `purge-topics.sh`. Hard-codes partition 0 because topics are single-partition. Only the syntax and usage path were checked; it was
 NOT run against a broker.
+Same day it gained a human-readable prefix (`YYYY-MM-DD HH:MM:SS.mmm +zzzz`). The conversion happens in the HOST shell, so
+the time is in the server's timezone rather than the container's (usually UTC). It uses bash `printf '%(...)T'` (bash ≥ 4.2,
+fine on Debian 12, NOT macOS's /bin/bash 3.2) so there is no `date` fork per record at hundreds of rec/s. `-t` is now keyed
+on stdin (`-t 0`), because stdout is the pipe into the formatter, and `\r` is stripped from TTY lines. Lines without a numeric
+CreateTime pass through. Verified with a stub `docker` feeding sample lines (incl. `\r\n` and `NO_TIMESTAMP`), not against a broker.
+Also same day: it STOPS on an out-of-order offset (`n <= previous`, duplicates included), exits **2**, and kills the consumer. A
+forward jump is deliberately NOT an error, because gaps are legal in Kafka (transaction markers, deleted/compacted records).
+The consumer runs on fd 3 via `exec 3< <(docker exec ...)`, not in a pipeline, so `$!` is its PID (it gets killed on
+violation instead of lingering until its next write), and `wait "$consumer"` passes on its exit status when it ends by
+itself. That needs bash ≥ 4.4. Verified with stub `docker`s: a duplicate offset while the consumer is still alive → exit 2
+in <1 s with no leftover process; consumer exits 1 → exit 1; a jump 5→9 → no stop.
