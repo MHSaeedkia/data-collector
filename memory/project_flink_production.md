@@ -1273,3 +1273,43 @@ crash rather than removed it. That is why all three were changed.
   host-agnostic. Do not "fix" this by growing the TaskManager there.
 - Nothing here is verified live: **not deployed.** Fault 2's fix needs a jar rebuild
   (`make run-all-jobs`), fault 1's needs the JobManager recreated.
+
+## 2026-09-14 — prod TaskManagers 4 × 3 → 4 × 8 slots (user decision, NOT deployed)
+
+The per-job Makefile parallelism (aggregator 2, merger 4, adjustment 3, five others at 1) adds up to **14**, so
+`prod-deploy` no longer fit 4 × 3 = 12. Meanwhile `158acf3` (a teammate's commit) moved dev to
+**1 TM × 50 slots @ 8g**. The user was offered 4/8/12/13 slots per TM and **chose 8 (32 total)**:
+roughly 2× headroom over 14, and one crashed TM takes fewer subtasks with it than at 12–13.
+Kept at 8g process / 9g limit. With 8g, task heap is ~5.4g and direct memory ~840m (network 10% + 128m
+framework), which is about 3× the per-TM direct budget that caused the 2026-09-06 OOM on the 2g
+dev TM, so memory was not the constraint.
+
+**Context from the user:** `docker-compose.prod.yml` is NOT real prod. It runs on the testing
+dev server, with a prod-ready shape.
+
+Review points raised with this change, none applied:
+- **Slot spreading is unverified.** With 32 slots for 14 subtasks, Flink can pack a job's subtasks
+  onto one or two TMs, which undoes M2b's blast-radius benefit. The likely fix is a JobManager key
+  (`taskmanager.load-balance.mode: SLOTS` in Flink 1.20+/2.x, formerly `cluster.evenly-spread-out-slots`).
+  **Key name and values not checked against 2.2.0.**
+- **Slots do not add CPU.** The dev box had a run queue of ~30 on 8 cores. No container has a CPU limit or share.
+- **Host RAM is still not inspected.** 4 × 9g TM + NiFi 8g heap + Kafka 4g (Xms = Xmx) + the rest
+  comes to ~50g+ committed.
+- Non-Flink services (kafka, nifi, postgres, schema-registry, …) still use `restart: on-failure`
+  with no log rotation except NiFi. Kafka's 2026-09-02 OOM exited 0 and `on-failure` never restarted it.
+- The `FlinkTaskManagersMissing` description in `monitoring/prometheus/rules/flink.yml` still says "8 jobs in 8 slots".
+
+## 2026-09-14 — NiFi must share its volumes between the two compose files (user requirement)
+
+User: setting NiFi up is painful, so the prod file must reuse dev's NiFi volumes. **They already share them.** Both
+files use the same 9 volume keys, and compose prefixes them with the project name, which defaults to the
+**directory** name (`lpa-core` locally, `data-collector` in `/opt/data-collector`). So both files resolve to
+the same `<dir>_data-collector-nifi-*` volumes. Checked by diffing `docker compose config --format json`.
+- **Do NOT add `name:` to these volumes or a top-level `name:`, and do not run with `-p`.** Any of those renames
+  the volumes, and NiFi comes up empty.
+- **The env has to match too, not just the mounts.** The `apache/nifi` start script rewrites
+  `nifi.web.proxy.host` in `conf/nifi.properties` on every start, and `conf` is a shared volume. Prod was
+  missing `192.168.150.35:8443`, so starting from prod would have removed it. It's now synced, and the resolved
+  nifi service (build/env/volumes/ports/logging/healthcheck) is identical in both files. Keep it that way: any
+  NiFi env change goes into both files.
+- `docker compose ... down -v` with EITHER file deletes the shared NiFi volumes.

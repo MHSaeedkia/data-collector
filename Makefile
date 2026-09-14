@@ -8,8 +8,8 @@ NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job
 ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)
 
 # Per-job parallelism: PARALLELISM_<job>, falling back to DEFAULT_PARALLELISM. Every job needs that
-# many task slots, so the total must fit taskmanager.numberOfTaskSlots (14 in docker-compose.yml,
-# 4 x 3 = 12 in docker-compose.prod.yml).
+# many task slots, so the total must fit taskmanager.numberOfTaskSlots (50 in docker-compose.yml,
+# 4 x 8 = 32 in docker-compose.prod.yml).
 # Override from the command line, e.g. `make run-all-jobs PARALLELISM_merger=3`.
 DEFAULT_PARALLELISM := 1
 # Sized from live Flink metrics on 2026-09-13, against ~1200 books/s out of job-book-builder:

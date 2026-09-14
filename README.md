@@ -34,7 +34,7 @@ Exchanges (nobitex, bitpin, wallex)
 | Alertmanager     | 9093            | Alert routing (no receiver yet) | prod only |
 | Grafana          | 3001            | Dashboards (3000 is `orderbook-viewer`) | prod only |
 
-Dev runs one TaskManager with 8 slots; prod runs four with 3 slots each.
+Dev runs one TaskManager with 50 slots; prod runs four with 8 slots each.
 
 ## Two compose files
 

@@ -11,7 +11,7 @@
 #   M1   explicit restart-strategy      — the dev default kills a job on its first exception
 #   M7   restart: unless-stopped + log rotation on every Flink container
 #   M2a  TaskManager memory sizing      — the image default leaves ~384 MB of task heap for all 8
-#   M2b  4 TaskManagers x 3 slots       — blast radius, and 4 spare slots
+#   M2b  4 TaskManagers x 8 slots       — blast radius, and parallelism headroom (was x 3)
 #   S5   TaskManager healthcheck        — a hung JVM otherwise reports "up" forever
 #   M3   JobManager HA via ZooKeeper    — a JM restart otherwise returns an empty cluster
 #   S4   HistoryServer                  — a JM restart otherwise loses every failed job's exception
@@ -140,10 +140,13 @@ services:
             interval: 10s
             retries: 5
 
-    # Four TaskManagers with 3 slots each (12 total) rather than one with 8.
-    # The 8 jobs at parallelism 1 filled the single TM exactly, so there was no
-    # room for a 9th job or any parallelism increase; spreading them over four
-    # JVMs also means one OOM takes down ~2 jobs instead of the whole pipeline.
+    # Four TaskManagers with 8 slots each (32 total) rather than one big one:
+    # spreading jobs over four JVMs means one OOM takes down a few subtasks
+    # instead of the whole pipeline. The PARALLELISM_* sum in the root Makefile
+    # is 14 (2026-09-14), so 32 leaves room to raise parallelism without
+    # touching this file; keep the sum <= 32. Was 4 x 3 = 12 until the per-job
+    # parallelism outgrew it. Slots are not cores: every TaskManager still
+    # shares the host's CPU.
     #
     # SIZING NOT VERIFIED AGAINST THE TARGET HOST: 4 x 8g here plus everything
     # else in this file. Check free RAM on the box before deploying and scale
@@ -162,7 +165,7 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
+                taskmanager.numberOfTaskSlots: 8
 
                 # M3, and NOT optional on the TaskManagers even though the report
                 # shows these keys only on the JobManager. With HA on, the leader
@@ -233,7 +236,7 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
+                taskmanager.numberOfTaskSlots: 8
 
                 # M3, and NOT optional on the TaskManagers even though the report
                 # shows these keys only on the JobManager. With HA on, the leader
@@ -304,7 +307,7 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
+                taskmanager.numberOfTaskSlots: 8
 
                 # M3, and NOT optional on the TaskManagers even though the report
                 # shows these keys only on the JobManager. With HA on, the leader
@@ -375,7 +378,7 @@ services:
         environment:
             FLINK_PROPERTIES: |
                 jobmanager.rpc.address: jobmanager
-                taskmanager.numberOfTaskSlots: 3
+                taskmanager.numberOfTaskSlots: 8
 
                 # M3, and NOT optional on the TaskManagers even though the report
                 # shows these keys only on the JobManager. With HA on, the leader
@@ -631,7 +634,7 @@ services:
         environment:
             SINGLE_USER_CREDENTIALS_USERNAME: admin
             SINGLE_USER_CREDENTIALS_PASSWORD: admin123456789
-            NIFI_WEB_PROXY_HOST: "192.168.150.104:8443,192.168.150.102:8443,192.168.150.31:8443,192.168.150.32:8443,192.168.150.33:8443,localhost:8443"
+            NIFI_WEB_PROXY_HOST: "192.168.150.104:8443,192.168.150.102:8443,192.168.150.31:8443,192.168.150.32:8443,192.168.150.33:8443,192.168.150.35:8443,localhost:8443"
             NIFI_JVM_HEAP_INIT: "8g"
             NIFI_JVM_HEAP_MAX: "8g"
         ports:
