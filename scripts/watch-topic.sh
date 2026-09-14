@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Live-tails one topic partition, printing partition, offset and CreateTime per record,
-# in the order the broker returns them. Use it instead of Kafka UI's live mode when the
-# order matters. Values are hidden because they are Avro binary.
+# Live-tails one topic partition, printing CreateTime, partition and offset per record, in the
+# order the broker returns them. Use it instead of Kafka UI's live mode when the order matters.
+# Values are hidden because they are Avro binary.
 #
 #   ./scripts/watch-topic.sh p1-asks
 #
-# Output: 2026-09-14 14:25:02.006 +0330  Partition:0  Offset:5  CreateTime:1789383302006
+# Output: 2026-09-14 14:25:02.006 +0330  partition=0  offset=5  create_ms=1789383302006
 # The date is converted on the host, so it is in the server's timezone (override with TZ=...),
 # not the container's.
 #
@@ -15,8 +15,7 @@
 # out of order and does not stop it. CreateTime is not checked: Flink carries the input record's
 # timestamp through instead of stamping the write time, so it is not monotonic.
 #
-# Needs bash >= 4.4 (printf's %(...)T formats without forking `date` per record; `wait` on a
-# process substitution returns the consumer's exit status).
+# Needs bash >= 4.2 (printf's %(...)T formats without forking `date` per record).
 set -euo pipefail
 
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
@@ -28,42 +27,53 @@ if [[ $# -ne 1 || -z "$1" ]]; then
 fi
 TOPIC="$1"
 
-# -t only when run from a terminal, so Ctrl-C reaches the consumer inside the container.
-TTY=()
-[[ -t 0 ]] && TTY=(-t)
-
-exec 3< <(docker exec -i ${TTY[@]+"${TTY[@]}"} "$KAFKA_CONTAINER" kafka-console-consumer \
-    --bootstrap-server "$KAFKA_BOOTSTRAP" \
-    --topic "$TOPIC" --partition 0 --offset latest \
-    --property print.partition=true \
-    --property print.offset=true \
-    --property print.timestamp=true \
-    --property print.value=false)
-consumer=$!
+# No `docker exec -t`: a TTY puts the terminal in raw mode, which staircases every line and echoes
+# ^C into the data. Without one, killing the docker client does NOT stop the process inside the
+# container, so the consumer is tied to its stdin instead: when stdin closes, a watcher kills it.
+# The coproc's stdin is a pipe this script holds, so it closes however the script ends (Ctrl-C,
+# exit 2, kill). The watcher's output goes to /dev/null so it cannot keep the exec stream open
+# after the consumer ends on its own.
+coproc CONSUMER {
+    docker exec -i "$KAFKA_CONTAINER" sh -c '
+        exec 3<&0
+        kafka-console-consumer "$@" 2>&1 &
+        c=$!
+        # <&3 is required: sh points a background job'"'"'s stdin at /dev/null otherwise.
+        (cat <&3 >/dev/null; kill "$c") >/dev/null 2>&1 &
+        wait "$c"' sh \
+        --bootstrap-server "$KAFKA_BOOTSTRAP" \
+        --topic "$TOPIC" --partition 0 --offset latest \
+        --property print.partition=true \
+        --property print.offset=true \
+        --property print.timestamp=true \
+        --property print.value=false
+}
+consumer_pid=$CONSUMER_PID
+# Duplicate the read end now: bash unsets CONSUMER as soon as the coproc exits.
+exec 3<&"${CONSUMER[0]}"
 
 prev=""
 while IFS=$'\t' read -r ts partition offset _; do
-    # A TTY ends lines with \r\n.
-    ts="${ts%$'\r'}" partition="${partition%$'\r'}" offset="${offset%$'\r'}"
     ms="${ts#CreateTime:}"
-    if [[ "$ms" =~ ^[0-9]+$ ]]; then
+    n="${offset#Offset:}"
+    if [[ "$ms" =~ ^[0-9]+$ && "$n" =~ ^[0-9]+$ ]]; then
         printf -v when '%(%Y-%m-%d %H:%M:%S)T' "$((ms / 1000))"
         printf -v zone '%(%z)T' "$((ms / 1000))"
-        printf '%s.%03d %s\t%s\t%s\t%s\n' "$when" "$((ms % 1000))" "$zone" "$partition" "$offset" "$ts"
+        printf '%s.%03d %s  partition=%s  offset=%s  create_ms=%s\n' \
+            "$when" "$((ms % 1000))" "$zone" "${partition#Partition:}" "$n" "$ms"
     else
         # Consumer messages, errors, or a record with no timestamp: pass through untouched.
-        printf '%s\n' "$ts${partition:+$'\t'$partition}${offset:+$'\t'$offset}"
+        printf '%s\n' "$ts${partition:+  $partition}${offset:+  $offset}"
     fi
 
-    n="${offset#Offset:}"
     [[ "$n" =~ ^[0-9]+$ ]] || continue
     if [[ -n "$prev" ]] && (( n <= prev )); then
         echo "ERROR: offset out of order on $TOPIC: $n after $prev" >&2
-        kill "$consumer" 2>/dev/null || true
+        kill "$consumer_pid" 2>/dev/null || true
         exit 2
     fi
     prev="$n"
 done <&3
 
 # The consumer ended on its own (container gone, bad topic, ...): exit with its status.
-wait "$consumer"
+wait "$consumer_pid"

@@ -232,3 +232,12 @@ The consumer runs on fd 3 via `exec 3< <(docker exec ...)`, not in a pipeline, s
 violation instead of lingering until its next write), and `wait "$consumer"` passes on its exit status when it ends by
 itself. That needs bash ≥ 4.4. Verified with stub `docker`s: a duplicate offset while the consumer is still alive → exit 2
 in <1 s with no leftover process; consumer exits 1 → exit 1; a jump 5→9 → no stop.
+**Revised same day after the first live run: the output staircased.** `docker exec -t` puts the local terminal in raw mode (a
+newline without a carriage return) and the remote TTY echoed `^C` into the data, so `-t` is GONE. The trap that replaces it,
+**verified with a throwaway alpine container**: without a TTY, killing the docker client does NOT stop the process inside the
+container, even after it writes again. So the consumer is tied to stdin EOF: `sh -c` runs it in the background plus a
+`(cat <&3; kill $c)` watcher, and **`exec 3<&0` + `<&3` is load-bearing**, because a non-interactive `sh` points a background
+job's stdin at /dev/null (without it the consumer was killed instantly). The script runs docker as a `coproc`, so it holds
+the stdin pipe and it closes on ANY exit. Output is now `... partition=N  offset=N  create_ms=N`. Verified against real
+`docker exec` with a stub consumer: out-of-order → exit 2, consumer exits 3 → exit 3, real Ctrl-C through a pty → clean lines
+and 0 consumers left in the container in all three cases. Still NOT run against the real broker since the fix.
