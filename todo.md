@@ -1358,3 +1358,8 @@ the dated § in `memory/project_pair_extractor.md`.
       created by `make run`
 - [ ] Decide whether this should also aggregate (p50/p95 over a window) rather than print every
       record. Right now it is one block per record, which floods on a busy topic
+- [x] **Registry rejected the `event_time` → `max_event_time` rename** (2026-09-15, hit on the server
+      during `make warmup`): subjects are BACKWARD, and a required field absent from the old schema
+      has nothing to resolve from. Fixed with `"aliases": ["event_time"]` on `max_event_time` in all
+      three schemas; verified against the real Avro compatibility checker. See [[avro-schema]]
+- [ ] **Re-run `make warmup` on the server**, then resubmit the jobs. Nothing else changed

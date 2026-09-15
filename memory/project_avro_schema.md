@@ -289,3 +289,41 @@ is fed from both the snapshot record (still `event_time`) and the aggregated one
 
 ⚠ Not deployed, not run live. `make warmup` re-registers the schemas and must run BEFORE the jobs are
 resubmitted.
+
+## 2026-09-15 — the rename was REJECTED by the registry, fixed with an alias
+
+`make warmup` failed on the server:
+
+```
+register adjusted-order-book-event: http 409: Schema being registered is incompatible ...
+READER_FIELD_MISSING_DEFAULT_VALUE: The field 'max_event_time' at path '/fields/3' in the new
+schema has no default value and is missing in the old schema
+{compatibility: 'BACKWARD'}
+```
+
+**What was missed:** the risk of the rename was analysed as "which READERS break", and the answer —
+only `orderbook-viewer`, all in this repo — was right. The schema REGISTRY is a gate of its own, and
+it was not in that list. Subjects are `BACKWARD` (Confluent's default): a NEW schema must be able to
+read data written with the OLD one, and `max_event_time` is required with no default and absent from
+the old schema, so the new reader has nothing to fill it with. Registration is refused before any job
+runs. All three renamed subjects hit it, `adjusted` first only because it is alphabetically first in
+the directory glob.
+
+**The fix: `"aliases": ["event_time"]` on `max_event_time`** in all three schemas. Avro resolution
+then maps the old field onto the new name, which is not a workaround but the truth — the old
+`event_time` WAS the max across contributing books, so the rename is a pure rename and the alias says
+so.
+
+⚠ **The alias is a declaration for the REGISTRY, not a change in behaviour.** Confluent wire format
+carries the WRITER's schema id and every decoder here (hamba in the viewer and latency-monitor, the
+Java `GenericRecord` readers) decodes with the writer schema, so nothing at runtime consults it.
+
+**Verified, not assumed:** `org.apache.avro.SchemaCompatibility.checkReaderWriterCompatibility` —
+the same checker Confluent runs — was driven over the real old (`e7fb043~1`) and new files by a
+throwaway test in `normalizer-common`. As-is: INCOMPATIBLE. With the alias: COMPATIBLE for all three.
+A `"default": 0` on `max_event_time` also passes, and was rejected: it makes every pre-rename record
+read as 1970 instead of naming the field it actually came from.
+
+⚠ **`git show e7fb043~1:schemas/<f>.avsc` is how to get an old schema to re-check compatibility**
+against. Worth doing BEFORE any future required-field change, since the registry is the thing that
+stops a deploy, not the compiler.

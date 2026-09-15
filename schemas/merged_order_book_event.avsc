@@ -30,6 +30,9 @@
 		},
 		{
 			"name": "max_event_time",
+			"aliases": [
+				"event_time"
+			],
 			"type": {
 				"type": "long",
 				"logicalType": "timestamp-millis"
