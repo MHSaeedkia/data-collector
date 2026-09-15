@@ -275,3 +275,74 @@ including NiFi's `ex{id}-raw`, `control-plane`, e2e topics, and internal topics.
   the readable date was lost and the raw line passed through (the offset check did NOT break, it is independent).
   It now strips `*Time:`, so both labels work. Verified with a stub `docker` (both labels, `NO_TIMESTAMP` passthrough, duplicate offset → exit 2)
   under Homebrew bash, not against a broker. The output label is still `create_ms` even when the value is append time.
+
+## 2026-09-15 — `latency-monitor/` replaces `watch-topic.sh` (user request)
+
+A Go module at the repo root (`orderbook-latency`), same shape as `warmup/`: `main.go` +
+`internal/` + vendored deps + its own Makefile. `make watch TOPIC=p1-asks` from the root, or
+`go run . <topic>` from the module. `--strict-order` exits **2** on a non-increasing offset,
+deliberately the same code the shell script used so anything wrapping it still works; without the
+flag it warns and keeps tailing (the script always died).
+
+**Why the rewrite was unavoidable, not a preference:** the timings live INSIDE the Avro value.
+`watch-topic.sh` could reach the record timestamp and the offset because the console consumer
+prints those as text, but decoding Confluent-wire-format Avro in bash was never going to happen —
+and the one attempt at reading `event_time` out of the printed JSON ran into bash reading a pipe one
+byte at a time, which cannot keep up with a 30 KB book at ~600 rec/s.
+
+Stack matches [[orderbook-viewer]]: `franz-go` (tail, no consumer group — an observer must not split
+records with another watcher), `hamba/avro` (decode), schema resolved by wire-header id and cached
+forever.
+
+Three decisions worth keeping:
+- **ONE `event.Record` struct covers every record shape.** hamba drives decoding from the WRITER
+  schema, so a field the schema lacks is left zero rather than failing. That is what lets the same
+  binary read a job-1 event, a job-5 snapshot and a `p{id}-{side}` record.
+- ⚠ **hamba rejects a `*time.Time` for a NON-union field** — `event_time` and `max_event_time` are
+  required, so they must be values, and `event.Optional()` maps the zero time back to nil. Only the
+  genuinely nullable ones (`exchange_event_time`, `min_event_time`, every `PipelineTimings` field)
+  are pointers. A test caught this; it is not obvious from hamba's docs.
+- **Every duration is a `*time.Duration`.** nil = "cannot know", and is deliberately never collapsed
+  to 0, which would read as "instant" and drag any average towards zero. Negative durations are
+  PRINTED, not clamped: they are clock skew between TaskManagers, and clamping would turn a clock
+  problem into a latency mystery.
+
+`source` and `end-to-end` measure from **`exchange_event_time`**, never `event_time` — see
+[[avro-schema]] § 2026-09-15. For ex3/ex4/ex7-updates that is null and both print `n/a`, which is the
+entire point of that field existing.
+
+**Between-job delay is ADJACENT ONLY** — the `wait` column, `stages[i].In - stages[i-1].Out`. The
+user first asked for "`type_validate_in - pair_extract_out`, `rebase_in - pair_extract_out` and so
+on", two examples that are different measurements (the second skips a job and measures from job 1
+again). That was asked rather than guessed, the user chose a full out→in matrix, and then **after
+seeing it rendered, rejected it and kept only the adjacent delay**. Built and removed the same day.
+The lesson is about the medium, not the requirement: the choice was made from a described option and
+reversed on sight of the real thing, so a rendered sample is worth more than a preview here.
+
+⚠ **Go's Duration formatting drops trailing zeros**, putting `5.6s` next to `1.597s` in one column,
+so `dur()` prints three decimals past a second. (Kept from the matrix work; it applies to any column
+of durations.) A second trap died with the matrix but is worth knowing: **printf pads by BYTES**, so
+a `→` — three of them — inside a `%-16s` cell shifts the whole column.
+
+**Endpoints come from `.env`** (user request, 2026-09-15), same machinery and the SAME VARIABLE NAMES
+as `warmup/`: `KAFKA_BOOTSTRAP` + `SCHEMA_REGISTRY_URL`, godotenv, `.env.example` committed and `.env`
+gitignored and created by a prerequisite-less `make` file target so it is never overwritten. The
+first draft used `KAFKA_BROKERS`; renamed to match warmup and the deleted shell script, because a
+second spelling of "where is Kafka" is a trap, not a feature.
+
+⚠ **The two endpoint flags default to the EMPTY string on purpose.** Go evaluates flag defaults
+before `.env` has been read, so a flag that defaulted to the env value would freeze the wrong
+precedence; empty means "whatever config says", and main overrides only when non-empty. Order is
+default → .env → real env var → flag.
+
+⚠ **godotenv skips any key already PRESENT in the environment — an empty string counts as present.**
+That is exactly what makes "a real env var beats the file" work, and it also means `t.Setenv(k, "")`
+in a test does NOT simulate "unset": the file then looks ignored. The config tests unset properly
+(`t.Setenv` for the restore, then `os.Unsetenv`); the first draft of them failed for this reason.
+
+⚠ **NOT run against a real broker.** The decode tests encode against the real
+`schemas/order_book_snapshot.avsc` (not a mirror, so schema drift fails there), and the metric maths
+is unit-tested on the record the user captured — but nothing has consumed a live topic yet.
+**`scripts/watch-topic.sh` was DELETED on 2026-09-15 at the user's instruction, before that live
+run** — the sections above describing it are history; `git show feat/latency-monitor~1:scripts/watch-topic.sh`
+is where it went if it is ever needed back.

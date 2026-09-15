@@ -32,6 +32,13 @@ submit_jobs = $(foreach job,$(1),PARALLELISM=$(or $(PARALLELISM_$(job)),$(DEFAUL
 warmup:
 	@$(MAKE) -C warmup run
 
+# Tail one topic and print where each record's time went — per-job, the waits between
+# jobs, and the totals against the exchange clock and the Kafka write time. Replaces
+# scripts/watch-topic.sh, which could not read the payload the timings live in.
+#   make watch TOPIC=p1-asks
+watch:
+	@$(MAKE) -C latency-monitor run TOPIC=$(TOPIC)
+
 # Full raw pipeline: the 5 upstream normalizer jobs plus the terminal aggregator that unions their
 # per-exchange books, all on the one Flink cluster in docker-compose.yml.
 refresh-normalizer:
