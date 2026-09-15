@@ -49,7 +49,7 @@ class AggregatedOrderBookSerializerTest {
         AggregatedOrderBook book = new AggregatedOrderBook(7, "bids", List.of(
                 new AggregatedLevel(5, 0, "snap-5", "77322.6", "0.702754"),
                 new AggregatedLevel(8, 1, "snap-8", "77322.6", "0.1"),
-                new AggregatedLevel(6, 0, "snap-6", "77319.4", "3")), 1789310527051L);
+                new AggregatedLevel(6, 0, "snap-6", "77319.4", "3")), 1789310527051L, 1789310520000L);
         book.setId("agg-1");
 
         GenericRecord record = AggregatedOrderBookSerializer.toGenericRecord(book, SCHEMA);
@@ -59,7 +59,8 @@ class AggregatedOrderBookSerializerTest {
         assertThat(decoded.get("pair_id")).isEqualTo(7);
         assertThat(decoded.get("side")).hasToString("bids");
         assertThat(decoded.get("id")).hasToString("agg-1");
-        assertThat(decoded.get("event_time")).isEqualTo(1789310527051L);
+        assertThat(decoded.get("max_event_time")).isEqualTo(1789310527051L);
+        assertThat(decoded.get("min_event_time")).isEqualTo(1789310520000L);
         List<?> levels = (List<?>) decoded.get("levels");
         assertThat(levels).hasSize(3);
         assertThat(levels).extracting(l -> ((GenericRecord) l).get("exchange_id")).containsExactly(5, 8, 6);
@@ -79,13 +80,15 @@ class AggregatedOrderBookSerializerTest {
     @Test
     @DisplayName("an empty book encodes as an empty level array")
     void emptyBook() throws IOException {
-        AggregatedOrderBook book = new AggregatedOrderBook(7, "asks", List.of(), 1L);
+        AggregatedOrderBook book = new AggregatedOrderBook(7, "asks", List.of(), 1L, null);
         book.setId("agg-2");
 
         GenericRecord decoded = roundTrip(AggregatedOrderBookSerializer.toGenericRecord(book, SCHEMA));
 
         assertThat((List<?>) decoded.get("levels")).isEmpty();
         assertThat(decoded.get("side")).hasToString("asks");
+        // Nothing contributed a level, so there is no oldest contributing time to name.
+        assertThat(decoded.get("min_event_time")).isNull();
     }
 
     /**
@@ -96,7 +99,7 @@ class AggregatedOrderBookSerializerTest {
     @DisplayName("a missing required level field fails instead of encoding")
     void missingRequiredFieldFails() {
         AggregatedOrderBook book = new AggregatedOrderBook(7, "asks",
-                List.of(new AggregatedLevel(5, 0, "snap-5", null, "1")), 1L);
+                List.of(new AggregatedLevel(5, 0, "snap-5", null, "1")), 1L, 1L);
         book.setId("agg-3");
 
         assertThatThrownBy(() -> roundTrip(AggregatedOrderBookSerializer.toGenericRecord(book, SCHEMA)))

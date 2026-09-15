@@ -70,7 +70,8 @@ public class AggregatedOrderBookSerializer implements SerializationSchema<Aggreg
         record.put("pair_id", book.getPairId());
         record.put("side", new GenericData.EnumSymbol(sideSchema, book.getSide()));
         record.put("id", book.getId());
-        record.put("event_time", book.getEventTime());
+        record.put("max_event_time", book.getMaxEventTime());
+        record.put("min_event_time", book.getMinEventTime());
         record.put("levels", levels);
         return record;
     }

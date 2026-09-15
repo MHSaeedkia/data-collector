@@ -40,6 +40,24 @@ class BookBuildFunctionTest {
         harness.close();
     }
 
+    /**
+     * The snapshot is state built from many events, but the exchange clock describes the TRIGGER —
+     * so it must be the triggering event's, and a feed that sends none must leave it null rather
+     * than inherit the processing time sitting in event_time.
+     */
+    @Test
+    @DisplayName("carries the triggering event's exchange clock onto the snapshot")
+    void carriesExchangeEventTime() throws Exception {
+        RawOrderBookEvent withClock = event("snapshot", levels("100", "1"), levels("99", "1"));
+        withClock.setExchangeEventTime(1_700_000_000_000L);
+
+        assertThat(process(withClock).getExchangeEventTime()).isEqualTo(1_700_000_000_000L);
+
+        RawOrderBookEvent withoutClock = event("update", 2L, levels("101", "1"), null);
+
+        assertThat(process(withoutClock).getExchangeEventTime()).isNull();
+    }
+
     // ---- helpers ----------------------------------------------------------------
 
     private static RawOrderBookEvent event(String type, Long sequenceId,

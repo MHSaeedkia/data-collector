@@ -51,6 +51,40 @@ class OrderBookSnapshotSerdeTest {
     }
 
     /**
+     * Given a book from a feed that timestamps its own frames, When round-tripped, Then the
+     * exchange clock survives beside event_time. The two are separate numbers here on purpose, so
+     * a serializer that wrote one into the other's slot would be visible.
+     */
+    @Test
+    @DisplayName("round-trips the exchange clock")
+    void roundTripsExchangeEventTime() {
+        OrderBookSnapshot snapshot = new OrderBookSnapshot(6, 1, 1752473005123L, 126776812L,
+                List.of(new PriceLevel("62775.5", "1")), List.of());
+        snapshot.setExchangeEventTime(1752473005000L);
+
+        OrderBookSnapshot out = roundTrip(snapshot);
+
+        assertThat(out.getExchangeEventTime()).isEqualTo(1752473005000L);
+        assertThat(out.getEventTime()).isEqualTo(1752473005123L);
+    }
+
+    /**
+     * Given a book from a feed that sends no clock of its own (ex3/ex4, and ex7's updates), When
+     * round-tripped, Then the null survives as a null. It must NOT come back as 0 or as a copy of
+     * event_time: the whole point of the field is that a missing exchange timestamp stays missing,
+     * so a lag measurement can skip it instead of reading job 1's processing time as one.
+     */
+    @Test
+    @DisplayName("keeps a null exchange clock null")
+    void keepsNullExchangeEventTime() {
+        OrderBookSnapshot out = roundTrip(new OrderBookSnapshot(3, 1, 1752473005123L, null,
+                List.of(new PriceLevel("62775.5", "1")), List.of()));
+
+        assertThat(out.getExchangeEventTime()).isNull();
+        assertThat(out.getEventTime()).isEqualTo(1752473005123L);
+    }
+
+    /**
      * Given an ex3-style book (no ordering field) with an empty bids side, When round-tripped,
      * Then last_sequence_id stays null and the empty side stays an empty list — required sides
      * are always present, even when empty.

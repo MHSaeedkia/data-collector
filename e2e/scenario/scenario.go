@@ -149,6 +149,12 @@ func (s Scenario) verify(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return err
 	}
+	// Before the blanking below, which would take away the value the equality
+	// rule compares against.
+	if err := checkExchangeEventTime(snapshotTopic, s.ExchangeID, snapshots); err != nil {
+		return err
+	}
+	stripExchangeEventTime(snapshots)
 	if s.IgnoreEventTime {
 		for i := range snapshots {
 			snapshots[i].EventTime = ""

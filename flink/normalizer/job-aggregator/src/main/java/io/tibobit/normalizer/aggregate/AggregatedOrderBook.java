@@ -20,17 +20,23 @@ public class AggregatedOrderBook {
     private String id = "";
     private List<AggregatedLevel> levels;
 
-    // Max event_time across the contributing exchange books.
-    private long eventTime;
+    // Newest event_time across the exchange books in the union.
+    private long maxEventTime;
+
+    // Oldest event_time across the books that CONTRIBUTED LEVELS — null when none did, i.e. the
+    // union is empty. Nullable rather than 0 because "nothing in here" is not a moment in time.
+    private Long minEventTime;
 
     public AggregatedOrderBook() {
     }
 
-    public AggregatedOrderBook(int pairId, String side, List<AggregatedLevel> levels, long eventTime) {
+    public AggregatedOrderBook(int pairId, String side, List<AggregatedLevel> levels,
+                               long maxEventTime, Long minEventTime) {
         this.pairId = pairId;
         this.side = side;
         this.levels = levels;
-        this.eventTime = eventTime;
+        this.maxEventTime = maxEventTime;
+        this.minEventTime = minEventTime;
     }
 
     public int getPairId() {
@@ -65,12 +71,20 @@ public class AggregatedOrderBook {
         this.levels = levels;
     }
 
-    public long getEventTime() {
-        return eventTime;
+    public long getMaxEventTime() {
+        return maxEventTime;
     }
 
-    public void setEventTime(long eventTime) {
-        this.eventTime = eventTime;
+    public void setMaxEventTime(long maxEventTime) {
+        this.maxEventTime = maxEventTime;
+    }
+
+    public Long getMinEventTime() {
+        return minEventTime;
+    }
+
+    public void setMinEventTime(Long minEventTime) {
+        this.minEventTime = minEventTime;
     }
 
     @Override

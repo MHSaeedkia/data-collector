@@ -147,7 +147,7 @@ class CrossExchangeAggregatorTest {
                         tuple(1, "100.00", "5"));
     }
 
-    // ---- per-exchange replacement & event_time ----------------------------------
+    // ---- per-exchange replacement & the two event times -------------------------
 
     @Test
     @DisplayName("a newer book from the same exchange replaces its entry (not accumulated)")
@@ -165,7 +165,45 @@ class CrossExchangeAggregatorTest {
         send(book(1, "asks", 100, lvl(1, "100", "1")));
         send(book(2, "asks", 50, lvl(2, "101", "1"))); // triggering event_time = 50
 
-        assertThat(lastBook().getEventTime()).isEqualTo(100); // max(100, 50)
+        assertThat(lastBook().getMaxEventTime()).isEqualTo(100); // max(100, 50)
+    }
+
+    @Test
+    @DisplayName("output min_event_time is the oldest across contributing exchanges")
+    void minEventTimeIsOldestAcrossExchanges() throws Exception {
+        send(book(1, "asks", 100, lvl(1, "100", "1")));
+        send(book(2, "asks", 50, lvl(2, "101", "1")));
+
+        assertThat(lastBook().getMinEventTime()).isEqualTo(50); // min(100, 50)
+    }
+
+    /**
+     * The asymmetry with max, and the reason min exists: an emptied book contributes no price, so
+     * its timestamp describes nothing in the record. Counting it would peg min to a reset the union
+     * does not contain, and a staleness alarm reading min would then never fire.
+     */
+    @Test
+    @DisplayName("min_event_time ignores an emptied book, even when its time is the oldest")
+    void minEventTimeIgnoresEmptiedBooks() throws Exception {
+        send(book(1, "asks", 300, lvl(1, "100", "1")));
+        send(book(2, "asks", 100, lvl(2, "101", "1")));
+        assertThat(lastBook().getMinEventTime()).isEqualTo(100); // ex2 still contributes
+
+        send(book(2, "asks", 50)); // ex2 reset -> empty book, and the OLDEST time in the map
+
+        assertThat(lastBook().getMinEventTime()).isEqualTo(300); // only ex1 contributes now
+        assertThat(lastBook().getMaxEventTime()).isEqualTo(300); // max still sees every book
+    }
+
+    @Test
+    @DisplayName("min_event_time is null when no exchange contributes a level")
+    void minEventTimeNullWhenUnionEmpty() throws Exception {
+        send(book(1, "asks", 100, lvl(1, "100", "1")));
+        send(book(1, "asks", 200)); // the only exchange resets
+
+        assertThat(lastLevels()).isEmpty();
+        assertThat(lastBook().getMinEventTime()).isNull();
+        assertThat(lastBook().getMaxEventTime()).isEqualTo(200);
     }
 
     // ---- reset: empty book ⇒ exchange drops out ---------------------------------
@@ -183,7 +221,7 @@ class CrossExchangeAggregatorTest {
         assertThat(lastLevels())
                 .extracting(AggregatedLevel::getExchangeId, AggregatedLevel::getPrice)
                 .containsExactly(tuple(1, "100")); // only ex1 remains
-        assertThat(lastBook().getEventTime()).isEqualTo(200); // ex2's event_time still counts
+        assertThat(lastBook().getMaxEventTime()).isEqualTo(200); // ex2's event_time still counts
     }
 
     // ---- simulation flag --------------------------------------------------------

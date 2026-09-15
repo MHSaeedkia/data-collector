@@ -112,6 +112,7 @@ public class BybitParser implements RawExchangeParser {
                 result.get("cts").asLong(),
                 Levels.fromStringPairs(result.get("a")),
                 Levels.fromStringPairs(result.get("b")));
+        event.setExchangeEventTime(event.getEventTime());
         event.setSimulation(Json.simulation(root));
         event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));
@@ -147,6 +148,7 @@ public class BybitParser implements RawExchangeParser {
                 root.get("cts").asLong(),
                 data.has("a") ? Levels.fromStringPairs(data.get("a")) : null,
                 data.has("b") ? Levels.fromStringPairs(data.get("b")) : null);
+        event.setExchangeEventTime(event.getEventTime());
         event.setSimulation(Json.simulation(root));
         event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));

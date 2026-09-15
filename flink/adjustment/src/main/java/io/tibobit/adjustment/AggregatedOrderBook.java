@@ -19,17 +19,20 @@ public class AggregatedOrderBook {
     private int pairId;
     private String side;
     private String id = "";
-    private long eventTime;
+    private long maxEventTime;
+    private Long minEventTime;
     private List<AggregatedLevel> levels;
 
     public AggregatedOrderBook() {
     }
 
-    public AggregatedOrderBook(int pairId, String side, String id, long eventTime, List<AggregatedLevel> levels) {
+    public AggregatedOrderBook(int pairId, String side, String id, long maxEventTime, Long minEventTime,
+                               List<AggregatedLevel> levels) {
         this.pairId = pairId;
         this.side = side;
         this.id = id;
-        this.eventTime = eventTime;
+        this.maxEventTime = maxEventTime;
+        this.minEventTime = minEventTime;
         this.levels = levels;
     }
 
@@ -42,8 +45,11 @@ public class AggregatedOrderBook {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public long getEventTime() { return eventTime; }
-    public void setEventTime(long eventTime) { this.eventTime = eventTime; }
+    public long getMaxEventTime() { return maxEventTime; }
+    public void setMaxEventTime(long maxEventTime) { this.maxEventTime = maxEventTime; }
+
+    public Long getMinEventTime() { return minEventTime; }
+    public void setMinEventTime(Long minEventTime) { this.minEventTime = minEventTime; }
 
     public List<AggregatedLevel> getLevels() { return levels; }
     public void setLevels(List<AggregatedLevel> levels) { this.levels = levels; }

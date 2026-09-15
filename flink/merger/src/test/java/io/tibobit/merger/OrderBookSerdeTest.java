@@ -48,7 +48,8 @@ class OrderBookSerdeTest {
                 .set("pair_id", 1)
                 .set("side", new GenericData.EnumSymbol(AGGREGATED.getField("side").schema(), "asks"))
                 .set("id", new Utf8("agg-id"))
-                .set("event_time", 1750680000000L)
+                .set("max_event_time", 1750680000000L)
+                .set("min_event_time", 1750679000000L)
                 .set("levels", List.of(first, second))
                 .build();
     }
@@ -60,7 +61,8 @@ class OrderBookSerdeTest {
         assertThat(book.getPairId()).isEqualTo(1);
         assertThat(book.getSide()).isEqualTo("asks");
         assertThat(book.getId()).isEqualTo("agg-id");
-        assertThat(book.getEventTime()).isEqualTo(1750680000000L);
+        assertThat(book.getMaxEventTime()).isEqualTo(1750680000000L);
+        assertThat(book.getMinEventTime()).isEqualTo(1750679000000L);
         assertThat(book.getLevels()).hasSize(2);
 
         AggregatedLevel level = book.getLevels().get(0);
@@ -83,7 +85,7 @@ class OrderBookSerdeTest {
         assertThat(record.get("pair_id")).isEqualTo(1);
         assertThat(record.get("side")).hasToString("asks");
         assertThat(record.get("source_id")).isEqualTo("agg-id");
-        assertThat(record.get("event_time")).isEqualTo(1750680000000L);
+        assertThat(record.get("max_event_time")).isEqualTo(1750680000000L);
 
         @SuppressWarnings("unchecked")
         List<GenericRecord> levels = (List<GenericRecord>) record.get("levels");

@@ -52,6 +52,7 @@ public class RawOrderBookEventSerializer implements SerializationSchema<RawOrder
                 .set("sequence_id", event.getSequenceId())
                 .set("sequence_jump", event.getSequenceJump())
                 .set("event_time", event.getEventTime())
+                .set("exchange_event_time", event.getExchangeEventTime())
                 .set("asks", PriceLevels.toRecords(event.getAsks(), levelSchema))
                 .set("bids", PriceLevels.toRecords(event.getBids(), levelSchema))
                 .set("pipeline_timings", PipelineTimingsRecords.toRecord(

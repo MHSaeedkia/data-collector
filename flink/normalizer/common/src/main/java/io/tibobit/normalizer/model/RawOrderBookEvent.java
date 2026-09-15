@@ -39,6 +39,9 @@ public class RawOrderBookEvent {
     private Long sequenceId;
     private long sequenceJump;
     private long eventTime;
+    // Nullable on purpose, and NOT in the constructor: a parser sets it only when the wire
+    // carried a real exchange clock, so forgetting it leaves the honest null rather than a 0.
+    private Long exchangeEventTime;
     private List<PriceLevel> asks;
     private List<PriceLevel> bids;
     private PipelineTimings pipelineTimings = new PipelineTimings();
@@ -129,6 +132,14 @@ public class RawOrderBookEvent {
 
     public void setEventTime(long eventTime) {
         this.eventTime = eventTime;
+    }
+
+    public Long getExchangeEventTime() {
+        return exchangeEventTime;
+    }
+
+    public void setExchangeEventTime(Long exchangeEventTime) {
+        this.exchangeEventTime = exchangeEventTime;
     }
 
     public List<PriceLevel> getAsks() {

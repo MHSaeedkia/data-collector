@@ -52,7 +52,8 @@ class AdjustedOrderBookSerdeTest {
                 .set("pair_id", 3)
                 .set("side", new GenericData.EnumSymbol(AGGREGATED.getField("side").schema(), "asks"))
                 .set("id", new Utf8("agg-id-1"))
-                .set("event_time", 1750680000000L)
+                .set("max_event_time", 1750680000000L)
+                .set("min_event_time", 1750679000000L)
                 .set("levels", List.of(level))
                 .build();
     }
@@ -90,7 +91,8 @@ class AdjustedOrderBookSerdeTest {
         assertThat(out.get("pair_id")).isEqualTo(3);
         assertThat(out.get("side")).hasToString("asks");
         assertThat(out.get("id")).hasToString("agg-id-1");
-        assertThat(out.get("event_time")).isEqualTo(1750680000000L);
+        assertThat(out.get("max_event_time")).isEqualTo(1750680000000L);
+        assertThat(out.get("min_event_time")).isEqualTo(1750679000000L);
 
         // The whole point of step 3: the event says what was charged, not just the result.
         // All three rates are per-level (2026-08-25) — a book unions levels from multiple
@@ -154,7 +156,7 @@ class AdjustedOrderBookSerdeTest {
     @Test
     void theModelCoversEveryFieldOfTheSchema() {
         assertThat(ADJUSTED.getFields().stream().map(Schema.Field::name))
-                .containsExactly("pair_id", "side", "id", "event_time", "levels");
+                .containsExactly("pair_id", "side", "id", "max_event_time", "min_event_time", "levels");
         assertThat(ADJUSTED.getField("levels").schema().getElementType()
                 .getFields().stream().map(Schema.Field::name))
                 .containsExactly("exchange_id", "simulation", "source_id",

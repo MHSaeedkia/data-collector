@@ -25,6 +25,39 @@ class RawOrderBookEventSerializerTest {
     private static final Schema SCHEMA = AvroSchemaLoader.load("/avro/raw_order_book_event.avsc");
 
     /**
+     * Given an event from a feed that timestamps its own frames, When mapped, Then the exchange
+     * clock lands on its own wire name, separate from event_time.
+     */
+    @Test
+    @DisplayName("maps the exchange clock onto its own wire field")
+    void mapsExchangeEventTime() {
+        RawOrderBookEvent event = new RawOrderBookEvent(6, 1, "update", 126776812L, 1L,
+                1752473005123L, List.of(new PriceLevel("62775.5", "1")), null);
+        event.setExchangeEventTime(1752473005123L);
+
+        GenericRecord record = RawOrderBookEventSerializer.toGenericRecord(event, SCHEMA);
+
+        assertThat(record.get("exchange_event_time")).isEqualTo(1752473005123L);
+    }
+
+    /**
+     * Given an event from a feed that sends no clock (ex3/ex4, ex7 updates), When mapped, Then the
+     * wire field is null — never 0, and never a copy of the processing time sitting in event_time.
+     * A default-valued long there would be indistinguishable from a real timestamp downstream.
+     */
+    @Test
+    @DisplayName("writes a null exchange clock as null, not as a zero or a copy")
+    void mapsMissingExchangeEventTimeAsNull() {
+        RawOrderBookEvent event = new RawOrderBookEvent(3, 1, "snapshot", null, 0L,
+                1752473005123L, List.of(new PriceLevel("62775.5", "1")), null);
+
+        GenericRecord record = RawOrderBookEventSerializer.toGenericRecord(event, SCHEMA);
+
+        assertThat(record.get("exchange_event_time")).isNull();
+        assertThat(record.get("event_time")).isEqualTo(1752473005123L);
+    }
+
+    /**
      * Given a delta event with both sides and a sequence, When mapped, Then every field lands on
      * its wire name, the type enum is a real Avro EnumSymbol, and level decimal strings are
      * preserved exactly.

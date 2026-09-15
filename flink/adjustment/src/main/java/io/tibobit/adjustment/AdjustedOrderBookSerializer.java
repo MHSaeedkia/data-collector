@@ -77,7 +77,8 @@ public class AdjustedOrderBookSerializer implements SerializationSchema<Adjusted
                 .set("pair_id", book.getPairId())
                 .set("side", new GenericData.EnumSymbol(sideSchema, book.getSide()))
                 .set("id", book.getId())
-                .set("event_time", book.getEventTime())
+                .set("max_event_time", book.getMaxEventTime())
+                .set("min_event_time", book.getMinEventTime())
                 .set("levels", levels)
                 .build();
     }

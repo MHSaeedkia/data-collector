@@ -37,6 +37,8 @@ public class WallexParser implements RawExchangeParser {
         }
         String market = key.substring(0, at);
         String side = key.substring(at + 1);
+        // exchange_event_time stays NULL: this wire carries no clock of its own, so event_time
+        // above is OUR processing time. A null is the honest answer and lag measurement skips it.
         RawOrderBookEvent event = new RawOrderBookEvent(0, 0, "snapshot",
                 null, 0L, System.currentTimeMillis(), null, null);
         // Trailing metadata object; absent on the 2-element form, which then reads as 0.

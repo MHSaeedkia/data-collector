@@ -25,17 +25,20 @@ public class AdjustedOrderBook {
     private int pairId;
     private String side;
     private String id = "";
-    private long eventTime;
+    private long maxEventTime;
+    private Long minEventTime;
     private List<AdjustedLevel> levels;
 
     public AdjustedOrderBook() {
     }
 
-    public AdjustedOrderBook(int pairId, String side, String id, long eventTime, List<AdjustedLevel> levels) {
+    public AdjustedOrderBook(int pairId, String side, String id, long maxEventTime,
+                             Long minEventTime, List<AdjustedLevel> levels) {
         this.pairId = pairId;
         this.side = side;
         this.id = id;
-        this.eventTime = eventTime;
+        this.maxEventTime = maxEventTime;
+        this.minEventTime = minEventTime;
         this.levels = levels;
     }
 
@@ -61,7 +64,8 @@ public class AdjustedOrderBook {
                 aggregated.getPairId(),
                 aggregated.getSide(),
                 aggregated.getId(),
-                aggregated.getEventTime(),
+                aggregated.getMaxEventTime(),
+                aggregated.getMinEventTime(),
                 levels);
     }
 
@@ -89,12 +93,20 @@ public class AdjustedOrderBook {
         this.id = id;
     }
 
-    public long getEventTime() {
-        return eventTime;
+    public long getMaxEventTime() {
+        return maxEventTime;
     }
 
-    public void setEventTime(long eventTime) {
-        this.eventTime = eventTime;
+    public void setMaxEventTime(long maxEventTime) {
+        this.maxEventTime = maxEventTime;
+    }
+
+    public Long getMinEventTime() {
+        return minEventTime;
+    }
+
+    public void setMinEventTime(Long minEventTime) {
+        this.minEventTime = minEventTime;
     }
 
     public List<AdjustedLevel> getLevels() {

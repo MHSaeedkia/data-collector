@@ -26,6 +26,17 @@ type OrderbookSnapshot struct {
 	ID        string `json:"id" swaggerignore:"true"`
 	TriggerID string `json:"trigger_id" swaggerignore:"true"`
 	EventTime string `json:"event_time"`
+	// ExchangeEventTime is the exchange's OWN clock, carried from the triggering
+	// job-4 event, or "" when that feed sends no clock at all — ex3/wallex and
+	// ex4/ramzinex never do, and ex7/ompfinex sends one on snapshots but not on
+	// updates. In those cases EventTime above is job 1's processing time, which
+	// is exactly what this field exists to tell apart.
+	//
+	// No scenario declares it. What is assertable is the RULE rather than a
+	// value (see scenario/exchange_clock.go), so it is checked on its own terms
+	// and then cleared before the literal comparison, like the lineage ids.
+	// swaggerignore for the same reason as those.
+	ExchangeEventTime string `json:"exchange_event_time" swaggerignore:"true"`
 	// LastSequenceID is the event's sequence_id passed through, null for feeds
 	// with no ordering field (ex3). Mirrored so this struct matches the schema
 	// field for field, but the harness does NOT read it: the snapshot stream is
@@ -58,11 +69,17 @@ type AggregatedSide struct {
 	// ID is this record's own lineage id. There is no record-level parent here:
 	// the union mixes exchanges, so a level's parent belongs on the level.
 	ID string `json:"id"`
-	// EventTime is the max event time of the exchanges in the union. Read, but
-	// nothing asserts it: for ex3 it is job 1's processing time, so it is not
-	// comparable across exchanges. The levels are what a scenario checks.
-	EventTime string            `json:"event_time"`
-	Levels    []AggregatedLevel `json:"levels"`
+	// MaxEventTime is the NEWEST event time of the exchanges in the union, and
+	// MinEventTime the OLDEST among those that actually contributed levels —
+	// empty when none did. Renamed from event_time on 2026-09-15: one record
+	// unions several exchanges at several times, so the name has to say which.
+	//
+	// Both are read but neither is asserted: for ex3 the value is job 1's
+	// processing time, so it is not comparable across exchanges. The levels are
+	// what a scenario checks.
+	MaxEventTime string            `json:"max_event_time"`
+	MinEventTime string            `json:"min_event_time"`
+	Levels       []AggregatedLevel `json:"levels"`
 }
 
 // AggregatedLevel is one level of the aggregated book. Levels from different

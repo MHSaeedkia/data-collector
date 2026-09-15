@@ -26,6 +26,8 @@ public class OrderBookSnapshot {
     private String id = "";
     private String triggerId = "";
     private long eventTime;
+    // Carried from the triggering job-4 event; null when that exchange sends no clock of its own.
+    private Long exchangeEventTime;
     private Long lastSequenceId;
     private List<PriceLevel> asks;
     private List<PriceLevel> bids;
@@ -90,6 +92,14 @@ public class OrderBookSnapshot {
 
     public void setEventTime(long eventTime) {
         this.eventTime = eventTime;
+    }
+
+    public Long getExchangeEventTime() {
+        return exchangeEventTime;
+    }
+
+    public void setExchangeEventTime(Long exchangeEventTime) {
+        this.exchangeEventTime = exchangeEventTime;
     }
 
     public Long getLastSequenceId() {

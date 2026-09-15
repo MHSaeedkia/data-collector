@@ -29,12 +29,24 @@
 			"doc": "id of the AggregatedOrderBookEvent this record was merged from. Singular and record-level, unlike the aggregated schema's per-level source_id: the merger consumes exactly one aggregated record per output record, so there is a single unambiguous parent here."
 		},
 		{
-			"name": "event_time",
+			"name": "max_event_time",
 			"type": {
 				"type": "long",
 				"logicalType": "timestamp-millis"
 			},
-			"doc": "Carried verbatim from the aggregated record (which already took the max across contributing exchange books)."
+			"doc": "Newest event_time across the exchange books in the union — the freshest news this record carries. Renamed from `event_time` on 2026-09-15: one number cannot describe a book built from several exchanges at several times, so the name now says WHICH of them it is. See min_event_time beside it. Carried verbatim from the aggregated record."
+		},
+		{
+			"name": "min_event_time",
+			"type": [
+				"null",
+				{
+					"type": "long",
+					"logicalType": "timestamp-millis"
+				}
+			],
+			"default": null,
+			"doc": "Oldest event_time across the exchange books that actually CONTRIBUTED LEVELS to this record — the stalest data a consumer is being handed, which is what a staleness alarm wants. Books dropped to empty (job 2's reset, job 5's empty book) are excluded on purpose: they contribute no price, so their timestamp describes nothing in here. Null when no exchange contributed a level at all, i.e. the whole union is empty — that is the absence of data, not a time of zero. Carried verbatim from the aggregated record."
 		},
 		{
 			"name": "levels",

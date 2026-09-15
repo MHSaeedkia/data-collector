@@ -47,6 +47,7 @@ public class OrderBookSnapshotSerializer implements SerializationSchema<OrderBoo
                 .set("id", snapshot.getId())
                 .set("trigger_id", snapshot.getTriggerId())
                 .set("event_time", snapshot.getEventTime())
+                .set("exchange_event_time", snapshot.getExchangeEventTime())
                 .set("last_sequence_id", snapshot.getLastSequenceId())
                 .set("asks", PriceLevels.toRecords(snapshot.getAsks(), levelSchema))
                 .set("bids", PriceLevels.toRecords(snapshot.getBids(), levelSchema))

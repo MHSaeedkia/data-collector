@@ -94,6 +94,7 @@ public class BookBuildFunction
         // The book is state built from many events, but simulation is a property of the feed, not of
         // a level — so the emitted book carries the flag of the event that produced it. Kept out of
         // MapState deliberately: it is not per-price, and a feed does not switch mid-stream.
+        book.setExchangeEventTime(event.getExchangeEventTime());
         book.setSimulation(event.getSimulation());
         book.setTriggerId(event.getId());
         book.setId(Lineage.newId());
