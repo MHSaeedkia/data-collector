@@ -59,23 +59,29 @@ func Render(w io.Writer, meta Meta, rec event.Record, m Metrics) {
 	}
 
 	if len(m.Stages) == 0 {
-		b.WriteString("\n  no pipeline_timings on this record\n")
-		io.WriteString(w, b.String())
-		return
+		b.WriteString("\n  no pipeline_timings on this record\n\n")
+	} else {
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "  %-16s %-14s %-14s %10s %10s\n", "job", "in", "out", "job", "wait")
+		for _, s := range m.Stages {
+			fmt.Fprintf(&b, "  %-16s %-14s %-14s %10s %10s\n",
+				s.Name, clock(s.In), clock(s.Out), dur(s.Job), dur(s.Gap))
+		}
+
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "  source     exchange → job 1 in   %12s\n", dur(m.Source))
+		fmt.Fprintf(&b, "  pipeline   job 1 in → job 5 out  %12s\n", dur(m.Pipeline))
+		fmt.Fprintf(&b, "  write      job 5 out → kafka     %12s\n", dur(m.Write))
 	}
 
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "  %-16s %-14s %-14s %10s %10s\n", "job", "in", "out", "job", "wait")
-	for _, s := range m.Stages {
-		fmt.Fprintf(&b, "  %-16s %-14s %-14s %10s %10s\n",
-			s.Name, clock(s.In), clock(s.Out), dur(s.Job), dur(s.Gap))
-	}
-
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "  source     exchange → job 1 in   %12s\n", dur(m.Source))
-	fmt.Fprintf(&b, "  pipeline   job 1 in → job 5 out  %12s\n", dur(m.Pipeline))
-	fmt.Fprintf(&b, "  write      job 5 out → kafka     %12s\n", dur(m.Write))
+	// End-to-end on every topic, whatever else the record lacks.
 	fmt.Fprintf(&b, "  end-to-end exchange → kafka      %12s\n", dur(m.EndToEnd))
+	// max_event_time is required on the p{id}-{side} family, so its presence is
+	// what says min_event_time belongs to this shape — and a null one (an empty
+	// union) is worth an n/a rather than a silently missing line.
+	if event.Optional(rec.MaxEventTime) != nil {
+		fmt.Fprintf(&b, "  stalest    min_event → kafka     %12s\n", dur(m.Stalest))
+	}
 
 	io.WriteString(w, b.String())
 }

@@ -346,3 +346,13 @@ is unit-tested on the record the user captured — but nothing has consumed a li
 **`scripts/watch-topic.sh` was DELETED on 2026-09-15 at the user's instruction, before that live
 run** — the sections above describing it are history; `git show feat/latency-monitor~1:scripts/watch-topic.sh`
 is where it went if it is ever needed back.
+
+**End-to-end on every topic (2026-09-15, user request).** `Render` used to `return` early when a
+record had no `pipeline_timings`, which silently dropped `end-to-end` on the whole `p{id}-{side}`
+family (and on any timing-less record that DID carry `exchange_event_time`). It now always prints.
+Those topics have no exchange clock, so the user was asked what their end-to-end should be and chose
+**`stalest` = kafka write − `min_event_time` ONLY** — not freshest (`max_event_time`) as well, and
+not "keep it exchange-clock-only". This is a deliberate, scoped exception to "never measure from
+`event_time`": min/max are derived from `event_time`, so a clockless feed in the union reads low —
+documented in the README rather than hidden. The line appears only when `max_event_time` is set
+(required on that family), so an empty union prints `stalest n/a` instead of losing the line.

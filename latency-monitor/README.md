@@ -101,7 +101,11 @@ ex1-p1-orderbook-snapshot-flink  partition=0  offset=1505638  ex1-p1  (OrderBook
   Flink — the exchange's network, NiFi, and the raw topic.
 - **pipeline** — job 1 `in` to job 5 `out`.
 - **write** — job 5 `out` to the Kafka write time.
-- **end-to-end** — the exchange's own clock to the Kafka write time.
+- **end-to-end** — the exchange's own clock to the Kafka write time. Printed on
+  every topic, including ones with no `pipeline_timings`.
+- **stalest** — `min_event_time` to the Kafka write time, only on the
+  `p{id}-{side}` family: the oldest book in the union. It is `event_time`-based,
+  so a clockless feed in the union makes it read low — see below.
 
 The stage rows carry the time of day only; the date and zone are stated once in
 the header, because every stamp in one block is within seconds of the others.
@@ -137,9 +141,9 @@ It works on any topic in the pipeline, not only job 5's:
 - **jobs 1–4 stage topics** — the stages not yet reached are `n/a`, and the
   totals anchor on the stages that are present.
 - **`p{id}-{side}` and the merged/adjusted topics** — these carry no
-  `pipeline_timings` at all, so the block prints the header and says so. You
-  still get the offset check, the write time, and `max_event_time` /
-  `min_event_time`.
+  `pipeline_timings` and no `exchange_event_time`, so `end-to-end` is `n/a`
+  there and `stalest` is the end-to-end number to read. You still get the
+  offset check, the write time, and `max_event_time` / `min_event_time`.
 
 ## Tests
 

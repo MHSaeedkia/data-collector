@@ -151,6 +151,40 @@ func TestRenderOnATopicWithNoTimings(t *testing.T) {
 	assert.Contains(t, out.String(), "max_event_time")
 }
 
+// The p{id}-{side} family has no exchange clock, so its only end-to-end is the
+// stalest contributing book's event_time against the write.
+func TestComputeStalestOnAnAggregatedRecord(t *testing.T) {
+	rec := event.Record{
+		MaxEventTime: *at(t, "2026-09-14T11:04:33.400Z"),
+		MinEventTime: at(t, "2026-09-14T11:04:26.300Z"),
+	}
+
+	m := Compute(rec, *at(t, "2026-09-14T11:04:33.500Z"))
+
+	assert.Equal(t, 7200*time.Millisecond, *m.Stalest)
+	assert.Nil(t, m.EndToEnd)
+}
+
+func TestRenderPrintsEndToEndOnEveryTopic(t *testing.T) {
+	kafka := *at(t, "2026-09-14T11:04:33.500Z")
+
+	aggregated := event.Record{
+		MaxEventTime: *at(t, "2026-09-14T11:04:33.400Z"),
+		MinEventTime: at(t, "2026-09-14T11:04:26.300Z"),
+	}
+	var out bytes.Buffer
+	Render(&out, Meta{Topic: "p1-asks", WriteTime: kafka}, aggregated, Compute(aggregated, kafka))
+	assert.Contains(t, out.String(), "end-to-end")
+	assert.Contains(t, out.String(), "7.200s")
+
+	// An exchange clock with no timings must not lose its end-to-end either.
+	untimed := event.Record{ExchangeEventTime: at(t, "2026-09-14T11:04:26.146Z")}
+	out.Reset()
+	Render(&out, Meta{Topic: "ex1-raw", WriteTime: kafka}, untimed, Compute(untimed, kafka))
+	assert.Contains(t, out.String(), "7.354s")
+	assert.NotContains(t, out.String(), "stalest", "only the aggregated shape has a min_event_time")
+}
+
 func TestDurFormatting(t *testing.T) {
 	sub := 450 * time.Microsecond
 	ms := 1597 * time.Millisecond

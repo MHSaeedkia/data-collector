@@ -45,6 +45,10 @@ type Metrics struct {
 	// EndToEnd is the exchange's own clock → the Kafka write time. Nil whenever
 	// the feed sends no clock of its own (ex3, ex4, ex7 updates).
 	EndToEnd *time.Duration
+	// Stalest is min_event_time → the Kafka write time: the oldest book in a
+	// p{id}-{side} union. It is event_time-based, so a clockless feed in the
+	// union makes it read low. Nil off that family, or on an empty union.
+	Stalest *time.Duration
 }
 
 // Compute measures one record against the time the broker wrote it.
@@ -73,6 +77,7 @@ func Compute(rec event.Record, kafkaWrite time.Time) Metrics {
 	m.Write = between(m.LastOut, &kafkaWrite)
 	m.Source = between(rec.ExchangeEventTime, m.FirstIn)
 	m.EndToEnd = between(rec.ExchangeEventTime, &kafkaWrite)
+	m.Stalest = between(rec.MinEventTime, &kafkaWrite)
 	return m
 }
 
