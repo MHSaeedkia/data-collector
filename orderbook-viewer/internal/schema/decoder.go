@@ -32,6 +32,13 @@ const (
 // wireLevel/wireEvent mirror aggregated_order_book_event.avsc for
 // decoding. EventTime is time.Time because hamba/avro maps the
 // timestamp-millis logical type to time.Time, not int64.
+//
+// The wire field is max_event_time (renamed from event_time on
+// 2026-09-15): one aggregated record unions several exchanges at several
+// times, so the name has to say which of them it is. min_event_time sits
+// beside it on the wire and is deliberately not read — the UI shows a
+// book, not its staleness. The snapshot record below is a per-exchange
+// book with ONE time, so it keeps the plain event_time.
 type wireLevel struct {
 	ExchangeID int    `avro:"exchange_id"`
 	Simulation int    `avro:"simulation"`
@@ -44,7 +51,7 @@ type wireEvent struct {
 	PairID    int         `avro:"pair_id"`
 	Side      string      `avro:"side"`
 	ID        string      `avro:"id"`
-	EventTime time.Time   `avro:"event_time"`
+	EventTime time.Time   `avro:"max_event_time"`
 	Levels    []wireLevel `avro:"levels"`
 }
 
@@ -66,7 +73,7 @@ type wireMerged struct {
 	PairID    int               `avro:"pair_id"`
 	Side      string            `avro:"side"`
 	ID        string            `avro:"id"`
-	EventTime time.Time         `avro:"event_time"`
+	EventTime time.Time         `avro:"max_event_time"`
 	Levels    []wireMergedLevel `avro:"levels"`
 }
 

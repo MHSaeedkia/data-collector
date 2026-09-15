@@ -95,15 +95,18 @@ its schema lacks, so a value-driven check would break the raw and rejected sinks
 File: `schemas/aggregated_order_book_event.avsc`, record `AggregatedOrderBookEvent`, subject
 `aggregated-order-book-event`. The **output** wire shape produced by the terminal
 `flink/normalizer/job-aggregator`'s `AggregatedOrderBook`/`AggregatedLevel` model, published to
-`p{pair_id}-{side}` and consumed by `web/`. This shape is **frozen** — do not change it; the schema
-is a documentation/contract mirror of the code, not a driver of it. The Go web decoder resolves the
+`p{pair_id}-{side}`. **⚠ 2026-09-15 — "frozen, consumed by `web/`" was WRONG, corrected by the user:
+the ONLY consumer is `orderbook-viewer/` in this repo. There is no out-of-repo web app to keep in
+lockstep, which is what made the `event_time` rename below a same-repo change rather than a
+cross-team one.** The schema is a documentation/contract mirror of the code, not a driver of it. The Go web decoder resolves the
 schema by Confluent wire-header **id** and maps by field name (never by subject/record name).
 
 | Field        | Avro type                          | Notes                                              |
 | ------------ | ----------------------------------- | --------------------------------------------------- |
 | `pair_id`    | int (required)                      | DB `markets.id`                                     |
 | `side`       | enum `asks`\|`bids` (required)      | Matches topic suffix                                 |
-| `event_time` | long timestamp-millis (required)    | Max `event_time` across contributing exchange books  |
+| `max_event_time` | long timestamp-millis (required) | Newest `event_time` across EVERY stored exchange book, emptied ones included |
+| `min_event_time` | ["null", long timestamp-millis], default null | Oldest across the books that CONTRIBUTED LEVELS; null when none did |
 | `levels`     | array of record (required)          | Each: `exchange_id:int`, `price:string`, `quantity:string` — union across exchanges, never summed; equal prices from different exchanges stay as separate adjacent entries |
 
 ## Per-step latency timings (see [[raw-pipeline-decision]])
@@ -252,3 +255,37 @@ hit. Nothing is deployed or run live yet.
 Not affected, verified rather than assumed: `orderbook-viewer` reads `order_book_snapshot` but hamba
 skips schema fields with no struct counterpart — its test mirror now carries the field on the wire,
 so that skip is proven, not hoped for. `warmup` registers the whole directory, so it needs no edit.
+
+## 2026-09-15 — `event_time` → `max_event_time`, plus `min_event_time` (jobs 6/7/8)
+
+Renamed in all three web-side schemas (`aggregated`, `merged`, `adjusted`) and a nullable
+`min_event_time` added beside it. Java followed: `getEventTime` → `getMaxEventTime` on
+`AggregatedOrderBook` (three copies — job 6's, merger's, adjustment's), `MergedOrderBook` and
+`AdjustedOrderBook`.
+
+**Why a rename was affordable at all.** The old note above claimed this shape was frozen because an
+out-of-repo `web/` read it. The user corrected that: `orderbook-viewer/` is the only consumer. So a
+hard rename was one repo, one deploy. **Avro matches fields by NAME and `event_time` had no default,
+so a missed reader fails loudly at resolution — there is no silent-wrong-value mode here.** Readers
+updated: both `AggregatedOrderBookDeserializer`s, `orderbook-viewer`'s `wireEvent`/`wireMerged` avro
+tags, and the e2e `decodeAggregated`.
+
+**The min rule is deliberately NOT symmetric with max** (user's decision, asked for explicitly):
+- `max` is over EVERY stored book, emptied ones included — an exchange that just went empty is still
+  news, and that is the field's pre-existing meaning, kept so the rename changes only the name.
+- `min` is over the books that CONTRIBUTED LEVELS. It answers "how stale is the oldest price a
+  consumer is being handed", and a book with no price has no price to be stale. Counting an emptied
+  book would peg min to a reset the union does not contain, and a staleness alarm reading it would
+  never fire. Covered by `minEventTimeIgnoresEmptiedBooks`.
+- `min` is NULL when nothing contributed (the whole union is empty). Nullable rather than 0, for the
+  same reason `exchange_event_time` is: absence of data is not a moment in time.
+
+`ExchangeBook` (job 6's internal per-exchange model) keeps the plain `eventTime` — one exchange, one
+time, no ambiguity to resolve. So does `order_book_snapshot`, for the same reason.
+
+⚠ **`orderbook-viewer` reads only `max_event_time`; `min_event_time` is decoded nowhere in the UI
+path** and its `domain.Book.EventTime` JSON field to the browser keeps the neutral name, because it
+is fed from both the snapshot record (still `event_time`) and the aggregated one.
+
+⚠ Not deployed, not run live. `make warmup` re-registers the schemas and must run BEFORE the jobs are
+resubmitted.

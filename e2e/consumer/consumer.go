@@ -197,11 +197,10 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 	}, nil
 }
 
-// decodeAggregated reads an aggregated record. Nothing asserts event_time — it is
-// the max event time of the exchanges in the union, which for ex3 is job 1's
-// processing time, so it is not comparable across exchanges — but it is read, so
-// that what the harness hands back is the whole record rather than a subset of
-// it. The levels are what a scenario checks.
+// decodeAggregated reads an aggregated record. Nothing asserts the two times —
+// for ex3 they are job 1's processing time, so they are not comparable across
+// exchanges — but both are read, so that what the harness hands back is the whole
+// record rather than a subset of it. The levels are what a scenario checks.
 func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, error) {
 	text, err := textual(registryURL, value)
 	if err != nil {
@@ -209,22 +208,33 @@ func decodeAggregated(registryURL string, value []byte) (events.AggregatedSide, 
 	}
 
 	var wire struct {
-		PairID    int64                    `json:"pair_id"`
-		Side      string                   `json:"side"`
-		ID        string                   `json:"id"`
-		EventTime int64                    `json:"event_time"`
-		Levels    []events.AggregatedLevel `json:"levels"`
+		PairID       int64                    `json:"pair_id"`
+		Side         string                   `json:"side"`
+		ID           string                   `json:"id"`
+		MaxEventTime int64                    `json:"max_event_time"`
+		Levels       []events.AggregatedLevel `json:"levels"`
+		// min_event_time is nullable, so goavro wraps the set case in its union
+		// branch's FULL name. A null means no exchange contributed a level.
+		MinEventTime *struct {
+			Millis int64 `json:"long.timestamp-millis"`
+		} `json:"min_event_time"`
 	}
 	if err := json.Unmarshal(text, &wire); err != nil {
 		return events.AggregatedSide{}, fmt.Errorf("decode aggregated: %w", err)
 	}
 
+	minEventTime := ""
+	if wire.MinEventTime != nil {
+		minEventTime = time.UnixMilli(wire.MinEventTime.Millis).UTC().Format(time.RFC3339)
+	}
+
 	return events.AggregatedSide{
-		PairID:    wire.PairID,
-		Side:      wire.Side,
-		ID:        wire.ID,
-		EventTime: time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
-		Levels:    wire.Levels,
+		PairID:       wire.PairID,
+		Side:         wire.Side,
+		ID:           wire.ID,
+		MaxEventTime: time.UnixMilli(wire.MaxEventTime).UTC().Format(time.RFC3339),
+		MinEventTime: minEventTime,
+		Levels:       wire.Levels,
 	}, nil
 }
 

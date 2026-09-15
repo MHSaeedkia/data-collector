@@ -1323,11 +1323,18 @@ the dated § in `memory/project_pair_extractor.md`.
       ex7/ompfinex updates — those wires carry no clock), inherited by job 2's gap reset, left null by
       its silence reset, carried onto the snapshot by job 5. 30 files. Java 262 tests green (+22),
       e2e + orderbook-viewer green. See [[avro-schema]] § 2026-09-15
-- [ ] **Decide how far it should travel.** Jobs 6/7/8 (`aggregated`/`merged`/`adjusted`) do NOT have
-      it. Job 6 unions many exchanges, so it needs a rule first — oldest, or the triggering book — and
-      those three shapes are the frozen web contract
+- [x] **Decided 2026-09-15 — jobs 6/7/8 get a DIFFERENT answer, not this field.** `event_time` there
+      is renamed `max_event_time` and a nullable `min_event_time` added: min over the books that
+      actually CONTRIBUTED LEVELS (user's call), null when none did. The "frozen web contract" worry
+      was based on a wrong memory note — the user confirmed `orderbook-viewer/` is the only consumer,
+      so the rename was one repo. See [[avro-schema]] § 2026-09-15 rename
 - [ ] **Deploy order matters**: `make warmup` re-registers the schemas, and it must run BEFORE the
       jobs are resubmitted or the Avro sink throws on its cached write schema
 - [ ] **Then build the lag service itself** — the thing this field was added for
 - [ ] ⚠ **ex7/ompfinex still has no captured fixture**, so it is the one exchange whose two shapes
       (snapshot carries a clock, update does not) are not covered by a parser test
+- [ ] **Decide whether the viewer should SHOW min_event_time.** It is on the wire and decoded by the
+      e2e harness, but `orderbook-viewer` reads only `max_event_time` — nothing surfaces staleness to
+      the browser yet. That is the natural consumer of the new field
+- [ ] **No e2e assertion on either time.** `AggregatedBook` only declares levels, so the rename is
+      covered by unit tests and by the viewer's decode, not by a live run

@@ -58,7 +58,8 @@ public class MergedOrderBookSerializer implements SerializationSchema<MergedOrde
                 .set("side", new GenericData.EnumSymbol(sideSchema, book.getSide()))
                 .set("id", book.getId())
                 .set("source_id", book.getSourceId())
-                .set("event_time", book.getEventTime())
+                .set("max_event_time", book.getMaxEventTime())
+                .set("min_event_time", book.getMinEventTime())
                 .set("levels", levels)
                 .build();
     }

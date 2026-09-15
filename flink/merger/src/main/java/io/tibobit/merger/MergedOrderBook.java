@@ -17,19 +17,21 @@ public class MergedOrderBook {
     private String side;
     private String id = "";
     private String sourceId = "";
-    private long eventTime;
+    private long maxEventTime;
+    private Long minEventTime;
     private List<MergedLevel> levels;
 
     public MergedOrderBook() {
     }
 
     public MergedOrderBook(int pairId, String side, String id, String sourceId,
-                           long eventTime, List<MergedLevel> levels) {
+                           long maxEventTime, Long minEventTime, List<MergedLevel> levels) {
         this.pairId = pairId;
         this.side = side;
         this.id = id;
         this.sourceId = sourceId;
-        this.eventTime = eventTime;
+        this.maxEventTime = maxEventTime;
+        this.minEventTime = minEventTime;
         this.levels = levels;
     }
 
@@ -45,8 +47,11 @@ public class MergedOrderBook {
     public String getSourceId() { return sourceId; }
     public void setSourceId(String sourceId) { this.sourceId = sourceId; }
 
-    public long getEventTime() { return eventTime; }
-    public void setEventTime(long eventTime) { this.eventTime = eventTime; }
+    public long getMaxEventTime() { return maxEventTime; }
+    public void setMaxEventTime(long maxEventTime) { this.maxEventTime = maxEventTime; }
+
+    public Long getMinEventTime() { return minEventTime; }
+    public void setMinEventTime(Long minEventTime) { this.minEventTime = minEventTime; }
 
     public List<MergedLevel> getLevels() { return levels; }
     public void setLevels(List<MergedLevel> levels) { this.levels = levels; }

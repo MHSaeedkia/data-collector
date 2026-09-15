@@ -19,7 +19,7 @@ class PriceMergeFunctionTest {
     }
 
     private static AggregatedOrderBook book(String side, AggregatedLevel... levels) {
-        return new AggregatedOrderBook(1, side, "agg-id", 1750680000000L, List.of(levels));
+        return new AggregatedOrderBook(1, side, "agg-id", 1750680000000L, 1750679000000L, List.of(levels));
     }
 
     @Test
@@ -125,7 +125,8 @@ class PriceMergeFunctionTest {
 
         assertThat(result.getPairId()).isEqualTo(1);
         assertThat(result.getSide()).isEqualTo("asks");
-        assertThat(result.getEventTime()).isEqualTo(1750680000000L);
+        assertThat(result.getMaxEventTime()).isEqualTo(1750680000000L);
+        assertThat(result.getMinEventTime()).isEqualTo(1750679000000L);
         // source_id is the one aggregated record this was merged from; id is freshly minted here.
         assertThat(result.getSourceId()).isEqualTo("agg-id");
         assertThat(result.getId()).isNotBlank().isNotEqualTo("agg-id");
@@ -151,7 +152,7 @@ class PriceMergeFunctionTest {
 
     @Test
     void toleratesANullLevelsArray() {
-        AggregatedOrderBook input = new AggregatedOrderBook(1, "asks", "agg-id", 1750680000000L, null);
+        AggregatedOrderBook input = new AggregatedOrderBook(1, "asks", "agg-id", 1750680000000L, null, null);
 
         assertThat(merge.map(input).getLevels()).isEmpty();
     }

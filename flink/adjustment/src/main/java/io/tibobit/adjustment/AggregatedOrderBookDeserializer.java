@@ -45,7 +45,8 @@ public class AggregatedOrderBookDeserializer implements DeserializationSchema<Ag
                 (int) record.get("pair_id"),
                 text(record.get("side")),
                 text(record.get("id")),
-                (long) record.get("event_time"),
+                (long) record.get("max_event_time"),
+                (Long) record.get("min_event_time"),
                 levels(record.get("levels")));
     }
 

@@ -27,7 +27,8 @@ const aggregatedOrderBookEventSchema = `{
 		{"name": "pair_id", "type": "int"},
 		{"name": "side", "type": {"type": "enum", "name": "Side", "symbols": ["asks", "bids"]}},
 		{"name": "id", "type": "string", "default": ""},
-		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+		{"name": "max_event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+		{"name": "min_event_time", "type": ["null", {"type": "long", "logicalType": "timestamp-millis"}], "default": null},
 		{"name": "levels", "type": {"type": "array", "items": {
 			"type": "record",
 			"name": "AggregatedLevel",
@@ -54,7 +55,8 @@ const mergedOrderBookEventSchema = `{
 		{"name": "side", "type": {"type": "enum", "name": "Side", "symbols": ["asks", "bids"]}},
 		{"name": "id", "type": "string", "default": ""},
 		{"name": "source_id", "type": "string", "default": ""},
-		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+		{"name": "max_event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+		{"name": "min_event_time", "type": ["null", {"type": "long", "logicalType": "timestamp-millis"}], "default": null},
 		{"name": "levels", "type": {"type": "array", "items": {
 			"type": "record",
 			"name": "MergedLevel",
@@ -77,7 +79,8 @@ type fullMerged struct {
 	Side      string            `avro:"side"`
 	ID        string            `avro:"id"`
 	SourceID  string            `avro:"source_id"`
-	EventTime time.Time         `avro:"event_time"`
+	EventTime time.Time         `avro:"max_event_time"`
+	MinEvent  *time.Time        `avro:"min_event_time"`
 	Levels    []wireMergedLevel `avro:"levels"`
 }
 

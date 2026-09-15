@@ -69,11 +69,17 @@ type AggregatedSide struct {
 	// ID is this record's own lineage id. There is no record-level parent here:
 	// the union mixes exchanges, so a level's parent belongs on the level.
 	ID string `json:"id"`
-	// EventTime is the max event time of the exchanges in the union. Read, but
-	// nothing asserts it: for ex3 it is job 1's processing time, so it is not
-	// comparable across exchanges. The levels are what a scenario checks.
-	EventTime string            `json:"event_time"`
-	Levels    []AggregatedLevel `json:"levels"`
+	// MaxEventTime is the NEWEST event time of the exchanges in the union, and
+	// MinEventTime the OLDEST among those that actually contributed levels —
+	// empty when none did. Renamed from event_time on 2026-09-15: one record
+	// unions several exchanges at several times, so the name has to say which.
+	//
+	// Both are read but neither is asserted: for ex3 the value is job 1's
+	// processing time, so it is not comparable across exchanges. The levels are
+	// what a scenario checks.
+	MaxEventTime string            `json:"max_event_time"`
+	MinEventTime string            `json:"min_event_time"`
+	Levels       []AggregatedLevel `json:"levels"`
 }
 
 // AggregatedLevel is one level of the aggregated book. Levels from different

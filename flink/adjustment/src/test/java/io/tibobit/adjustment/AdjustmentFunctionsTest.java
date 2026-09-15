@@ -32,7 +32,7 @@ class AdjustmentFunctionsTest {
      * 62869.275.
      */
     private static AdjustedOrderBook book(String side) {
-        return AdjustedOrderBook.from(new AggregatedOrderBook(3, side, "agg-id-1", 1750680000000L, List.of(
+        return AdjustedOrderBook.from(new AggregatedOrderBook(3, side, "agg-id-1", 1750680000000L, 1750679000000L, List.of(
                 new AggregatedLevel(6, 1, "snapshot-A", "62650.00", "0.50000000"),
                 new AggregatedLevel(8, 1, "snapshot-B", "1000", "1.25"))));
     }
@@ -250,7 +250,8 @@ class AdjustmentFunctionsTest {
         assertThat(out.getPairId()).isEqualTo(3);
         assertThat(out.getSide()).isEqualTo("asks");
         assertThat(out.getId()).isEqualTo("agg-id-1");
-        assertThat(out.getEventTime()).isEqualTo(1750680000000L);
+        assertThat(out.getMaxEventTime()).isEqualTo(1750680000000L);
+        assertThat(out.getMinEventTime()).isEqualTo(1750679000000L);
 
         assertThat(out.getLevels()).hasSize(2);
         AdjustedLevel first = out.getLevels().get(0);
@@ -270,7 +271,7 @@ class AdjustmentFunctionsTest {
      */
     @Test
     void adjustingDoesNotMutateTheAggregatedInput() throws Exception {
-        AggregatedOrderBook input = new AggregatedOrderBook(1, "asks", "id", 1L,
+        AggregatedOrderBook input = new AggregatedOrderBook(1, "asks", "id", 1L, 1L,
                 List.of(new AggregatedLevel(6, 0, "s", "1000", "1")));
 
         commissionFunction(Map.of()).map(AdjustedOrderBook.from(input));
@@ -285,7 +286,7 @@ class AdjustmentFunctionsTest {
     @Test
     void anEmptyBookSurvivesTheChain() throws Exception {
         AdjustedOrderBook empty = AdjustedOrderBook.from(
-                new AggregatedOrderBook(1, "bids", "agg-id-empty", 1L, List.of()));
+                new AggregatedOrderBook(1, "bids", "agg-id-empty", 1L, null, List.of()));
 
         AdjustedOrderBook out = slippageFunction(Map.of())
                 .map(profitFunction(Map.of()).map(commissionFunction(Map.of()).map(empty)));
@@ -299,7 +300,7 @@ class AdjustmentFunctionsTest {
      */
     @Test
     void arithmeticIsExactNotFloatingPoint() throws Exception {
-        AdjustedOrderBook book = AdjustedOrderBook.from(new AggregatedOrderBook(1, "asks", "id", 1L,
+        AdjustedOrderBook book = AdjustedOrderBook.from(new AggregatedOrderBook(1, "asks", "id", 1L, 1L,
                 List.of(new AggregatedLevel(6, 0, "s", "0.07", "1"))));
 
         // 0.07 + (0.07 x 0.001) = 0.070070 exactly. Doubles give 0.07007000000000001.

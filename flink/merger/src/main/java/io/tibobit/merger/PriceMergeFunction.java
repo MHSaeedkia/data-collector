@@ -34,7 +34,8 @@ public class PriceMergeFunction implements MapFunction<AggregatedOrderBook, Merg
                 book.getSide(),
                 UUID.randomUUID().toString(),
                 book.getId(),
-                book.getEventTime(),
+                book.getMaxEventTime(),
+                book.getMinEventTime(),
                 merge(book.getLevels(), book.getSide()));
     }
 

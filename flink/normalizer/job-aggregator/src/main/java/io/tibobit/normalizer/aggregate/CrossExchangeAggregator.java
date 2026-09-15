@@ -27,7 +27,8 @@ import java.util.Map;
  *   <li>sort by price (asks ascending, bids descending), tie-broken by larger quantity first,
  *       comparing as BigDecimal (see memory/project_bigdecimal_rules.md).</li>
  * </ul>
- * {@code event_time} on the output = max across the contributing exchange books. An empty
+ * {@code max_event_time} on the output = newest across every stored book; {@code min_event_time} =
+ * oldest across the books that CONTRIBUTED LEVELS, null when none did. An empty
  * ExchangeBook (job 5's reset ⇒ empty book) replaces the exchange's entry and contributes no
  * levels, so that exchange drops out of the aggregated book.
  *
@@ -71,10 +72,20 @@ public class CrossExchangeAggregator
         // comparison (~n log n times for a ~750-level book), which was 27% of the live operator thread.
         List<ParsedLevel> union = new ArrayList<>();
         long maxEventTime = Long.MIN_VALUE;
+        Long minEventTime = null;
         for (Map.Entry<Integer, ExchangeBook> entry : booksByExchange.entries()) {
             ExchangeBook exchangeBook = entry.getValue();
+            // max is over EVERY stored book, empty ones included: an exchange that just went empty
+            // is still news, and this is the field's existing meaning.
             maxEventTime = Math.max(maxEventTime, exchangeBook.getEventTime());
-            if (exchangeBook.getLevels() != null) {
+            if (exchangeBook.getLevels() != null && !exchangeBook.getLevels().isEmpty()) {
+                // min is over CONTRIBUTORS only — deliberately not symmetric with max. It answers
+                // "how stale is the oldest price a consumer is being handed", and a book that
+                // contributes no price has no price to be stale. Counting an emptied book would
+                // peg it to a reset the union does not contain.
+                minEventTime = minEventTime == null
+                        ? exchangeBook.getEventTime()
+                        : Math.min(minEventTime, exchangeBook.getEventTime());
                 for (AggregatedLevel level : exchangeBook.getLevels()) {
                     union.add(new ParsedLevel(level));
                 }
@@ -89,7 +100,8 @@ public class CrossExchangeAggregator
         }
 
         AggregatedOrderBook aggregated =
-                new AggregatedOrderBook(book.getPairId(), book.getSide(), merged, maxEventTime);
+                new AggregatedOrderBook(book.getPairId(), book.getSide(), merged,
+                        maxEventTime, minEventTime);
         // Each level already carries its own source_id, stamped back at the split — nothing to
         // gather here, only this record's own id to mint.
         aggregated.setId(Lineage.newId());
