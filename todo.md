@@ -1338,3 +1338,23 @@ the dated § in `memory/project_pair_extractor.md`.
       the browser yet. That is the natural consumer of the new field
 - [ ] **No e2e assertion on either time.** `AggregatedBook` only declares levels, so the rename is
       covered by unit tests and by the viewer's decode, not by a live run
+
+## latency-monitor (2026-09-15)
+
+- [x] **`latency-monitor/` built** (user request): Go CLI replacing `scripts/watch-topic.sh`. Per-job,
+      between-job, pipeline, write, source and end-to-end latency per record, `--strict-order` exits 2,
+      nulls render `n/a`. `make watch TOPIC=<topic>` from the root. 15 tests green, decode tested
+      against the real `schemas/order_book_snapshot.avsc`. See [[kafka-topic-strategy]] § 2026-09-15
+- [ ] **Run it against the real broker once** — nothing has consumed a live topic yet. It needs the
+      `exchange_event_time` schema deployed (`make warmup`, then resubmit the jobs) before `source`
+      and `end-to-end` show anything but `n/a`. ⚠ This is now the ONLY topic watcher in the repo
+- [x] **`scripts/watch-topic.sh` DELETED** (2026-09-15, user instruction). I had wanted to keep it
+      until the Go tool ran live; the user decided otherwise. `git show feat/latency-monitor~1:scripts/watch-topic.sh`
+      if it is ever wanted back
+- [x] **Between-job delay is the adjacent gap only** (`wait` column). A full out→in matrix was built
+      at the user's choice and then removed at the user's request once they saw it rendered
+- [x] **Endpoints configurable via `.env`** (2026-09-15): `KAFKA_BOOTSTRAP` + `SCHEMA_REGISTRY_URL`,
+      the same names and machinery as `warmup/`. `.env.example` committed, `.env` gitignored and
+      created by `make run`
+- [ ] Decide whether this should also aggregate (p50/p95 over a window) rather than print every
+      record. Right now it is one block per record, which floods on a busy topic
