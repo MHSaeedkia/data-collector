@@ -1314,3 +1314,20 @@ the dated § in `memory/project_pair_extractor.md`.
 - [x] **Broker `LogAppendTime`** (user decision): `KAFKA_LOG_MESSAGE_TIMESTAMP_TYPE: LogAppendTime` in `docker-compose.yml` + `docker-compose.prod.yml`, so each Flink hop's output gets its own append time instead of job 1's inherited CreateTime. The Java per-sink wrapper was tried and reverted. `event_time` untouched. See [[kafka-topic-strategy]] § 2026-09-14
 - [ ] **Deploy and verify**: recreate the kafka container, check `log.message.timestamp.type` with `kafka-configs --describe --all`, then run `scripts/watch-topic.sh p1-asks-adjusted` and check the timestamp ≈ wall clock. (`watch-topic.sh` already parses the `LogAppendTime:` label, fixed same day)
 - [ ] Staleness exporter now sees append recency, not upstream lag. Decide whether a lag signal is needed
+
+## exchange_event_time — step 1 of the lag service (2026-09-15)
+
+- [x] **Field added on branch `feat/exchange-event-time`** (NOT committed, NOT deployed): nullable
+      `exchange_event_time` on `raw_order_book_event`, `order_book_snapshot` and the inlined event in
+      `rejected_order_book_event`; set by the 9 job-1 parsers (null for ex3/wallex, ex4/ramzinex and
+      ex7/ompfinex updates — those wires carry no clock), inherited by job 2's gap reset, left null by
+      its silence reset, carried onto the snapshot by job 5. 30 files. Java 262 tests green (+22),
+      e2e + orderbook-viewer green. See [[avro-schema]] § 2026-09-15
+- [ ] **Decide how far it should travel.** Jobs 6/7/8 (`aggregated`/`merged`/`adjusted`) do NOT have
+      it. Job 6 unions many exchanges, so it needs a rule first — oldest, or the triggering book — and
+      those three shapes are the frozen web contract
+- [ ] **Deploy order matters**: `make warmup` re-registers the schemas, and it must run BEFORE the
+      jobs are resubmitted or the Avro sink throws on its cached write schema
+- [ ] **Then build the lag service itself** — the thing this field was added for
+- [ ] ⚠ **ex7/ompfinex still has no captured fixture**, so it is the one exchange whose two shapes
+      (snapshot carries a clock, update does not) are not covered by a parser test

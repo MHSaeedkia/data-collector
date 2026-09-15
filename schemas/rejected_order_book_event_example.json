@@ -9,6 +9,7 @@
 		"sequence_id": 126776820,
 		"sequence_jump": 1,
 		"event_time": "2026-07-14T06:23:26.456Z",
+		"exchange_event_time": null,
 		"asks": [
 			{ "price": "62775.5", "quantity": "0.031418" }
 		],

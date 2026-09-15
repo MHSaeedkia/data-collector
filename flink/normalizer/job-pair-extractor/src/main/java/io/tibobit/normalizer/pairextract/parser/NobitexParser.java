@@ -54,6 +54,7 @@ public class NobitexParser implements RawExchangeParser {
                 null, 0L, root.get("lastUpdate").asLong(),
                 Levels.fromStringPairs(root.get("asks")),
                 Levels.fromStringPairs(root.get("bids")));
+        event.setExchangeEventTime(event.getEventTime());
         event.setSimulation(Json.simulation(root));
         event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(root.get("pair").asText(), event));
@@ -75,6 +76,7 @@ public class NobitexParser implements RawExchangeParser {
                 data.get("lastUpdate").asLong(),
                 Levels.fromStringPairs(data.get("asks")),
                 Levels.fromStringPairs(data.get("bids")));
+        event.setExchangeEventTime(event.getEventTime());
         event.setSimulation(Json.simulation(root));
         event.setSourceIds(Json.sourceIds(root));
         return List.of(new ParsedBookEvent(market, event));

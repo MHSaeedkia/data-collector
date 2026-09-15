@@ -111,6 +111,7 @@ public class OkxParser implements RawExchangeParser {
                     null, 0L, Long.parseLong(book.get("ts").asText()),
                     book.has("asks") ? Levels.fromStringPairs(book.get("asks")) : null,
                     book.has("bids") ? Levels.fromStringPairs(book.get("bids")) : null);
+            event.setExchangeEventTime(event.getEventTime());
             event.setSimulation(Json.simulation(root));
             event.setSourceIds(Json.sourceIds(root));
             events.add(new ParsedBookEvent(market, event));
@@ -144,6 +145,7 @@ public class OkxParser implements RawExchangeParser {
                     seqId, jump, Long.parseLong(book.get("ts").asText()),
                     book.has("asks") ? Levels.fromStringPairs(book.get("asks")) : null,
                     book.has("bids") ? Levels.fromStringPairs(book.get("bids")) : null);
+            event.setExchangeEventTime(event.getEventTime());
             event.setSimulation(Json.simulation(root));
             event.setSourceIds(Json.sourceIds(root));
             events.add(new ParsedBookEvent(market, event));

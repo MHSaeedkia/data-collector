@@ -26,6 +26,17 @@ type OrderbookSnapshot struct {
 	ID        string `json:"id" swaggerignore:"true"`
 	TriggerID string `json:"trigger_id" swaggerignore:"true"`
 	EventTime string `json:"event_time"`
+	// ExchangeEventTime is the exchange's OWN clock, carried from the triggering
+	// job-4 event, or "" when that feed sends no clock at all — ex3/wallex and
+	// ex4/ramzinex never do, and ex7/ompfinex sends one on snapshots but not on
+	// updates. In those cases EventTime above is job 1's processing time, which
+	// is exactly what this field exists to tell apart.
+	//
+	// No scenario declares it. What is assertable is the RULE rather than a
+	// value (see scenario/exchange_clock.go), so it is checked on its own terms
+	// and then cleared before the literal comparison, like the lineage ids.
+	// swaggerignore for the same reason as those.
+	ExchangeEventTime string `json:"exchange_event_time" swaggerignore:"true"`
 	// LastSequenceID is the event's sequence_id passed through, null for feeds
 	// with no ordering field (ex3). Mirrored so this struct matches the schema
 	// field for field, but the harness does NOT read it: the snapshot stream is

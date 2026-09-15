@@ -167,20 +167,33 @@ func decodeSnapshot(registryURL string, value []byte) (events.OrderbookSnapshot,
 		EventTime  int64               `json:"event_time"`
 		Asks       []events.PriceLevel `json:"asks"`
 		Bids       []events.PriceLevel `json:"bids"`
+		// exchange_event_time is nullable, so goavro wraps the set case in its
+		// union branch name — "long.timestamp-millis", the branch's FULL name,
+		// not "long". A null decodes to a nil pointer, which is the state that
+		// carries meaning here: that feed sends no clock of its own.
+		ExchangeEventTime *struct {
+			Millis int64 `json:"long.timestamp-millis"`
+		} `json:"exchange_event_time"`
 	}
 	if err := json.Unmarshal(text, &wire); err != nil {
 		return events.OrderbookSnapshot{}, fmt.Errorf("decode snapshot: %w", err)
 	}
 
+	exchangeEventTime := ""
+	if wire.ExchangeEventTime != nil {
+		exchangeEventTime = time.UnixMilli(wire.ExchangeEventTime.Millis).UTC().Format(time.RFC3339)
+	}
+
 	return events.OrderbookSnapshot{
-		ExchangeID: wire.ExchangeID,
-		PairID:     wire.PairID,
-		Simulation: wire.Simulation,
-		ID:         wire.ID,
-		TriggerID:  wire.TriggerID,
-		EventTime:  time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
-		Asks:       wire.Asks,
-		Bids:       wire.Bids,
+		ExchangeID:        wire.ExchangeID,
+		PairID:            wire.PairID,
+		Simulation:        wire.Simulation,
+		ID:                wire.ID,
+		TriggerID:         wire.TriggerID,
+		EventTime:         time.UnixMilli(wire.EventTime).UTC().Format(time.RFC3339),
+		ExchangeEventTime: exchangeEventTime,
+		Asks:              wire.Asks,
+		Bids:              wire.Bids,
 	}, nil
 }
 

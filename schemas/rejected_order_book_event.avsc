@@ -60,6 +60,18 @@
 						}
 					},
 					{
+						"name": "exchange_event_time",
+						"type": [
+							"null",
+							{
+								"type": "long",
+								"logicalType": "timestamp-millis"
+							}
+						],
+						"default": null,
+						"doc": "The exchange's OWN clock, straight off the wire, or null when the exchange does not send one. Unlike event_time it is never substituted: ex3/wallex and ex4/ramzinex carry no timestamp at all, and ex7/ompfinex sends one on snapshots but not on updates, so those are null here while event_time holds job 1's processing time. Null therefore means 'this feed cannot answer when it happened', which is the point — it is what makes an exchange-to-here lag measurement honest. Set once by job 1 and never rewritten."
+					},
+					{
 						"name": "asks",
 						"type": [
 							"null",

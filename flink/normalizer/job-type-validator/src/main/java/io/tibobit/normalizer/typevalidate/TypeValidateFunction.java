@@ -639,13 +639,16 @@ public class TypeValidateFunction
      * watch-list row, because no event triggered it.
      *
      * <p>
-     * Three fields cannot be inherited and are set deliberately:
+     * Four fields cannot be inherited and are set deliberately:
      *
      * <ul>
      * <li>{@code event_time} is processing time. There is no event to take one
      * from, and it is the honest answer to "when did we conclude this": now.
      * ex3/ex4 already stamp processing time as event time, so downstream is not
      * seeing a new kind of value.</li>
+     * <li>{@code exchange_event_time} stays NULL, for the same reason inverted:
+     * no exchange produced this record, so there is no exchange clock to name.
+     * A lag measurement must skip it rather than read the line above as one.</li>
      * <li>{@code source_ids} is EMPTY, never {@code [""]}. Nothing caused this
      * record except the passage of time, and a blank string parent is an
      * untraceable id that satisfies every "is the field set" check while
@@ -845,6 +848,7 @@ public class TypeValidateFunction
         RawOrderBookEvent reset = new RawOrderBookEvent(
                 gap.getExchangeId(), gap.getPairId(), RESET, null, 0L, gap.getEventTime(),
                 null, null);
+        reset.setExchangeEventTime(gap.getExchangeEventTime());
         reset.setSimulation(gap.getSimulation());
         reset.setSourceIds(List.of(gap.getId()));
         reset.setId(Lineage.newId());

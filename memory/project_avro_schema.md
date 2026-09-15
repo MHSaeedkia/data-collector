@@ -212,3 +212,43 @@ build on the server: see the 2026-09-12 section of [[project_flink_deploy_toolin
 Registry now trimmed, all 8 jobs running on `9a4c970`. The standing "re-register both subjects"
 todo is **closed for dev**. ⚠ Prod has not been done; when it is, obey the order — **deploy all 8
 jobs first (with a `mvn clean`), register second.**
+
+## 2026-09-15 — `exchange_event_time` (branch `feat/exchange-event-time`, NOT merged, NOT deployed)
+
+Nullable `["null", long timestamp-millis]`, `default: null`, sitting right after `event_time` in
+`raw_order_book_event` (jobs 1–4), `order_book_snapshot` (job 5) and the inlined event in
+`rejected_order_book_event` — the same three carriers as `pipeline_timings`, and the mid-record
+position the `simulation` addition already established. The web trio (`aggregated`/`merged`/
+`adjusted`) deliberately does NOT get it: job 6 unions many exchanges, so "the" exchange clock of an
+aggregated record has no single answer, and that shape is frozen. **That choice is still open.**
+
+**Why it exists.** `event_time` is a half-truth and always was: job 1 fills it from the wire for
+ex1/2/5/6/8/9, but ex3/wallex and ex4/ramzinex send no timestamp at all and ex7/ompfinex sends one on
+snapshots and none on updates, so for those job 1 substitutes `System.currentTimeMillis()`. The
+substitute is indistinguishable from a real exchange clock, so any exchange→here lag measured off
+`event_time` reads ~0 for exactly the feeds you most want to measure. The new field is **never
+substituted**: null means "this feed cannot answer when it happened". The user asked for this as step
+1 of a lag-measuring service.
+
+**The rule, in one line:** job 1 sets both fields from the same wire number, or sets only
+`event_time`. So a non-null `exchange_event_time` always EQUALS `event_time`, and the pair differing
+means one of them was computed.
+
+**Why not just null out `event_time` for those three** (the user's first idea, investigated and
+rejected): it is a required non-null `long` in 4 schemas and a Java primitive in 4 models, and worse,
+**job 2's `out_of_order` guard for null-sequence feeds orders by `event_time` alone** — ex3 sends no
+sequence id either, so nulling it would let an old wallex book silently overwrite a newer one. See
+[[type-validator]].
+
+Carried by: parsers (set beside the existing `setSimulation` call, one line each), job 2's GAP reset
+(inherits from the gap event) and its SILENCE reset (stays null — nothing produced it, and the
+javadoc's "three fields cannot be inherited" is now four), job 5 onto the snapshot (describes the
+TRIGGER, not the resting levels). Jobs 3/4 mutate the event in place so they carry it for free.
+
+⚠ **Deploy needs `make warmup` (re-registers every `schemas/*.avsc`) BEFORE the jobs are resubmitted**
+— the Avro serializer caches the write schema on first use, the same trap `reason` and `simulation`
+hit. Nothing is deployed or run live yet.
+
+Not affected, verified rather than assumed: `orderbook-viewer` reads `order_book_snapshot` but hamba
+skips schema fields with no struct counterpart — its test mirror now carries the field on the wire,
+so that skip is proven, not hoped for. `warmup` registers the whole directory, so it needs no edit.

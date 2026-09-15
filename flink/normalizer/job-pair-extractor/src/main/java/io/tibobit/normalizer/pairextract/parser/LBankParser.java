@@ -70,6 +70,7 @@ public class LBankParser implements RawExchangeParser {
                 Levels.fromStringPairs(depth.get("bids"))
         );
 
+        event.setExchangeEventTime(event.getEventTime());
         event.setSimulation(Json.simulation(root));
         event.setSourceIds(Json.sourceIds(root));
 

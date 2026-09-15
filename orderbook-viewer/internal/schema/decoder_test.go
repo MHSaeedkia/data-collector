@@ -83,9 +83,9 @@ type fullMerged struct {
 
 // orderBookSnapshotSchema mirrors schemas/order_book_snapshot.avsc — job
 // 5's per-exchange book, both sides in one record. Kept complete
-// (trigger_id, last_sequence_id, pipeline_timings included) because the
-// decoder deliberately has no struct fields for those, and skipping them
-// correctly is part of what these tests check.
+// (trigger_id, exchange_event_time, last_sequence_id, pipeline_timings
+// included) because the decoder deliberately has no struct fields for
+// those, and skipping them correctly is part of what these tests check.
 const orderBookSnapshotSchema = `{
 	"type": "record",
 	"name": "OrderBookSnapshot",
@@ -97,6 +97,7 @@ const orderBookSnapshotSchema = `{
 		{"name": "id", "type": "string", "default": ""},
 		{"name": "trigger_id", "type": "string", "default": ""},
 		{"name": "event_time", "type": {"type": "long", "logicalType": "timestamp-millis"}},
+		{"name": "exchange_event_time", "type": ["null", {"type": "long", "logicalType": "timestamp-millis"}], "default": null},
 		{"name": "last_sequence_id", "type": ["null", "long"], "default": null},
 		{"name": "asks", "type": {"type": "array", "items": {
 			"type": "record",
@@ -127,6 +128,7 @@ type fullSnapshot struct {
 	ID             string          `avro:"id"`
 	TriggerID      string          `avro:"trigger_id"`
 	EventTime      time.Time       `avro:"event_time"`
+	ExchangeClock  *time.Time      `avro:"exchange_event_time"`
 	LastSequenceID *int64          `avro:"last_sequence_id"`
 	Asks           []wireSnapLevel `avro:"asks"`
 	Bids           []wireSnapLevel `avro:"bids"`
@@ -298,6 +300,7 @@ func TestDecoder_Decode_SnapshotSplitsIntoBothSides(t *testing.T) {
 
 	seq := int64(4242)
 	built := time.UnixMilli(1_700_000_000_500).UTC()
+	exchangeClock := time.UnixMilli(1_699_999_999_800).UTC()
 	value := wireMessage(t, 9, orderBookSnapshotSchema, fullSnapshot{
 		ExchangeID:     8,
 		PairID:         1,
@@ -305,6 +308,7 @@ func TestDecoder_Decode_SnapshotSplitsIntoBothSides(t *testing.T) {
 		ID:             "55555555-5555-4555-8555-555555555555",
 		TriggerID:      "44444444-4444-4444-8444-444444444444",
 		EventTime:      time.UnixMilli(1_700_000_000_000).UTC(),
+		ExchangeClock:  &exchangeClock,
 		LastSequenceID: &seq,
 		Asks: []wireSnapLevel{
 			{Price: "97240.50", Quantity: "0.42", SourceID: "event-a"},
