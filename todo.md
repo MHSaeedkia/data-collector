@@ -1363,3 +1363,7 @@ the dated § in `memory/project_pair_extractor.md`.
       has nothing to resolve from. Fixed with `"aliases": ["event_time"]` on `max_event_time` in all
       three schemas; verified against the real Avro compatibility checker. See [[avro-schema]]
 - [ ] **Re-run `make warmup` on the server**, then resubmit the jobs. Nothing else changed
+- [x] **End-to-end on every topic** (2026-09-15, user request): `Render` no longer returns early on a
+      record without `pipeline_timings`, so `end-to-end` always prints; `p{id}-{side}` records add a
+      `stalest` line (kafka − `min_event_time`). User chose stalest-only over freshest+stalest and
+      over keeping it exchange-clock-only. 17 tests green; not run live
