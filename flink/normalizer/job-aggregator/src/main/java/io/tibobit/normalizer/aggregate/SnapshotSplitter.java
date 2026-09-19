@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Splits each job-5 {@link OrderBookSnapshot} into two per-side {@link ExchangeBook}s (asks, bids)
+ * Splits each job-6 {@link OrderBookSnapshot} into two per-side {@link ExchangeBook}s (asks, bids)
  * so the ported {@link CrossExchangeAggregator} (keyed {@code (pair_id, side)}) can be reused
  * near-verbatim. Each level is stamped with the snapshot's {@code exchange_id}, its
  * {@code simulation} flag and its {@code id} (as the level's {@code source_id}) — the union
@@ -19,14 +19,14 @@ import java.util.List;
  * already knows where it came from.
  *
  * <p><b>The snapshot's own per-level {@code source_id} is deliberately NOT copied through</b>, even
- * though it would shorten a trace by one hop. It names a job-4 event, which this record never read;
- * stamping it here would make the aggregated record point straight past job 5 at a record it has no
- * relationship with, and the job-5 hop would then appear nowhere in the lineage at all. A level
+ * though it would shorten a trace by one hop. It names a job-5 event, which this record never read;
+ * stamping it here would make the aggregated record point straight past job 6 at a record it has no
+ * relationship with, and the job-6 hop would then appear nowhere in the lineage at all. A level
  * names the snapshot; the snapshot's level of the same price names the event. Each hop, one step.
  *
- * <p>An emitted book always carries both sides; on job 5's reset both sides are empty, which
+ * <p>An emitted book always carries both sides; on job 6's reset both sides are empty, which
  * produces two empty ExchangeBooks and drops that exchange from the union. A null side (defensive —
- * job 5 emits both) is treated as empty.
+ * job 6 emits both) is treated as empty.
  */
 public class SnapshotSplitter implements FlatMapFunction<OrderBookSnapshot, ExchangeBook> {
 

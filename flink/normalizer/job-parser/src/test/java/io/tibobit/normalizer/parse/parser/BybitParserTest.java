@@ -63,7 +63,7 @@ class BybitParserTest {
     /**
      * Given a delta whose unchanged side is a present-but-EMPTY array (the shape the live feed
      * actually sends, e.g. {@code "b": []}), When parsed, Then that side is an empty list rather
-     * than null — a real report of "nothing changed here". It is job 5 that makes this harmless:
+     * than null — a real report of "nothing changed here". It is job 6 that makes this harmless:
      * it clears a side only on a snapshot, so an empty array on an UPDATE merges nothing.
      */
     @Test
@@ -84,7 +84,7 @@ class BybitParserTest {
     /**
      * Given the captured REST depth snapshot, When parsed, Then the book comes off {@code result},
      * the market off {@code result.s}, the event time off {@code result.cts} — and the sequence id
-     * is NULL with jump 0, so job 2 takes the baselinePending path.
+     * is NULL with jump 0, so job 3 takes the baselinePending path.
      */
     @Test
     @DisplayName("parses the captured REST snapshot as null-seq")
@@ -162,9 +162,9 @@ class BybitParserTest {
 
     /**
      * Given a WS snapshot whose {@code u} is 1 — bybit's documented service-restart frame —
-     * When parsed, Then it is NULL-seq with jump 0 so job 2 re-anchors it through
+     * When parsed, Then it is NULL-seq with jump 0 so job 3 re-anchors it through
      * baselinePending instead of ordering 1 against the running counter, AND it keeps its
-     * levels and its snapshot type so job 5 overwrites the book rather than emptying it.
+     * levels and its snapshot type so job 6 overwrites the book rather than emptying it.
      */
     @Test
     @DisplayName("u == 1 is the service restart: null-seq, but still a full snapshot")

@@ -9,7 +9,7 @@ import (
 // The exchange clock in the e2e harness.
 //
 // `exchange_event_time` is the exchange's OWN timestamp, taken straight off the
-// wire by job 1 and then carried untouched to job 5. `event_time` next to it is
+// wire by job 1 and then carried untouched to job 6. `event_time` next to it is
 // NOT the same thing: where a feed sends no clock, job 1 substitutes its own
 // processing time there, and only the null in this field says so.
 //
@@ -45,7 +45,7 @@ const ompfinexExchangeID = 7
 // snapshots. It runs BEFORE IgnoreEventTime blanks anything, so the equality
 // rule still has an event_time to compare against.
 //
-// One assumption: no snapshot here was produced by job 2's SILENCE reset, which
+// One assumption: no snapshot here was produced by job 3's SILENCE reset, which
 // carries event_time = now with a null exchange clock and would trip the
 // "a feed with a clock must carry one" rule. That holds because the suite's runs
 // finish well inside `staleness_threshold_seconds` (60 in 02_seed.sql) — see the

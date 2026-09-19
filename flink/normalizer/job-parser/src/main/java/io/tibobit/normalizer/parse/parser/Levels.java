@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * Level-array extraction shared by the parsers. Wire order is preserved as-is (including
- * ramzinex's descending sells) — sorting is job 5's concern, not job 1's. Malformed levels
+ * ramzinex's descending sells) — sorting is job 6's concern, not job 1's. Malformed levels
  * throw, so the caller drops the whole frame (accuracy-first: never emit a partial book).
  */
 final class Levels {

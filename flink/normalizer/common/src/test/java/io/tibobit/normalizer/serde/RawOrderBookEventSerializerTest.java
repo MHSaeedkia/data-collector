@@ -141,7 +141,7 @@ class RawOrderBookEventSerializerTest {
     }
 
     /**
-     * Given an event stamped by job 1 only, When mapped, Then pipeline_timings lands as a nested
+     * Given an event stamped by job 2 only, When mapped, Then pipeline_timings lands as a nested
      * record with the pair-extract fields set and every unreached stage left null — the schema
      * names all stages up front so null unambiguously means "not yet reached".
      */

@@ -11,7 +11,7 @@ import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroSer
 /**
  * Encodes an {@link OrderBookSnapshot} to Confluent-wire-format Avro bytes (schema
  * schemas/order_book_snapshot.avsc, subject {@code order-book-snapshot}) — the value shape of
- * the job-5 output topics. The write schema is fetched from the Schema Registry at first use —
+ * the job-6 output topics. The write schema is fetched from the Schema Registry at first use —
  * never from a local/bundled copy.
  */
 public class OrderBookSnapshotSerializer implements SerializationSchema<OrderBookSnapshot> {

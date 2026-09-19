@@ -8,7 +8,7 @@ package domain
 // and these constants are what keeps the browser, the hub and the
 // registry talking about the same three things.
 const (
-	// AggregatedExchangeID is job 6's union: every exchange's levels side
+	// AggregatedExchangeID is job 7's union: every exchange's levels side
 	// by side, each level keeping its own exchange.
 	AggregatedExchangeID = 0
 	// MergedExchangeID is the price merger's summed view: one level per
@@ -42,15 +42,15 @@ func ValidLevelLimit(n int) bool {
 // RawLevel/RawBook are a book as produced by the Flink jobs
 // (identity only: pair_id / exchange_id, no display fields).
 //
-// Three producers land in this shape. Job 6 (the aggregator) writes
+// Three producers land in this shape. Job 7 (the aggregator) writes
 // p{pair_id}-{side}: one record per side, unioned across exchanges, so
-// exchange_id and simulation are per LEVEL. Job 5 (the book builder)
+// exchange_id and simulation are per LEVEL. Job 6 (the book builder)
 // writes ex{id}-p{id}-orderbook-snapshot-flink: one record holding BOTH
 // sides for a single exchange, so exchange_id and simulation are per
-// RECORD. The decoder splits a job-5 record into two RawBooks and copies
+// RECORD. The decoder splits a job-6 record into two RawBooks and copies
 // the record-level exchange/simulation onto every level, so everything
 // downstream of it sees one shape. The merger writes p{pair_id}-{side}-merged:
-// one record per side like job 6, but with the quantities at each price
+// one record per side like job 7, but with the quantities at each price
 // summed, so a level names a LIST of exchanges instead of one.
 
 type RawLevel struct {
@@ -60,9 +60,9 @@ type RawLevel struct {
 	// 0 = live data, 1 = simulation data.
 	Simulation int `json:"simulation"`
 	// SourceID is per level for the same reason Simulation is: it is the
-	// id of the job-5 snapshot this level came from, and one book's
+	// id of the job-6 snapshot this level came from, and one book's
 	// levels come from several snapshots. On a per-exchange book it is
-	// instead the job-4 event that last set the level (job 5's own
+	// instead the job-5 event that last set the level (job 6's own
 	// per-level lineage) — one hop further up, same meaning.
 	SourceID string `json:"source_id"`
 	// ExchangeIDs/SourceIDs replace the two scalars above on a MERGED
@@ -157,7 +157,7 @@ func (b Book) Limit(n int) Book {
 }
 
 // Key identifies the one book a producer keeps overwriting. Derived from
-// the content rather than the Kafka topic because a job-5 record carries
+// the content rather than the Kafka topic because a job-6 record carries
 // two sides on one topic — and because topic strings stay opaque to
 // everything past the consumer.
 func (b Book) Key() Selection {

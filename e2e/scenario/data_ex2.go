@@ -9,7 +9,7 @@ import "orderbook-e2e/events"
 
 // Ex2WsSnapshotsReplaceWholesale — REVISED 2026-09-02: WS pushes are full snapshots, not deltas
 // (see BitpinParser's javadoc), same shape as ex1's equivalent. Each WS push REPLACES the book
-// wholesale, and job 2 never checks the gap between WS offsets, so 05's jump from offset 1001 to
+// wholesale, and job 3 never checks the gap between WS offsets, so 05's jump from offset 1001 to
 // 9000 is silently accepted. Used to be named Ex2RestThenWsResync and tested the opposite (delta)
 // assumption's REST-resync bootstrap, which no longer applies.
 var Ex2WsSnapshotsReplaceWholesale = Scenario{
@@ -398,10 +398,10 @@ var Ex2WsSnapshotAloneEstablishesBaseline = Scenario{
 }
 
 // Ex2WsGapAcceptedStaleRejected — REVISED 2026-09-02: same shape as ex1's equivalent, under
-// bitpin's two-typed event_time. A WS push is a snapshot, so job 2 never jump-checks it — 04's
+// bitpin's two-typed event_time. A WS push is a snapshot, so job 3 never jump-checks it — 04's
 // offset skip (1001 -> 1005) is silently ACCEPTED. The seq<=last guard still applies to a sequenced
 // snapshot though: 05 arrives with offset 1002, behind the already-accepted 1005, so it is rejected
-// stale_or_duplicate. No reset, no snapshot_request — that machinery lives in job 2's "update"
+// stale_or_duplicate. No reset, no snapshot_request — that machinery lives in job 3's "update"
 // branch, which this exchange no longer uses. Used to be named Ex2SequenceGap.
 var Ex2WsGapAcceptedStaleRejected = Scenario{
 	ExchangeID: 2,
@@ -1066,10 +1066,10 @@ var Ex2StaleRestReplay = Scenario{
 	},
 }
 
-// Ex2PrecisionDust — job 4 on a bitpin feed, the same two rules as ex1: prices colliding at the
+// Ex2PrecisionDust — job 5 on a bitpin feed, the same two rules as ex1: prices colliding at the
 // market's 2 places merge with their quantities summed, and a quantity under 8 places truncates
 // to zero and deletes. Rebase cannot be asserted on ex2 — every bitpin row in the seed is 0/0,
-// so job 3 is the identity here; the rebase cases live on ex1, whose seed has real exponents. The
+// so job 4 is the identity here; the rebase cases live on ex1, whose seed has real exponents. The
 // WS frame is a snapshot (2026-09-02): it REPLACES the book wholesale, so the 62699.99 bid that
 // 02's payload never re-sends is gone, not merely left untouched.
 var Ex2PrecisionDust = Scenario{

@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests {@link RejectedOrderBookEventSerializer#toGenericRecord} against
- * schemas/rejected_order_book_event.avsc (job-2 dead-letter). The nested event record is built
+ * schemas/rejected_order_book_event.avsc (job-3 dead-letter). The nested event record is built
  * by {@link RawOrderBookEventSerializer#toGenericRecord} against the INLINE RawOrderBookEvent
  * definition inside this schema — this test is what breaks first if the two copies of that
  * definition ever drift apart (they must stay field-for-field identical).

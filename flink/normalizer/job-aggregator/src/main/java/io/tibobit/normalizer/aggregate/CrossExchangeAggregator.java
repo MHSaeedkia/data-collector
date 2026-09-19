@@ -29,11 +29,11 @@ import java.util.Map;
  * </ul>
  * {@code max_event_time} on the output = newest across every stored book; {@code min_event_time} =
  * oldest across the books that CONTRIBUTED LEVELS, null when none did. An empty
- * ExchangeBook (job 5's reset ⇒ empty book) replaces the exchange's entry and contributes no
+ * ExchangeBook (job 6's reset ⇒ empty book) replaces the exchange's entry and contributes no
  * levels, so that exchange drops out of the aggregated book.
  *
  * <p>The sort direction is chosen per record from {@code side} (not the constructor) because one
- * operator instance serves both asks and bids keys. Fed job 5's full per-exchange books directly,
+ * operator instance serves both asks and bids keys. Fed job 6's full per-exchange books directly,
  * keyed by (pair_id, side).
  */
 public class CrossExchangeAggregator

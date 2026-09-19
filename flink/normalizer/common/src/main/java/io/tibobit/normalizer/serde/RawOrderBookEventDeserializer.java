@@ -13,7 +13,7 @@ import java.io.IOException;
 /**
  * Decodes Confluent-wire-format Avro bytes (schema schemas/raw_order_book_event.avsc, subject
  * {@code raw-order-book-event}) into a {@link RawOrderBookEvent} — the value shape of every
- * job 2–5 input topic. The reader schema is fetched from the Schema Registry at first use —
+ * job 3–6 input topic. The reader schema is fetched from the Schema Registry at first use —
  * never from a local/bundled copy.
  */
 public class RawOrderBookEventDeserializer implements DeserializationSchema<RawOrderBookEvent> {

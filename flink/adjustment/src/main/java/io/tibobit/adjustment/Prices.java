@@ -39,7 +39,7 @@ final class Prices {
      * Applies one stage's percentage to every level, in place — looked up PER
      * LEVEL rather than shared by the whole record, since all three rates
      * (commission, profit, slippage) are keyed by
-     * {@code (exchange_id, market_id)} and one book is job 6's UNION across
+     * {@code (exchange_id, market_id)} and one book is job 7's UNION across
      * exchanges. Two levels in the same book can get two different rates from
      * two different exchanges.
      *
@@ -64,7 +64,7 @@ final class Prices {
      * chain.
      *
      * <p>
-     * Nothing is rounded to the market's tick size. Job 4 already applied
+     * Nothing is rounded to the market's tick size. Job 5 already applied
      * {@code markets.price_precision} upstream and this pushes past it — but
      * re-truncating needs the per-market precision this job does not read, and
      * picking a rounding direction is a decision with money in it. Left exact

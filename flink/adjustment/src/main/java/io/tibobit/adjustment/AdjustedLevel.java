@@ -16,7 +16,7 @@ package io.tibobit.adjustment;
  * <p>{@code ourProfitPercent}/{@code slippagePercent}/{@code buySellCommissionPercent} all live
  * HERE, per level, not on {@code AdjustedOrderBook} — all three are looked up per
  * {@code (exchange_id, market_id)} (2026-08-25 for profit/slippage, 2026-08-25 for commission too),
- * so two levels in the same book can carry three different rates. A book is job 6's UNION across
+ * so two levels in the same book can carry three different rates. A book is job 7's UNION across
  * exchanges, which is why a record-wide rate was never correct for any of the three. Default
  * {@code "0"} until the owning stage sets it, mirroring how the record-level rate fields used to
  * default before step 3 ran.

@@ -88,7 +88,7 @@ class BitgetParserTest {
      * <p>Note the SIZE of the step: 11,122 across 351 ms of wall clock. {@code seq} is a fast
      * underlying book counter that these snapshots are sampled from, which is exactly why
      * {@code sequenceJump} must be 0. No jump rule could fit a step that big and that variable
-     * (2816 … 11122 over the 5-frame capture), and job 2 never applies one to a snapshot anyway.
+     * (2816 … 11122 over the 5-frame capture), and job 3 never applies one to a snapshot anyway.
      */
     @Test
     @DisplayName("two consecutive live captures move seq forward, by far more than 1")

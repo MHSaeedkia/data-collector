@@ -24,7 +24,7 @@ import io.tibobit.normalizer.serde.RawOrderBookEventSerializer;
 import io.tibobit.normalizer.serde.RejectedOrderBookEventSerializer;
 
 /**
- * Job 2 entry point: type validation.
+ * Job 3 entry point: type validation.
  *
  * Pipeline: Kafka input ex{id}-p{id}-raw-flink (RawOrderBookEvent, subject
  * raw-order-book-event) -> source (regex) -> keyBy(exchange_id, pair_id) ->

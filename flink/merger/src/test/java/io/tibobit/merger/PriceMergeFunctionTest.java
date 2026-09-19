@@ -141,7 +141,7 @@ class PriceMergeFunctionTest {
 
     @Test
     void emitsAnEmptyBookWhenEveryExchangeHasDroppedOut() {
-        // Job 6 emits a levels-less record when every exchange has been reset; it stays empty here
+        // Job 7 emits a levels-less record when every exchange has been reset; it stays empty here
         // rather than becoming a gap in the merged topic.
         MergedOrderBook result = merge.map(book("asks"));
 

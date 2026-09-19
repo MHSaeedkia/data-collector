@@ -10,7 +10,7 @@ import java.util.List;
  * ex3 wallex — array envelope {@code ["{market}@{side}", [levels...]]}, full snapshot per SIDE
  * (buyDepth = bids, sellDepth = asks; the other side stays null = "not part of this event").
  * Levels are objects with JSON-NUMBER price/quantity. The ONLY exchange with no ordering field:
- * sequence_id stays null (job 2 passes ex3 through unchecked) and event time is job-1 processing
+ * sequence_id stays null (job 3 passes ex3 through unchecked) and event time is job-1 processing
  * time — nothing on the wire to use. See sample-raw-data.md § ex3.
  *
  * <p><b>NiFi's metadata rides in a THIRD element</b> (user 2026-08-03):

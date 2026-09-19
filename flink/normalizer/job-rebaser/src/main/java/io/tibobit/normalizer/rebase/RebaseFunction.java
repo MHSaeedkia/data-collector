@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Job 3 — rebase. Stateless: every level's price is shifted by {@code price_amount_rebase} and
+ * Job 4 — rebase. Stateless: every level's price is shifted by {@code price_amount_rebase} and
  * every quantity by {@code volume_amount_rebase} powers of ten (exact, {@code scaleByPowerOfTen}
  * — no double anywhere, see memory/project_bigdecimal_rules.md). Exponents come per
  * {@code (exchange_id, pair_id)} from a {@link RefreshingLookup} over exchange_markets.
@@ -26,11 +26,11 @@ import java.util.List;
  * dead-letter with reason {@code no_rebase_row} (user decision 2026-07-18). Passing it through
  * un-rebased would emit silently corrupt prices — orders of magnitude off — with nothing
  * downstream able to tell rebased from un-rebased. In practice the row is near-guaranteed to
- * exist: job 1 resolved this very event's pair_id from the same table, so only a refresh race
+ * exist: job 2 resolved this very event's pair_id from the same table, so only a refresh race
  * (row deleted mid-flight) reaches this branch.
  *
  * <p>A null side is NOT an empty side: ex3 wallex sends one side per message and the other stays
- * null, so null in ⇒ null out. Job 5 is where the two sides finally merge.
+ * null, so null in ⇒ null out. Job 6 is where the two sides finally merge.
  */
 public class RebaseFunction extends ProcessFunction<RawOrderBookEvent, RawOrderBookEvent> {
 

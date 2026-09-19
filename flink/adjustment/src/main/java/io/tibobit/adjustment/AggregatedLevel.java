@@ -1,8 +1,8 @@
 package io.tibobit.adjustment;
 
 /**
- * One level of job 6's aggregated book, subject {@code aggregated-order-book-event}. Carries its
- * own {@code exchangeId} because job 6 unions rather than sums — equal prices from different
+ * One level of job 7's aggregated book, subject {@code aggregated-order-book-event}. Carries its
+ * own {@code exchangeId} because job 7 unions rather than sums — equal prices from different
  * exchanges arrive as separate, adjacent entries.
  *
  * <p>Every field of the schema's {@code AggregatedLevel} is modelled, and that is load-bearing

@@ -14,9 +14,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
 /**
- * Tests {@link SnapshotSplitter}: each job-5 {@link OrderBookSnapshot} becomes exactly two per-side
+ * Tests {@link SnapshotSplitter}: each job-6 {@link OrderBookSnapshot} becomes exactly two per-side
  * {@link ExchangeBook}s (asks, bids), levels stamped with the snapshot's exchange_id, and an empty
- * book (job 5's reset) yields two empty ExchangeBooks so the exchange drops out downstream.
+ * book (job 6's reset) yields two empty ExchangeBooks so the exchange drops out downstream.
  */
 class SnapshotSplitterTest {
 
@@ -102,7 +102,7 @@ class SnapshotSplitterTest {
     }
 
     @Test
-    @DisplayName("a null side (defensive — job 5 emits both) is treated as empty, never NPEs")
+    @DisplayName("a null side (defensive — job 6 emits both) is treated as empty, never NPEs")
     void nullSideTreatedAsEmpty() {
         OrderBookSnapshot snapshot = new OrderBookSnapshot(
                 3, 1, 1_700_000_000_000L, null, levels("100", "1"), null);

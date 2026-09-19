@@ -8,7 +8,7 @@ import java.util.UUID;
  * ({@code source_ids}). Every write to a Kafka topic mints a fresh id, so a record crossing the
  * whole pipeline carries seven different ones — NiFi's, then one per job. {@code source_ids} holds
  * IMMEDIATE parents only, never the accumulated chain: the path is reconstructed by walking hop to
- * hop, which keeps the list at one element everywhere except the genuine fan-in in job 5.
+ * hop, which keeps the list at one element everywhere except the genuine fan-in in job 6.
  *
  * <p>See memory/project_record_lineage.md for the full model and the reasoning behind it.
  */

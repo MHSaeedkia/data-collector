@@ -280,7 +280,7 @@ class AdjustmentFunctionsTest {
     }
 
     /**
-     * An emptied book (job 6's output after a reset) survives the chain and
+     * An emptied book (job 7's output after a reset) survives the chain and
      * stays empty.
      */
     @Test

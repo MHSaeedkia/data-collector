@@ -48,11 +48,11 @@ class LBankParserTest {
 
     /**
      * Given any ex9 frame, When parsed, Then it carries NO sequence id and jump 0 — the wire has
-     * no counter, so job 2 must fall through to its event-time branch. This is the whole reason
+     * no counter, so job 3 must fall through to its event-time branch. This is the whole reason
      * ex9 behaves like ex3 downstream; if it ever gains a sequence, everything below changes.
      */
     @Test
-    @DisplayName("carries no sequence id, so job 2 orders it by event time")
+    @DisplayName("carries no sequence id, so job 3 orders it by event time")
     void hasNoSequence() throws Exception {
         RawOrderBookEvent event = parser.parse(Fixtures.bytes("ex9-snapshot.json")).get(0).getEvent();
 
@@ -96,7 +96,7 @@ class LBankParserTest {
     /**
      * Given a book frame with no {@code TS}, When parsed, Then it is discarded rather than stamped
      * with a substitute clock. ex9's event time IS its ordering field — a frame without one cannot
-     * be placed relative to the book job 2 already holds, so guessing would defeat the guard.
+     * be placed relative to the book job 3 already holds, so guessing would defeat the guard.
      */
     @Test
     @DisplayName("discards a book frame with no TS rather than inventing one")

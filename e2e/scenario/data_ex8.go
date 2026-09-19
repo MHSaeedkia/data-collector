@@ -1,7 +1,7 @@
 // Scenarios for ex8/okx on the `books` channel (`wss://ws.okx.com:8443/ws/v5/public`), which
 // replaced `books-grouped` on 2026-09-05. Every WS frame carries a real chained counter: `seqId`
 // with `prevSeqId` naming its predecessor, so the parser stamps a DYNAMIC jump of
-// `seqId - prevSeqId` and job 2's `seq == lastSeq + jump` reduces to `prevSeqId == lastSeq`.
+// `seqId - prevSeqId` and job 3's `seq == lastSeq + jump` reduces to `prevSeqId == lastSeq`.
 // `ts` is the event time only — it no longer sequences anything, which is why the ts values below
 // still step by 300 while the seqId steps do not.
 // The conventions these follow are in data.go.
@@ -142,7 +142,7 @@ var Ex8UpdateBeforeSnapshot = Scenario{
 		},
 	},
 	WantRejects: []string{"no_baseline"},
-	// The cold delta is also what makes job 2 ask NiFi for a snapshot: it has no
+	// The cold delta is also what makes job 3 ask NiFi for a snapshot: it has no
 	// baseline, and only a snapshot can give it one.
 	WantControlCommands: []events.ControlCommand{
 		{Action: "snapshot_request", Reason: "no_baseline", ExchangeID: 8, PairID: 1, Simulation: 1},
@@ -604,7 +604,7 @@ var Ex8SequenceGap = Scenario{
 	},
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
 	// One command for the episode, not one per rejected event: the second update
-	// rejects on the same unresolved gap, and job 2 does not re-ask.
+	// rejects on the same unresolved gap, and job 3 does not re-ask.
 	WantControlCommands: []events.ControlCommand{
 		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 8, PairID: 1, Simulation: 1},
 	},
@@ -1090,7 +1090,7 @@ var Ex8NoiseFrames = Scenario{
 // response, which NiFi tags `action: "snapshot"` and stamps with the market as a top-level `pair`.
 //
 // This is the regression test for the black hole found on the live dev server: job 1 had no branch
-// for this shape, so `arg.instId` read null and the WHOLE FRAME was discarded. Job 2 therefore
+// for this shape, so `arg.instId` read null and the WHOLE FRAME was discarded. Job 3 therefore
 // never saw a `type == "snapshot"`, `resyncPending` never cleared, and every later update
 // dead-lettered as `awaiting_snapshot` until the job restarted — a `snapshot_request` with no path
 // back to an accepted snapshot.
@@ -1113,7 +1113,7 @@ var Ex8NoiseFrames = Scenario{
 //     update's prevSeqId, because the counter advances between NiFi's fetch and the next WS frame.
 //     Adopting it would break source 06's chain check instead of repairing it.
 //
-// Null-seq is what makes it work. Job 2 orders the body by event time on the resync exemption —
+// Null-seq is what makes it work. Job 3 orders the body by event time on the resync exemption —
 // source 05's `ts` is 50 ms BEHIND source 04's, coming off the REST endpoint's clock rather than
 // the WS one — and then `baselinePending` lets source 06 adopt its own `seqId` as the fresh
 // baseline unconditionally, so the REST body's counter is never compared against a WS one.
@@ -1181,7 +1181,7 @@ var Ex8RestSnapshotResync = Scenario{
 		// adopted.
 		//
 		// Its `ts` is 50 ms BEHIND source 04 — the endpoint's clock, not the WS one. The parser
-		// leaves the sequence id null, so it is never compared against a WS counter and job 2
+		// leaves the sequence id null, so it is never compared against a WS counter and job 3
 		// accepts it on the resync exemption.
 		`{
 	"id": "a304f0d3-8062-48ab-b971-fc638d9f3f79",
@@ -1199,7 +1199,7 @@ var Ex8RestSnapshotResync = Scenario{
 	"pair": "BTC-USDT",
 	"action": "snapshot"
 }`,
-		// 06 first WS update after the REST body. Its prevSeqId (…580) chains to nothing job 2 has
+		// 06 first WS update after the REST body. Its prevSeqId (…580) chains to nothing job 3 has
 		// seen — which is the point: `baselinePending` adopts its seqId as the fresh baseline
 		// unconditionally, so the REST body's counter and the WS one never meet.
 		`{

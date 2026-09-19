@@ -45,8 +45,13 @@ postgres:
 # The dead-letter ex{id}-p{id}-rejected-flink is intentionally not monitored — a silent
 # dead-letter means the pipeline is healthy, so staleness there is the normal state.
 #
-# ex{exchange_id}-raw is one topic per exchange (NiFi publishes verbatim exchange
-# payloads here), not one per subscription, so it stays listed by hand.
+# Two per-exchange families are one topic per exchange rather than one per subscription,
+# so both stay listed by hand:
+#   ex{exchange_id}-raw           NiFi publishes verbatim exchange payloads here
+#   ex{exchange_id}-parsed-flink  job 1's output; the parser resolves no pair, so there
+#                                 is no p{id} segment and no subscription row to derive
+#                                 it from. Without it a dead parser shows up only as
+#                                 every per-pair stage below it going stale at once.
 topics:
   ex1-raw: 30
   ex2-raw: 30
@@ -57,3 +62,12 @@ topics:
   ex7-raw: 30
   ex8-raw: 30
   ex9-raw: 30
+  ex1-parsed-flink: 30
+  ex2-parsed-flink: 30
+  ex3-parsed-flink: 30
+  ex4-parsed-flink: 30
+  ex5-parsed-flink: 30
+  ex6-parsed-flink: 30
+  ex7-parsed-flink: 30
+  ex8-parsed-flink: 30
+  ex9-parsed-flink: 30

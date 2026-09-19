@@ -13,7 +13,7 @@ import java.util.List;
 
 /**
  * Decodes Confluent-wire-format Avro bytes (schema schemas/aggregated_order_book_event.avsc,
- * subject {@code aggregated-order-book-event}) into an {@link AggregatedOrderBook} — job 6's
+ * subject {@code aggregated-order-book-event}) into an {@link AggregatedOrderBook} — job 7's
  * output, this job's input. The reader schema is fetched from the Schema Registry at first use —
  * never from a local/bundled copy.
  */

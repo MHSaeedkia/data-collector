@@ -2,15 +2,15 @@
 
 Live viewer for two families of order book topic produced by the Flink pipeline:
 
-- **aggregated** (job 6) — `p{pair_id}-{side}`, e.g. `p2-asks`, `p2-bids`: the union across
+- **aggregated** (job 7) — `p{pair_id}-{side}`, e.g. `p2-asks`, `p2-bids`: the union across
   every exchange, one record per side.
-- **per-exchange** (job 5) — `ex{exchange_id}-p{pair_id}-orderbook-snapshot-flink`: one
+- **per-exchange** (job 6) — `ex{exchange_id}-p{pair_id}-orderbook-snapshot-flink`: one
   exchange's full book, **both sides in one record**.
 
 A small Go server consumes both, resolves the IDs to human-readable labels from postgres,
 keeps the latest book per (pair, exchange, side), and pushes updates to the browser over
 WebSocket. The page has a pair dropdown and an exchange dropdown: with **All exchanges
-(separated)** selected it renders the job-6 union — every exchange's levels side by side — and
+(separated)** selected it renders the job-7 union — every exchange's levels side by side — and
 picking a specific exchange renders that exchange's own book for the same pair.
 
 ## Run
@@ -66,7 +66,7 @@ module proxy; run `go mod vendor` after changing dependencies.
 - `DEFAULT_PAIR_ID` — the market the pair dropdown opens on, as a `markets.id`. Unset, or an id
   no market has, means the first market in the list
 - `DEFAULT_EXCHANGE_ID` — the exchange dropdown's starting entry, as an `exchanges.id`, or one of
-  the two cross-exchange views: `0` = separated (job 6's union), `-1` = merged. Unset or unknown
+  the two cross-exchange views: `0` = separated (job 7's union), `-1` = merged. Unset or unknown
   means `0`
 - `DEFAULT_LEVEL_LIMIT` — how many levels per side the UI opens on (default `25`). Must be one
   of the depths the dropdown offers — `25`, `50`, `100`, `200` — anything else is logged and

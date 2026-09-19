@@ -11,7 +11,7 @@
 //     counter at all, and `TS` is deliberately NOT re-used as one — a timestamp-as-sequence
 //     imposes a cadence the exchange never promised. (ex5 and ex8 both did it for a while and
 //     both moved back to a real counter; no feed is sequenced by a clock now.) So ex9 runs on
-//     job 2's EVENT-TIME branch, where the whole test is "not older than the last accepted frame".
+//     job 3's EVENT-TIME branch, where the whole test is "not older than the last accepted frame".
 //   - `TS` is an ISO-8601 local date-time with NO zone marker (`"2027-01-15T08:00:00.000"`), read
 //     as UTC. Every other exchange sends epoch millis. That conversion is asserted here rather
 //     than mocked out: unlike ex3, ex9 has a real wire clock, so no scenario sets IgnoreEventTime
@@ -20,12 +20,12 @@
 //   - The market key is `pair`, lowercase with an underscore (`btc_usdt`) — the only exchange
 //     that spells it that way, and nothing in job 1 normalizes case. Ex9NoiseFrames pins that.
 //
-// ex9 can reach exactly one reject reason, `out_of_order`, and NO control command: job 2 only
+// ex9 can reach exactly one reject reason, `out_of_order`, and NO control command: job 3 only
 // asks for a snapshot on `no_baseline` or `sequence_gap`, and both live in the update branch a
 // null-seq feed never enters. An empty WantControlCommands is the assertion that it stays that way.
 //
 // Pair 1 (BTC/USDT) is price_precision 2 / quantity_precision 8, and ex9's rebase is 0/0, so
-// every number that moves in these scenarios moved in job 4 and nowhere else.
+// every number that moves in these scenarios moved in job 5 and nowhere else.
 
 package scenario
 
@@ -280,7 +280,7 @@ var Ex9StaleSnapshotReplay = Scenario{
 				{Price: "79709", Quantity: "2.5"},
 			},
 		},
-		// 03 produced NOTHING — the old book never reached job 5.
+		// 03 produced NOTHING — the old book never reached job 6.
 		{ // after 04
 			ExchangeID: 9,
 			PairID:     1,
@@ -306,7 +306,7 @@ var Ex9StaleSnapshotReplay = Scenario{
 }
 
 // Ex9DuplicateTimestamp — pins the deliberate edge of the ordering guard (user decision
-// 2026-08-26): job 2 compares `event_time < lastEventTime`, STRICTLY older, so frames sharing a
+// 2026-08-26): job 3 compares `event_time < lastEventTime`, STRICTLY older, so frames sharing a
 // `TS` are all accepted and the book follows the last one in. It is written down as a scenario
 // rather than left implicit because it is the one case where "ordered by timestamp" does NOT
 // mean "deduplicated by timestamp" — 03 walks the book back to 01's levels with no rejection
@@ -399,7 +399,7 @@ var Ex9DuplicateTimestamp = Scenario{
 }
 
 // Ex9NoiseFrames — everything that is not a well-formed depth book for a known market is dropped
-// by job 1 without a dead-letter and without touching the book. Two of these are ex9-specific and
+// by jobs 1–2 without a dead-letter and without touching the book. Two of these are ex9-specific and
 // worth the lines: the parser selects frames by SHAPE rather than by the `type` field, so a
 // half-populated book (05) must be dropped WHOLE rather than emitted with one side null; and the
 // market key is case-sensitive all the way to the `"{exchange_id}|{market}"` lookup, so the
@@ -548,12 +548,12 @@ var Ex9NoiseFrames = Scenario{
 	},
 }
 
-// Ex9PrecisionDust — job 4 on an lbank feed: prices that collide once truncated to the market's 2
+// Ex9PrecisionDust — job 5 on an lbank feed: prices that collide once truncated to the market's 2
 // places merge into ONE level with their quantities summed, and a quantity that truncates to zero
-// at the market's 8 places leaves no level behind. The order matters — job 4 truncates the price,
+// at the market's 8 places leaves no level behind. The order matters — job 5 truncates the price,
 // groups, sums the RAW quantities, and only then truncates the sum, which is why the two
 // 0.000000006 asks at 79656.12 survive as 0.00000001 while the lone 0.000000009 at 79655.1 does
-// not. Pair 1 rebases by 10^0, so every number that moves here moved in job 4 and nowhere else.
+// not. Pair 1 rebases by 10^0, so every number that moves here moved in job 5 and nowhere else.
 var Ex9PrecisionDust = Scenario{
 	ExchangeID: 9,
 	PairID:     1,

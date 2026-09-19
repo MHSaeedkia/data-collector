@@ -3,7 +3,7 @@ package io.tibobit.adjustment;
 import java.util.List;
 
 /**
- * One job-6 aggregated record for a pair+side, read off {@code p{pair_id}-{side}} and — as of
+ * One job-7 aggregated record for a pair+side, read off {@code p{pair_id}-{side}} and — as of
  * step 1 — written straight back out to {@code p{pair_id}-{side}-adjusted} unchanged.
  *
  * <p>Levels arrive already sorted (asks ascending / bids descending, ties broken by quantity

@@ -344,9 +344,9 @@ var Ex7SequenceGap = Scenario{
 	},
 }
 
-// Ex7PrecisionDust — job 4 on an ompfinex feed: BTCUSDT (internal pair 1,
+// Ex7PrecisionDust — job 5 on an ompfinex feed: BTCUSDT (internal pair 1,
 // ompfinex market "14") truncates price to 2 places and quantity to 8. Rebase
-// is 0/0, so the numbers that move here moved in job 4 and nowhere else — same
+// is 0/0, so the numbers that move here moved in job 5 and nowhere else — same
 // shape as Ex1PrecisionDust.
 var Ex7PrecisionDust = Scenario{
 	ExchangeID:      7,
@@ -436,7 +436,7 @@ var Ex7PrecisionDust = Scenario{
 }
 
 // Ex7NoBaseline — a WS delta before any REST snapshot has no baseline to apply
-// to. This is what makes job 2 ask NiFi for a snapshot: only a snapshot can
+// to. This is what makes job 3 ask NiFi for a snapshot: only a snapshot can
 // give the pair a baseline.
 var Ex7NoBaseline = Scenario{
 	ExchangeID:      7,
@@ -556,7 +556,7 @@ var Ex7NoBaseline = Scenario{
 // or emitting anything: no "push" at all, a channel outside the r-depth
 // prefix, and an update missing one of its side keys entirely (as opposed to
 // carrying it as an empty array, which IS valid — see Ex7OneSidedUpdate).
-// None of these reach job 2, so none of them dead-letter either.
+// None of these reach job 3, so none of them dead-letter either.
 var Ex7NoiseFrames = Scenario{
 	ExchangeID:      7,
 	PairID:          1,

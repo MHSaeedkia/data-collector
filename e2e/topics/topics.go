@@ -27,7 +27,7 @@ const (
 	controlRetentionMS  = "3600000"   // 1 hour — a stale command has no value once the gap it addressed is resolved
 )
 
-// ControlTopic is the shared control-plane topic job 2 writes snapshot requests
+// ControlTopic is the shared control-plane topic job 3 writes snapshot requests
 // to. Unlike every other topic here it is not per exchange or per pair: one
 // topic carries the commands for every market, and the target is in the record.
 // The harness still recreates it per run, so what a scenario reads back is its
@@ -143,9 +143,9 @@ func plan(exchangeID, pairID int64) []topic {
 		plan = append(plan, topic{prefix + "-" + stage, inputRetentionMS})
 	}
 	return append(plan,
-		// Shared dead-letter for jobs 2 and 3.
+		// Shared dead-letter for jobs 3 and 4.
 		topic{prefix + "-rejected-flink", rejectedRetentionMS},
-		// Control plane — job 2's snapshot requests to NiFi. Shared across every
+		// Control plane — job 3's snapshot requests to NiFi. Shared across every
 		// market rather than per pair, and created here rather than left to the
 		// broker's auto-create so it carries a deliberate retention and so the
 		// previous run's commands are gone before this one starts.

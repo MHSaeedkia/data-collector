@@ -11,7 +11,7 @@ import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroSer
 /**
  * Encodes a {@link RejectedOrderBookEvent} to Confluent-wire-format Avro bytes (schema
  * schemas/rejected_order_book_event.avsc, subject {@code rejected-order-book-event}) — the
- * value shape of the job-2 dead-letter topics. Serializer only: nothing in the pipeline
+ * value shape of the job-3 dead-letter topics. Serializer only: nothing in the pipeline
  * consumes dead-letter topics (they are audit points read via kafka-ui). The nested event
  * record is mapped by {@link RawOrderBookEventSerializer#toGenericRecord} — the inline
  * RawOrderBookEvent definition in this schema is field-for-field identical to

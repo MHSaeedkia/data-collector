@@ -9,8 +9,8 @@ type OrderbookSnapshot struct {
 	// simulation data, other values not yet defined. The book builder stamps
 	// the emitted book with the flag of the event that produced it.
 	Simulation int64 `json:"simulation"`
-	// ID and TriggerID are record lineage: this record's own id, and the job-4
-	// event that caused job 5 to emit it. TriggerID is the record's ONLY
+	// ID and TriggerID are record lineage: this record's own id, and the job-5
+	// event that caused job 6 to emit it. TriggerID is the record's ONLY
 	// record-level parent — the rest of the fan-in is per level, on PriceLevel.
 	// It is not necessarily one of those level ids: a delete-only event, or a
 	// reset that empties the book, leaves nothing resting.
@@ -27,7 +27,7 @@ type OrderbookSnapshot struct {
 	TriggerID string `json:"trigger_id" swaggerignore:"true"`
 	EventTime string `json:"event_time"`
 	// ExchangeEventTime is the exchange's OWN clock, carried from the triggering
-	// job-4 event, or "" when that feed sends no clock at all — ex3/wallex and
+	// job-5 event, or "" when that feed sends no clock at all — ex3/wallex and
 	// ex4/ramzinex never do, and ex7/ompfinex sends one on snapshots but not on
 	// updates. In those cases EventTime above is job 1's processing time, which
 	// is exactly what this field exists to tell apart.
@@ -52,8 +52,8 @@ type OrderbookSnapshot struct {
 type PriceLevel struct {
 	Price    string `json:"price"`
 	Quantity string `json:"quantity"`
-	// SourceID is the job-4 event that last SET this level — the per-level half of
-	// job 5's lineage, and what makes ONE price traceable back to its raw event.
+	// SourceID is the job-5 event that last SET this level — the per-level half of
+	// job 6's lineage, and what makes ONE price traceable back to its raw event.
 	// Like the record-level lineage it is a fresh uuid every run, so a scenario
 	// never declares it: checked structurally, then cleared before the literal
 	// comparison. swaggerignore for the same reason as ID and TriggerID above.
@@ -89,7 +89,7 @@ type AggregatedSide struct {
 // Simulation is tagged per level for the same reason ExchangeID is: one
 // aggregated record mixes exchanges, so the flag only means something attached
 // to the level it came with, never to the record as a whole.
-// SourceID is per level for the same reason: it is the id of the job-5
+// SourceID is per level for the same reason: it is the id of the job-6
 // snapshot the level came from, and one record's levels come from several
 // snapshots. Like the snapshot's lineage it is checked structurally and then
 // cleared before comparison, never declared by a scenario.
@@ -118,7 +118,7 @@ type AggregatedLevel struct {
 // Union unwrapping belongs in consumer's wire structs anyway, the way
 // event_time's epoch millis do — this package holds the harness's normalized
 // view.
-// ControlCommand is one record on the shared `control-plane` topic — job 2
+// ControlCommand is one record on the shared `control-plane` topic — job 3
 // asking NiFi to re-send a snapshot for a market whose stream it can no longer
 // trust. Avro on subject `control-command`, like every other topic; it was plain
 // JSON with the ids nested under a `payload` object until 2026-08-18, so a
@@ -146,7 +146,7 @@ type AggregatedLevel struct {
 // that hit `no_baseline` or `sequence_gap`; the harness can only check its shape,
 // since the id belongs to a raw event the harness never reads back.
 //
-// Key is the record's Kafka key, `{exchange_id}|{pair_id}`, which job 2 sets so
+// Key is the record's Kafka key, `{exchange_id}|{pair_id}`, which job 3 sets so
 // commands for one market stay ordered if the topic is ever repartitioned. It is
 // checked structurally and cleared for the same reason — it is derived from the
 // ids, so a scenario declaring it would only be restating ExchangeID and PairID.

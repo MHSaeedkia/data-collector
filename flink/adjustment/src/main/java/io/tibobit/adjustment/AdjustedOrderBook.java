@@ -43,7 +43,7 @@ public class AdjustedOrderBook {
     }
 
     /**
-     * Entry point of the chain: job 6's aggregated record with nothing adjusted
+     * Entry point of the chain: job 7's aggregated record with nothing adjusted
      * yet — same prices, every rate still "0". The levels are COPIED rather
      * than aliased, so the stages can mutate in place without writing through
      * to the record the deserializer produced.

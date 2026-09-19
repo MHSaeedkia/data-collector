@@ -4,7 +4,7 @@
 // One struct covers every record shape on the pipeline. hamba/avro drives
 // decoding from the WRITER schema, so a field the schema does not have is left
 // at its zero value rather than failing — which is what lets the same Record
-// read a job-1 event, a job-5 snapshot and a job-6 aggregated record. The
+// read a job-1 parsed event, a job-6 snapshot and a job-7 aggregated record. The
 // levels are never decoded: a book is tens of KB and none of it is a timestamp.
 package event
 

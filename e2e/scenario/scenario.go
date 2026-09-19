@@ -32,7 +32,7 @@ const (
 	// snapshot topic has settled.
 	aggregateWait = 10 * time.Second
 	// controlWait is short for the same reason as rejectWait: a control command
-	// is written by job 2, upstream of the book builder, so anything the run was
+	// is written by job 3, upstream of the book builder, so anything the run was
 	// going to request is already on the topic once the snapshots have settled.
 	controlWait = 10 * time.Second
 )
@@ -54,7 +54,7 @@ type Scenario struct {
 	// WantAggregated is the aggregated view of the pair once every source is
 	// through — the last record on `p{PairID}-asks` and on `p{PairID}-bids`.
 	// Every scenario in this package spells it out, and a posted one should too.
-	// Nil does NOT mean "skip job 6": the expectation is then DERIVED from the
+	// Nil does NOT mean "skip job 7": the expectation is then DERIVED from the
 	// last wanted snapshot, which is what the aggregated book must be when a
 	// single exchange feeds the pair.
 	// Only the final state is read — the aggregator emits one record per side
@@ -62,7 +62,7 @@ type Scenario struct {
 	// twice over.
 	WantAggregated *AggregatedBook `json:"want_aggregated"`
 
-	// WantControlCommands is every snapshot_request job 2 must have put on the
+	// WantControlCommands is every snapshot_request job 3 must have put on the
 	// shared `control-plane` topic, in order — the control plane's half of a gap,
 	// where WantRejects is the data plane's.
 	//
@@ -70,7 +70,7 @@ type Scenario struct {
 	// asserts that the pipeline asked NiFi for NOTHING, which is what makes a
 	// spurious request on a healthy feed a failure rather than something nobody
 	// looks at. A command is expected once per episode, not once per rejected
-	// event — job 2 sends one when the stream first goes untrustworthy
+	// event — job 3 sends one when the stream first goes untrustworthy
 	// (`no_baseline` or `sequence_gap`) and does not send another until a
 	// snapshot has re-synced the book, so a run holding three updates as
 	// `awaiting_snapshot` still wants exactly one command.
@@ -134,10 +134,10 @@ func (s Scenario) produce(ctx context.Context, cfg config.Config) error {
 }
 
 // verify reads each output topic and compares it to its wanted stream: the
-// snapshot stream (job 5), the dead letters (jobs 2 and 3), then the pair's
-// final aggregated book (job 6).
+// snapshot stream (job 6), the dead letters (jobs 3 and 4), then the pair's
+// final aggregated book (job 7).
 //
-// Snapshots are read first, for the full budget. Jobs 2 and 3 are upstream of
+// Snapshots are read first, for the full budget. Jobs 3 and 4 are upstream of
 // the book builder, so anything they were going to reject is already on the
 // dead-letter topic by the time the snapshots have settled — a run that expects
 // no rejection does not have to wait the full budget a second time.
@@ -281,11 +281,11 @@ func stripControlLineage(commands []events.ControlCommand) {
 // on (pair_id, side) across every exchange — but a scenario feeds one exchange
 // and the warmup emptied the topics, so what is there is this run's.
 //
-// A scenario that wants no snapshot at all leaves job 6 nothing to emit, and
+// A scenario that wants no snapshot at all leaves job 7 nothing to emit, and
 // the empty snapshot stream has already been asserted, so there is nothing left
 // to read.
 //
-// snapshots are job 5's records WITH their lineage intact, so the levels of the
+// snapshots are job 6's records WITH their lineage intact, so the levels of the
 // aggregated book can be matched against the snapshot they claim to come from —
 // the only exact cross-job lineage assertion the harness can make.
 func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config,
@@ -333,10 +333,10 @@ func (s Scenario) verifyAggregated(ctx context.Context, cfg config.Config,
 // the exchange stamped on every level.
 //
 // That derivation is exact because a scenario feeds ONE exchange: the union is
-// a union of one, so job 6's output is job 5's last book plus the exchange tag.
+// a union of one, so job 7's output is job 6's last book plus the exchange tag.
 // The order survives too — both jobs sort asks ascending and bids descending,
 // and the aggregator's quantity tie-break never fires within a single exchange
-// because job 4 has already merged levels that share a price.
+// because job 5 has already merged levels that share a price.
 func (s Scenario) wantAggregated() AggregatedBook {
 	if s.WantAggregated != nil {
 		return *s.WantAggregated

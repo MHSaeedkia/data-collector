@@ -9,7 +9,7 @@ import java.util.List;
  *
  * <p>The dead-letter topic is a topic, so this envelope gets its own {@code id} like any other
  * emit, with {@code sourceIds} = the rejected event's id. Do not confuse it with
- * {@code event.getId()}, which is the id job 1 minted for the event being rejected.
+ * {@code event.getId()}, which is the id job 2 minted for the event being rejected.
  */
 public class RejectedOrderBookEvent {
 

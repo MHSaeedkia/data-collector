@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Job 4 — precision. Stateless: every level's price is truncated to
+ * Job 5 — precision. Stateless: every level's price is truncated to
  * {@code markets.price_precision} decimal places and every quantity to
  * {@code markets.quantity_precision}, always rounding DOWN (never up — an order book must not
  * claim more size or a better price than the exchange reported). Precisions come per pair from a
@@ -24,12 +24,12 @@ import java.util.Map;
  *
  * <p>A null precision column means "not configured" and leaves that value untouched. A pair with
  * no markets row at all is treated the same way — passthrough, not dead-letter. This is
- * deliberately unlike job 3: an un-rebased amount is silently corrupt (orders of magnitude off),
+ * deliberately unlike job 4: an un-rebased amount is silently corrupt (orders of magnitude off),
  * whereas an un-truncated one is merely more precise than we asked for, so there is nothing to
  * quarantine.
  *
  * <p><b>Truncate-to-zero (design flag, user decision 2026-07-18, revised same day):</b> a nonzero
- * quantity that truncates to exactly 0 is emitted as "0" — no level is ever dropped here. Job 5
+ * quantity that truncates to exactly 0 is emitted as "0" — no level is ever dropped here. Job 6
  * reads {@code quantity == 0} as "delete this level", which is the intended consequence: a size
  * below the market's lot precision is not representable liquidity, so the book should not hold a
  * level for it.

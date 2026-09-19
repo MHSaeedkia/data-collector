@@ -44,7 +44,7 @@ var Scenarios = []struct {
 	// and 31 (ex5-rest-snapshot-resync) were REMOVED with that change: ex5 sends no updates
 	// and has no second REST stream, so none of those code paths is reachable through it any
 	// more. (27's subject went further — ex5 was the only feed that ever stamped a jump
-	// tolerance, so the field itself was deleted from the schema on 2026-09-07 and job 2's
+	// tolerance, so the field itself was deleted from the schema on 2026-09-07 and job 3's
 	// contiguity check is a plain equality again.) Numbers left retired rather than renumbered,
 	// per the convention below. Ex5StaleSeq — the snapshot ordering rule that replaces all
 	// three — is appended as 62. See data_ex5.go.
@@ -69,7 +69,7 @@ var Scenarios = []struct {
 	{"42-ex8-precision-dust", Ex8PrecisionDust},
 	{"43-ex8-noise-frames", Ex8NoiseFrames},
 
-	// Control plane — the snapshot requests job 2 sends NiFi. Grouped by feature
+	// Control plane — the snapshot requests job 3 sends NiFi. Grouped by feature
 	// rather than by exchange; see data_control.go.
 	// 45 (control-ex1-no-baseline-then-gap) was REMOVED 2026-09-02: it asserted a
 	// no_baseline/sequence_gap episode on nobitex WS pushes, which are snapshots
@@ -130,13 +130,13 @@ var Scenarios = []struct {
 	{"61-ex8-rest-snapshot-resync", Ex8RestSnapshotResync},
 
 	// Bitget's snapshot ordering rule (added 2026-09-07). Appended as 62 rather than slotted
-	// into 25-30, for the same reason 48, 49, 60 and 61 were. With ex5 snapshot-only, job 2's
+	// into 25-30, for the same reason 48, 49, 60 and 61 were. With ex5 snapshot-only, job 3's
 	// snapshot branch is the ONLY branch it can reach, so this is the whole of ex5's validation
 	// coverage: a repeated or older `seq` is stale_or_duplicate, a forward one is accepted
 	// however far it jumps, and the control stream stays empty. See data_ex5.go.
 	{"62-ex5-stale-seq", Ex5StaleSeq},
 
-	// The ex5 DEPLOY hazard (added 2026-09-07, PR #1 review). Job 2 keeps `lastSeq` in keyed
+	// The ex5 DEPLOY hazard (added 2026-09-07, PR #1 review). Job 3 keeps `lastSeq` in keyed
 	// state and is not resubmitted by this change, so at deploy time it still holds the `depth`
 	// channel's millisecond sequence — about a trillion above any `books50` seq. Every frame off
 	// the new channel is then dead-lettered stale_or_duplicate with no control command and no way
@@ -154,7 +154,7 @@ var Scenarios = []struct {
 
 	// The rest of the ex6 restart surface (added 2026-09-08). 64 covers restart -> delta, the
 	// common case; these four cover every other branch the change touches.
-	//   65 restart -> SNAPSHOT, the path `baselinePending` does not reach and that job 2's
+	//   65 restart -> SNAPSHOT, the path `baselinePending` does not reach and that job 3's
 	//      `lastSeq.clear()` fixes. The only shape where the counter moves backwards across a
 	//      re-anchor, which is what makes the bug reachable at all.
 	//   66 restart arriving while a resync is already PENDING — one control command in total,

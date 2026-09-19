@@ -19,9 +19,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Job 5 — book builder, keyed by {@code (exchange_id, pair_id)}. Holds the live book of each
+ * Job 6 — book builder, keyed by {@code (exchange_id, pair_id)}. Holds the live book of each
  * market in {@link MapState} (one map per side, price → quantity) and emits the WHOLE book as an
- * {@link OrderBookSnapshot} on every accepted event. Job 2 already enforced the sequence rules and
+ * {@link OrderBookSnapshot} on every accepted event. Job 3 already enforced the sequence rules and
  * the topics are single-partition, so nothing is re-validated here.
  *
  * <p><b>Snapshot vs update.</b> A snapshot replaces a side wholesale, an update merges into it.
@@ -74,7 +74,7 @@ public class BookBuildFunction
         event.getPipelineTimings().setBookBuildIn(System.currentTimeMillis());
 
         if ("reset".equals(event.getType())) {
-            // Job 2 emits a reset marker on a sequence gap: clear
+            // Job 3 emits a reset marker on a sequence gap: clear
             // the whole book so the emitted snapshot is empty and the exchange drops out downstream,
             // rather than serving its pre-gap diverged book until the next real snapshot.
             asks.clear();
@@ -122,7 +122,7 @@ public class BookBuildFunction
             BigDecimal quantity = new BigDecimal(level.getQuantity());
             if (quantity.signum() == 0) {
                 // Delete. NOTE: a zero quantity here does NOT mean the exchange sent a delete —
-                // job 4 also emits "0" for any nonzero size that truncates away at the market's
+                // job 5 also emits "0" for any nonzero size that truncates away at the market's
                 // quantity_precision (see [[precision]]), so dust arrives as a delete too. That is
                 // intentional: a size below the lot precision is not representable liquidity and
                 // must not rest in the book. Don't "fix" a delete you can't find in the raw feed.

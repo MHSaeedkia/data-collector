@@ -1,11 +1,19 @@
 ---
 name: pair-extractor
-description: M2 DONE 2026-07-15 — job-pair-extractor module (raw pipeline job 1): parser conventions, per-exchange event_time/seq stamping, drop rules, and the decisions made at implementation
+description: ⚠ SPLIT 2026-09-19 — parsing left this module for [[parser]] and pair-extract became raw pipeline job 2; everything below is pre-split and calls the fused job "job 1". M2 DONE 2026-07-15 — parser conventions, per-exchange event_time/seq stamping, drop rules, and the decisions made at implementation
 metadata:
     type: project
 ---
 
-# Job 1 — pair extractor (Milestone 2, done 2026-07-15)
+# Pair extractor (Milestone 2, done 2026-07-15 — job 1 then, job 2 since 2026-09-19)
+
+> **⚠ READ THIS FIRST.** On 2026-09-19 parsing was split out into [[parser]], which took the
+> nine exchange parsers, three of the four drop rules and the number 1 with it. This module is now
+> job **2** and does one thing: market string → `pair_id`. Every section below predates the split
+> and calls the fused job "job 1" — that is a historical record and was deliberately not
+> renumbered. The stage→number table is in [[parser]]. Parser-specific content here (wire formats,
+> `sequence_id` stamping, event-time rules, the ex1–ex9 sections) is still accurate and still the
+> place to look; it just lives in `job-parser/` now.
 
 `flink/normalizer/job-pair-extractor/` ([[normalizer-scaffold]] conventions), consumes
 `^ex[0-9]+-raw$` → emits `ex{exchange_id}-p{pair_id}-raw-flink`. 26 tests green; live smoke
@@ -1120,3 +1128,29 @@ exchange-agnostic and touches every null-seq feed).
 
 ⚠ **This does NOT address the gap storm** in the § above — `u==1` was 0 occurrences in the 9233-
 frame live sample. It closes a rare, silent correctness hole. The storm is still upstream.
+
+
+## 2026-09-19 — THE SPLIT: parsing left this module
+
+Full write-up in [[parser]]. What matters when reading THIS file:
+
+- **This module is now job 2.** It consumes `ex{id}-parsed-flink` (subject `parsed-book-event`,
+  value-only deserializer — `exchange_id` is ON the record here, so it no longer parses it out of
+  the topic name) and still emits `ex{id}-p{id}-raw-flink`. `PairExtractFunction` is ~35 lines:
+  resolve, stamp `pair_id`, re-stamp lineage, stamp `pair_extract_in/out`, emit.
+- **`io.tibobit.normalizer.pairextract.parser` no longer exists.** The nine parsers, `Levels`,
+  `Json`, `Centrifugo`, `RawExchangeParser`, `Parsers`, `RawTopicDeserializer`,
+  `RawExchangeMessage`, every parser test and every `fixtures/*.json` moved verbatim to
+  `io.tibobit.normalizer.parse.parser` under `job-parser/`. Only the package line changed — no
+  parser behaviour was touched, which is why the ex1–ex9 sections above are all still valid.
+- **Three of the four drop rules went with them** (`dropped-no-parser`, `dropped-unparseable`,
+  `dropped-no-id`). `dropped-unknown-market` is the only one left here.
+- **The old 8 fused tests became 7 + 5**, so nothing was lost. `PairExtractFunctionTest` now feeds
+  a `ParsedBookEvent` directly instead of a raw payload, which is what makes it a unit test of pair
+  resolution rather than of nine wire formats.
+- **A deploy that changes what an exchange's `sequence_id` MEANS is still a
+  [[type-validator]] state migration** — but the jar to rebuild for that is now **`job-parser`**,
+  not this one. The 2026-09-07 PR-review warning and the ex5 `depth`→`books50` hazard both name
+  `job-pair-extractor`; read them as `job-parser`.
+- Same substitution applies to the two open todo.md items that say "resubmit `job-pair-extractor`"
+  for a parser change (the ex5 resync-loop fix and ex6 scenario 48).

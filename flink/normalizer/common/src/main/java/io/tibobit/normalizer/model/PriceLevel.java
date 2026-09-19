@@ -8,7 +8,7 @@ package io.tibobit.normalizer.model;
  * rejected_order_book_event.avsc.
  *
  * <p>{@code sourceId} is the one field those three declarations do NOT share: only
- * order_book_snapshot.avsc carries it, because job 5 is the only step whose levels come from
+ * order_book_snapshot.avsc carries it, because job 6 is the only step whose levels come from
  * different parents. Everywhere else a level belongs to the event carrying it, so the field stays
  * null and is never written — {@code PriceLevels} decides that from the schema, not from the value.
  */

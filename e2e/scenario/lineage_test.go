@@ -114,7 +114,7 @@ func elements(t *testing.T, payload string) []json.RawMessage {
 }
 
 // Every source must get its OWN id — they become separate records on the raw
-// topic, and job 5's fan-in would collapse if they shared one.
+// topic, and job 6's fan-in would collapse if they shared one.
 func TestStampIDIsUniquePerCall(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 500; i++ {
@@ -255,7 +255,7 @@ func TestCheckSnapshotLineageRejectsBrokenChains(t *testing.T) {
 			wantErr: "already used by record 0",
 		},
 		{
-			// Job 5 emits one book per accepted event, so an event cannot appear
+			// Job 6 emits one book per accepted event, so an event cannot appear
 			// as the trigger twice.
 			name: "two records share a trigger",
 			snapshots: []events.OrderbookSnapshot{
@@ -340,7 +340,7 @@ func TestCheckAggregatedLineage(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// A level pointing at an id job 5 never emitted is the failure this exists
+	// A level pointing at an id job 6 never emitted is the failure this exists
 	// to catch — a source that was invented rather than carried.
 	invented := events.AggregatedSide{
 		ID:     aggregated,

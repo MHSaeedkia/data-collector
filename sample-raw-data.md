@@ -72,11 +72,11 @@ is a silent delete, with no zero-quantity entry marking it, which a true delta f
    `sequence_id = null` (no offset on the wire).
 2. **WebSocket snapshot** — the Centrifugo push we already consumed, **unchanged** and with **no
    `action` field** → also `type = "snapshot"`, but ordered by its own counter rather than event
-   time: `sequence_id = pub.offset`, `sequence_jump = 0` (unchecked on a snapshot — job 2 never
+   time: `sequence_id = pub.offset`, `sequence_jump = 0` (unchecked on a snapshot — job 3 never
    jump-checks these, only rejects `seq <= last` as `stale_or_duplicate`).
 
 Both branches are null-seq-or-sequenced SNAPSHOTS now, so the null-seq REST resync bootstrap in
-job 2 (`baselinePending`) is set on every accepted REST snapshot but never consumed — the same
+job 3 (`baselinePending`) is set on every accepted REST snapshot but never consumed — the same
 "set but never consumed" shape ex3/ex9 already have, since there is no `update` type on this
 exchange for a WS event to adopt a baseline from any more (see memory/project_type_validator.md).
 
@@ -132,10 +132,10 @@ Parsing notes (job 1):
   silent delete, not "nothing changed there."
 - **`lastTradePrice` is a string** ✅ (unlike bitpin's numeric `price`); `lastUpdate` is
   epoch-millis as a JSON number → event time — both metadata, not book levels.
-- **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (event-time
+- **Ordering / job-3 rule**: the REST snapshot has no offset → `sequence_id = null` (event-time
   ordered, out-of-order-only check). The WS snapshot uses `pub.offset` as `sequence_id` with
   `sequence_jump = 0` — also an out-of-order-only check (`seq <= last` → `stale_or_duplicate`),
-  never a jump/gap check, because job 2 never jump-checks a snapshot of any kind.
+  never a jump/gap check, because job 3 never jump-checks a snapshot of any kind.
 - **Multi-doc records: CLOSED 2026-07-14 (user)** — ex1 records always contain ONE JSON
   document; the discarded-capture 2-newline-concatenated-docs lead was an artifact. No
   splitting logic in job 1.
@@ -153,7 +153,7 @@ marking it). So `ex2-raw` publishes **two distinct payloads, BOTH full snapshots
    `sequence_id = null` (no offset on the wire).
 2. **WebSocket snapshot** — the Centrifugo push we already consumed, **unchanged** and with **no
    `action` field** → also `type = "snapshot"`, ordered by its own counter: `sequence_id =
-   pub.offset`, `sequence_jump = 0` (unchecked on a snapshot — job 2 never jump-checks these, only
+   pub.offset`, `sequence_jump = 0` (unchecked on a snapshot — job 3 never jump-checks these, only
    rejects `seq <= last` as `stale_or_duplicate`).
 
 Both branches are null-seq-or-sequenced SNAPSHOTS now — the same shape as ex1 (see its section
@@ -168,7 +168,7 @@ memory/project_type_validator.md).
 ```
 
 **⚠ The injected `pair` must be the DB market string `BTC_USDT`** (underscore), matching
-`exchange_markets.market` for ex2 and the WS channel suffix — job 1's lookup key
+`exchange_markets.market` for ex2 and the WS channel suffix — job 2's lookup key
 `"2|{market}"` is exact and case-sensitive, so `BTCUSDT` would drop silently as
 `dropped-unknown-market`. Confirmed with the user 2026-07-25.
 
@@ -225,10 +225,10 @@ Parsing notes (job 1):
   2026-07-25): the WS `data.event_time` is an **ISO-8601 string** with microseconds
   (`Instant.parse`), the REST `event_time` is **epoch millis as a JSON number** (read verbatim).
   Same field name, two types — don't share a code path. It is the ONLY ordering signal on the
-  REST snapshot, which is what job 2's null-seq `out_of_order` guard reads; the WS snapshot is
+  REST snapshot, which is what job 3's null-seq `out_of_order` guard reads; the WS snapshot is
   ordered by `pub.offset` instead (`stale_or_duplicate` only, never jump-checked).
-- **Ordering / job-2 rule**: the REST snapshot has no offset → `sequence_id = null` (resync).
-  The WS delta uses `pub.offset` as `sequence_id` with `sequence_jump = 1`, so job 2 does real
+- **Ordering / job-3 rule**: the REST snapshot has no offset → `sequence_id = null` (resync).
+  The WS delta uses `pub.offset` as `sequence_id` with `sequence_jump = 1`, so job 3 does real
   contiguity gap detection (was an out-of-order-only check when we thought it was a snapshot
   feed).
 - `volume_ask`/`volume_bid`: metadata, not book levels.
@@ -278,10 +278,10 @@ Parsing notes (job 1):
 - **Sorting**: buyDepth (bids) price-descending, sellDepth (asks) price-ascending. 50 levels
   per message in both samples.
 - **Per-side snapshots**: one message replaces ONE side only — the shared Avro event must
-  express "snapshot of side X", and job 5 must merge sides (replace one side at a time)
+  express "snapshot of side X", and job 6 must merge sides (replace one side at a time)
   instead of assuming every snapshot carries both.
 - **No seq field, no timestamp, no event/type field anywhere** — ⚠ the ONLY exchange with
-  no usable ordering field, so the job-2 out-of-order check (REVISED 2026-07-14) cannot
+  no usable ordering field, so the job-3 out-of-order check (REVISED 2026-07-14) cannot
   apply here: with 1 partition, Kafka offset = arrival order, which is exactly what we
   cannot validate against. ex3 gets no out-of-order protection.
 
@@ -336,7 +336,7 @@ Parsing notes (job 1):
   `sells` are also descending, so the **best ask is the LAST element**. Don't assume
   best-first ordering when parsing. 50 levels per side in this sample.
 - **No snapshot/update discriminator, no seq field in `data`** — **ordering field for the
-  job-2 out-of-order check = `pub.offset`** (REVISED 2026-07-14, user — drop
+  job-3 out-of-order check = `pub.offset`** (REVISED 2026-07-14, user — drop
   stale/out-of-order snapshots; no gap/jump rule). The per-level epoch-millis (element 7)
   is per-level, not per-message — not an ordering candidate.
 
@@ -354,7 +354,7 @@ in one move, everything the 2026-08-22 and 2026-08-23 revisions below recorded:
    counter again — `data[i].seq`, jump 0 — not the `ts` clock the `depth` channel forced.
    `sequence_jump_tolerance` therefore went back to 0, and since ex5 was **the only exchange that
    ever stamped a nonzero one, the field lost its last user and was DELETED from both schemas on
-   2026-09-07** — job 2's contiguity check is a plain `seq == last + jump` equality again. See
+   2026-09-07** — job 3's contiguity check is a plain `seq == last + jump` equality again. See
    memory/project_type_validator.md and memory/project_avro_schema.md.
 3. **`arg` lost `params.scale`** and `instType` changed back `"sp"` → `"SPOT"`; `arg.channel` is
    `books50`, so depth is encoded in the channel name again.
@@ -447,7 +447,7 @@ Parsing notes (job 1):
   rather than leave it alone — the whole frame is dropped instead. This is the opposite of the
   `depth` channel's rule, where a one-sided update nulled the absent side like ex8/okx.
 - **Sequence**: `data[i].seq`, an integral JSON number, **jump 0**. A snapshot is ORDERED, never
-  jump-checked (the platform-wide invariant), so job 2's whole test is `seq <= lastSeq` ⇒
+  jump-checked (the platform-wide invariant), so job 3's whole test is `seq <= lastSeq` ⇒
   `stale_or_duplicate`; any forward seq is accepted however far it jumps.
 - **⚠ `pseq` is read by nobody, and it is NOT a predecessor pointer** — it reads **0 on every
   captured frame**. It looks like ex8/okx's `prevSeqId` and is nothing of the sort; a chain rule
@@ -555,17 +555,17 @@ Parsing notes (job 1):
   old `books50`; bitget's current `depth` channel no longer encodes it).
 - **`type` is the regime discriminator**: `"snapshot"` (full book, 50 levels/side) or
   `"delta"` (only changed levels — a delta may touch one side only, or replace/insert/delete
-  levels). This is what job 2's snapshot/update classification reads.
+  levels). This is what job 3's snapshot/update classification reads.
 - **Sides are `b` (bids) / `a` (asks)** — abbreviated keys. On the snapshot: bids
   price-descending, asks price-ascending — best-first on both sides. Delta level order
   presumably follows the same convention (single-level sides here — unverified).
 - Levels are `[price, qty]` **string** pairs ✅ (no JSON-number hazard). Prices may lack
   decimals (`"62720"`).
-- **Sequence**: `u` with jump 1 (see rule above) — the first exchange where job 2's
+- **Sequence**: `u` with jump 1 (see rule above) — the first exchange where job 3's
   `sequence_id`/`sequence_jump` gap rules apply for real. `seq` is bybit-internal
   (cross-topic per docs) — treat as metadata. `u` gaps in the topic mean real
   upstream/NiFi-side loss (the discarded capture showed gaps between ~30% of consecutive
-  records) — **DECIDED 2026-07-14 (user): skip the NiFi investigation; job 2's gap rule
+  records) — **DECIDED 2026-07-14 (user): skip the NiFi investigation; job 3's gap rule
   absorbs it** (on gap: drop until the next snapshot re-syncs the book).
 - **Delta delete = qty `"0"`** — lead from the discarded capture, NOT shown in these samples;
   capture a real qty-"0" delta frame to confirm.
@@ -574,7 +574,7 @@ Parsing notes (job 1):
 - **`u == 1` is a SERVICE RESTART, handled 2026-09-08.** Bybit: *"Occasionally, you'll receive
   `"u"=1`, which is a snapshot data due to the restart of the service. So please overwrite your
   local orderbook."* The counter restarted, so job 1 stamps that frame **null-seq / jump 0** and
-  it re-anchors through job 2's `baselinePending` bootstrap — the same route the REST body takes.
+  it re-anchors through job 3's `baselinePending` bootstrap — the same route the REST body takes.
   It KEEPS its levels and its `snapshot` type, because it is a full book and the instruction is
   to overwrite: emitting an empty `reset` instead would clear the book and leave only the
   following deltas, which carry just the changed levels, to refill it. **No control command is
@@ -584,7 +584,7 @@ Parsing notes (job 1):
   `64-ex6-service-restart`. ⚠ Guarded on `type == "snapshot"` as well as the value: a *delta*
   claiming `u == 1` is undocumented and is sequenced normally.
 - **⚠ Never subscribe ex6 at depth 1.** Bybit's level-1 feed is snapshot-only and re-pushes every
-  3 s with **the same `u`**, which job 2 orders as `stale_or_duplicate` on every quiet repeat.
+  3 s with **the same `u`**, which job 3 orders as `stale_or_duplicate` on every quiet repeat.
 - **Still to capture**: a qty-"0" delete delta frame.
 
 **Re-confirmed 2026-08-24** against a fresh WS snapshot + delta pair (`u` 210920912 → 210920913,
@@ -593,7 +593,7 @@ written; no WS change was needed. The new capture does settle one open shape que
 
 - **An unchanged side on a delta arrives as a present-but-EMPTY array**, not as an absent key —
   the captured delta carried `"b": []` with four ask changes. This is safe, but only because of
-  where job 5 clears: it clears a side before merging **only when the type is `snapshot`**, so on
+  where job 6 clears: it clears a side before merging **only when the type is `snapshot`**, so on
   an update an empty array merges nothing. The absent-key (null) and empty-array cases therefore
   behave identically on updates and differ only on snapshots. Both are now pinned by tests
   (`BybitParserTest.emptySideOnDeltaIsEmptyNotNull`, `Ex6RestSnapshotResync` source 02).
@@ -653,7 +653,7 @@ Parsing notes (job 1):
   REST value is the *smaller* one, as an immediate `stale_or_duplicate` — either way: accept →
   reject → empty the book → request another snapshot → repeat. **That is exactly the live resync
   loop ex5 was burned by on 2026-08-23** (28.6 book resets/min, `control-plane` saturated). So ex6
-  takes the same fix ex1/ex2/ex5 use: null-seq, and job 2's `baselinePending` bootstrap orders this
+  takes the same fix ex1/ex2/ex5 use: null-seq, and job 3's `baselinePending` bootstrap orders this
   body by event time and lets the first WS delta after it adopt its own `u` as the baseline. **Never
   compare the two counters.**
 - **`result.seq` is unusable too**, for the reason it always was on this exchange: it moves 10 per
@@ -727,7 +727,7 @@ contiguity becomes exact instead of inferred.
 
 **Sequence rule: `seqId`, with a DYNAMIC jump of `seqId - prevSeqId`.** Every frame names its own
 predecessor — `prevSeqId` is the `seqId` of the message before it. Stamping the jump per message
-makes job 2's `seq == lastSeq + jump` reduce algebraically to **`prevSeqId == lastSeq`**, okx's own
+makes job 3's `seq == lastSeq + jump` reduce algebraically to **`prevSeqId == lastSeq`**, okx's own
 documented rule, enforced exactly with no window and no tolerance. This is the ex7/ompfinex pattern
 (`u - U`), the platform's second dynamic jump. Measured over **6,516 consecutive live transitions on
 5 markets: 6,516 chained, 0 broken**, while the raw `seqId` step took 90–172 DISTINCT values per
@@ -816,7 +816,7 @@ Parsing notes (job 1):
   (reads elements 0–1, ignores the rest) covers both with no special-casing. Observed 54,101 levels,
   **100% four-element**.
 - **Delete = qty `"0"`** — present on both sides in the update sample (ask `1013.67`, bid
-  `1011.45`). 13,480 deletes in the capture. Job 5 must remove those levels.
+  `1011.45`). 13,480 deletes in the capture. Job 6 must remove those levels.
 - **Both `asks` and `bids` are ALWAYS present**, but either may be an empty array `[]` when that
   side did not change (3,413 frames changed both sides, 1,900 asks-only, 1,208 bids-only; **zero**
   frames omitted a key). This differs from the old grouped channel, which sent `null` for an absent
@@ -825,15 +825,15 @@ Parsing notes (job 1):
   only changed levels (up to 124 asks / 109 bids observed).
 - **Sequence = `seqId`** (JSON **integer**, order 1e10 — not a string, unlike `ts`), jump
   `seqId - prevSeqId`. `prevSeqId` is likewise an integer. A frame missing either is dropped whole:
-  without both, the chain cannot be expressed and job 2 would silently mis-validate.
+  without both, the chain cannot be expressed and job 3 would silently mis-validate.
 - **`ts` is the event time only** (string epoch-millis, as before) — it is no longer the sequence.
   It is strictly monotonic per market on the capture (0 backwards, 0 equal across 6,516
   transitions), so it remains a sound event-time clock.
-- **`checksum`** is okx's CRC32 book-integrity value. **Ignored** — job 5 builds the book and
+- **`checksum`** is okx's CRC32 book-integrity value. **Ignored** — job 6 builds the book and
   nothing in the platform verifies a checksum (same treatment as ex5's). Observed `0` on all 6,521
   captured frames, so do not rely on it being populated.
 - **Two okx-documented edge cases need no special-casing.** A no-change keepalive repeats the
-  counter (`seqId == prevSeqId`) → jump 0 → job 2 accepts `seq == lastSeq` and the book is left
+  counter (`seqId == prevSeqId`) → jump 0 → job 3 accepts `seq == lastSeq` and the book is left
   alone, which is what a no-op means. A counter RESET (okx may restart `seqId` lower after
   maintenance) breaks the chain → `sequence_gap` → book emptied → control plane asks, which is the
   correct response to a reset. Neither was observed in the 3-minute capture; both are pinned by
@@ -841,7 +841,7 @@ Parsing notes (job 1):
 
 **⚠ For the NiFi team — the resync answer.** Prefer a **RESUBSCRIBE** over the REST body when
 answering a `snapshot_request`: a fresh subscribe returns `action: "snapshot"` with 400 levels **on
-the feed's own counter**, so job 2 re-seeds `lastSeq` exactly and the next update chains straight to
+the feed's own counter**, so job 3 re-seeds `lastSeq` exactly and the next update chains straight to
 it. The REST body cannot do that (see the `seqId` note in the REST section below) and costs a
 baseline gap every time. The REST branch is kept as a working fallback, not as the preferred path.
 
@@ -888,7 +888,7 @@ see [[project_pair_extractor]] § ex8 for what that cost.
 
 - **NO `arg`.** This is the whole reason the frame used to be dropped: the WS branch reads the
   market from `arg.instId`, which is absent here, so the parser discarded it and the resync answer
-  never reached job 2. NiFi stamps the market as a top-level **`pair`** instead (`ZEC-USDT`, dashed,
+  never reached job 3. NiFi stamps the market as a top-level **`pair`** instead (`ZEC-USDT`, dashed,
   same spelling as `arg.instId`), exactly as it does for ex5.
 - **`arg` is the discriminator, NOT the shape of `data`.** ex5 can switch on `data` being an object
   vs an array; here `data` is an **array on both streams** and `action` reads `"snapshot"` on both.
@@ -905,7 +905,7 @@ see [[project_pair_extractor]] § ex8 for what that cost.
   and larger. The reason it still cannot seed `lastSeq` is subtler and permanent: **a snapshot's
   `seqId` is not any later update's `prevSeqId`.** The counter advances between NiFi's fetch and the
   next WS frame, so seeding it would break the very next chain check rather than repair it. Null
-  hands job 2 the `baselinePending` bootstrap instead — order this body by EVENT TIME, then let the
+  hands job 3 the `baselinePending` bootstrap instead — order this body by EVENT TIME, then let the
   first WS update after it adopt its own `seqId` as the baseline.
   **This is exactly why a RESUBSCRIBE is the better resync answer** (see the WS section above): the
   WS snapshot re-seeds the counter exactly and costs no baseline gap at all.
@@ -935,7 +935,7 @@ no `grouping` field. Kept here only so the question is not re-opened from an old
 landed on `feat/add-lbank` (commit `977e770`) and the rest of the pipeline followed on 2026-08-26.
 
 **Regime: SNAPSHOT ONLY.** Every frame carries the whole book under `depth`. There is no delta
-channel, no `action`/`type`-style regime discriminator to read, and nothing for job 2 to make
+channel, no `action`/`type`-style regime discriminator to read, and nothing for job 3 to make
 contiguous — an accepted frame replaces the book outright. This makes ex9 the **second
 snapshot-only exchange** after ex3/wallex, and unlike ex3 it sends BOTH sides in every frame, so
 no side is ever null.
@@ -945,7 +945,7 @@ no side is ever null.
 `TS` is deliberately NOT re-used as a sequence the way ex5's and ex8's `ts` are, because a
 timestamp-as-sequence imposes a publish cadence the exchange never promised (ex5 needed a
 `650 ± 110` window for exactly that reason, and got a resync loop out of it). A null sequence
-puts ex9 on job 2's **event-time branch**, where the whole test is "not older than the last
+puts ex9 on job 3's **event-time branch**, where the whole test is "not older than the last
 accepted frame" — which is all a full-snapshot feed needs.
 
 Verbatim frame (levels trimmed from **50 per side** to 3; the four captured frames all carried
@@ -1006,15 +1006,15 @@ exactly 50 and 50):
 
 **⚠ The captures arrived NEWEST-FIRST** (`51.723`, `51.221`, `50.723`, `50.216`), which is an
 artifact of how they were pasted, not evidence about wire order. Nothing in the set proves lbank
-never re-sends an older book — that is exactly what job 2's `out_of_order` guard is there for.
+never re-sends an older book — that is exactly what job 3's `out_of_order` guard is there for.
 
-**⚠ Equal timestamps are ACCEPTED, not rejected** (user decision 2026-08-26). Job 2's null-seq
+**⚠ Equal timestamps are ACCEPTED, not rejected** (user decision 2026-08-26). Job 3's null-seq
 guard is `event_time < lastEventTime`, strictly older — so two frames sharing a `TS` both pass
 and the book is simply re-emitted unchanged. On a feed that publishes every ~500 ms this is a
 duplicate snapshot, which is harmless; it is written down here because it is a decision, not an
 oversight.
 
-Fixture: `flink/normalizer/job-pair-extractor/src/test/resources/fixtures/ex9-snapshot.json`
+Fixture: `flink/normalizer/job-parser/src/test/resources/fixtures/ex9-snapshot.json`
 (this frame, without the NiFi fields — those are injected by the shared tests). Hand-built
 payloads in this shape live in `e2e/scenario/data_ex9.go`; they are fixtures for the pipeline's
 arithmetic, **not captures**.

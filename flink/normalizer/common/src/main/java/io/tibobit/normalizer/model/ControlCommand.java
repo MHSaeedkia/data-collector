@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * A control-plane command sent to NiFi, independent of the data-plane pipeline — the one record
- * that travels against the flow, asking the collector to re-send a snapshot for a market job 2
+ * that travels against the flow, asking the collector to re-send a snapshot for a market job 3
  * can no longer track. Encoded as Avro on subject {@code control-command} (see
  * {@link io.tibobit.normalizer.serde.ControlCommandSerializer}).
  *

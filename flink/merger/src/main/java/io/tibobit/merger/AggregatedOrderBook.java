@@ -3,7 +3,7 @@ package io.tibobit.merger;
 import java.util.List;
 
 /**
- * INPUT model: one job-6 aggregated record for a pair+side, read off {@code p{pair_id}-{side}}.
+ * INPUT model: one job-7 aggregated record for a pair+side, read off {@code p{pair_id}-{side}}.
  * Levels arrive already sorted (asks ascending / bids descending, ties broken by quantity
  * descending), which is why equal-price levels are adjacent.
  *

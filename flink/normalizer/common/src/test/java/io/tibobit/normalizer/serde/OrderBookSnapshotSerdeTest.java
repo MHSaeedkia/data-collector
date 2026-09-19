@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Round-trip tests for {@link OrderBookSnapshotSerializer#toGenericRecord} +
  * {@link OrderBookSnapshotDeserializer#fromGenericRecord} against
- * schemas/order_book_snapshot.avsc (job-5 output / job-6 input). Unlike RawOrderBookEvent both
+ * schemas/order_book_snapshot.avsc (job-6 output / job-7 input). Unlike RawOrderBookEvent both
  * sides are REQUIRED here — a built book always has both, possibly empty.
  */
 class OrderBookSnapshotSerdeTest {
@@ -101,7 +101,7 @@ class OrderBookSnapshotSerdeTest {
     }
 
     /**
-     * Given a book carrying timings accumulated through jobs 1–5, When round-tripped, Then the
+     * Given a book carrying timings accumulated through jobs 1–6, When round-tripped, Then the
      * set stages survive and the not-yet-run stages stay null.
      */
     @Test

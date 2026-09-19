@@ -12,7 +12,7 @@ import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroSer
 /**
  * Encodes a {@link RawOrderBookEvent} to Confluent-wire-format Avro bytes (schema
  * schemas/raw_order_book_event.avsc, subject {@code raw-order-book-event}) — the value shape of
- * every job 1–4 output topic. The write schema is fetched from the Schema Registry at first
+ * every job 2–5 output topic. The write schema is fetched from the Schema Registry at first
  * use — never from a local/bundled copy.
  */
 public class RawOrderBookEventSerializer implements SerializationSchema<RawOrderBookEvent> {

@@ -1,7 +1,7 @@
 # latency-monitor
 
 Tails one Kafka topic and prints, per record, where its time went: how long each
-of jobs 1–5 held it, how long it waited in Kafka between them, and how the whole
+of jobs 1–6 held it, how long it waited in Kafka between them, and how the whole
 journey compares against the exchange's own clock and the broker's write time.
 
 Replaces `scripts/watch-topic.sh`. That script could print a record's timestamp
@@ -81,15 +81,16 @@ ex1-p1-orderbook-snapshot-flink  partition=0  offset=1505638  ex1-p1  (OrderBook
   event_time          2026-09-14 14:34:26.146 +0330
 
   job              in             out                   job       wait
-  1 pair-extract   14:34:26.971   14:34:26.972          1ms        n/a
-  2 type-validate  14:34:28.569   14:34:28.569           0s     1.597s
-  3 rebase         14:34:32.572   14:34:32.572           0s     4.003s
-  4 precision      14:34:32.989   14:34:32.989           0s      417ms
-  5 book-build     14:34:33.214   14:34:33.214           0s      225ms
+  1 parse          14:34:26.971   14:34:26.972          1ms        n/a
+  2 pair-extract   14:34:27.104   14:34:27.104           0s      132ms
+  3 type-validate  14:34:28.569   14:34:28.569           0s     1.465s
+  4 rebase         14:34:32.572   14:34:32.572           0s     4.003s
+  5 precision      14:34:32.989   14:34:32.989           0s      417ms
+  6 book-build     14:34:33.214   14:34:33.214           0s      225ms
 
   source     exchange → job 1 in          825ms
-  pipeline   job 1 in → job 5 out        6.243s
-  write      job 5 out → kafka            286ms
+  pipeline   job 1 in → job 6 out        6.243s
+  write      job 6 out → kafka            286ms
   end-to-end exchange → kafka            7.354s
 ```
 
@@ -99,8 +100,8 @@ ex1-p1-orderbook-snapshot-flink  partition=0  offset=1505638  ex1-p1  (OrderBook
   first job has no predecessor, so `n/a`.
 - **source** — the exchange's own clock to job 1's `in`: everything before
   Flink — the exchange's network, NiFi, and the raw topic.
-- **pipeline** — job 1 `in` to job 5 `out`.
-- **write** — job 5 `out` to the Kafka write time.
+- **pipeline** — job 1 `in` to job 6 `out`.
+- **write** — job 6 `out` to the Kafka write time.
 - **end-to-end** — the exchange's own clock to the Kafka write time. Printed on
   every topic, including ones with no `pipeline_timings`.
 - **stalest** — `min_event_time` to the Kafka write time, only on the
@@ -136,9 +137,9 @@ decimals (`5.600s`, not Go's `5.6s`), so a column of them stays scannable.
 
 ## Other topics
 
-It works on any topic in the pipeline, not only job 5's:
+It works on any topic in the pipeline, not only job 6's:
 
-- **jobs 1–4 stage topics** — the stages not yet reached are `n/a`, and the
+- **jobs 1–5 stage topics** — the stages not yet reached are `n/a`, and the
   totals anchor on the stages that are present.
 - **`p{id}-{side}` and the merged/adjusted topics** — these carry no
   `pipeline_timings` and no `exchange_event_time`, so `end-to-end` is `n/a`

@@ -13,7 +13,7 @@ import java.util.Map;
  * from exchange_markets as
  * {@code "{exchange_id}|{pair_id}" → AdjustmentFactors}, keyed the way this job
  * sees levels (a level's own {@code exchange_id} against the book's
- * {@code pair_id} — market_id IS the pipeline's pair_id, same as job 3's
+ * {@code pair_id} — market_id IS the pipeline's pair_id, same as job 4's
  * RebaseFactorsLoader). Plugged into RefreshingLookup so a rate edit is picked
  * up without a job restart.
  */

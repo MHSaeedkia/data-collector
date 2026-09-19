@@ -5,7 +5,7 @@ import "orderbook-e2e/events"
 // Control-plane scenarios. Every other data_*.go file is organized by exchange,
 // because what it exercises is that exchange's wire quirks. These two are
 // organized around one cross-cutting feature instead: the `control-plane` topic
-// job 2 writes to when a market's stream goes untrustworthy, asking NiFi to
+// job 3 writes to when a market's stream goes untrustworthy, asking NiFi to
 // re-send a snapshot.
 //
 // The rest of the suite already covers a SINGLE request — eight scenarios end on
@@ -543,7 +543,7 @@ var ControlEx6StaleResyncAccepted = Scenario{
 // The event-time twin of ControlEx6StaleResyncAccepted above. That one proves the
 // SEQUENCED guard (`seq <= lastSeq`) yields to an outstanding request; this one proves
 // the EVENT-TIME guard (`event_time < lastEventTime` on a null-seq snapshot) does too.
-// They are separate branches in job 2 and only one of them was ever covered end to end.
+// They are separate branches in job 3 and only one of them was ever covered end to end.
 //
 // Ported from ControlEx1LaggingRestResync, which was deleted 2026-09-02 along with the
 // ex1-as-delta-feed premise it rested on. ex6 is the natural home for it now: bybit's

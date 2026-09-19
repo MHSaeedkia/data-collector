@@ -166,7 +166,7 @@ func stampArrayRoot(payload, id string) (string, string, error) {
 	return string(out), id, nil
 }
 
-// checkSnapshotLineage asserts what job 5's output must satisfy on every run.
+// checkSnapshotLineage asserts what job 6's output must satisfy on every run.
 //
 // The ids themselves cannot be predicted, but two exact relationships can be. Job
 // 5 emits one record per accepted event, so the trigger ids must be DISTINCT
@@ -189,11 +189,11 @@ func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) er
 		seen[s.ID] = i
 
 		if err := validID(s.TriggerID); err != nil {
-			return fmt.Errorf("%s record %d: trigger_id: %w — job 5 lost the chain", topic, i, err)
+			return fmt.Errorf("%s record %d: trigger_id: %w — job 6 lost the chain", topic, i, err)
 		}
 		if first, dup := triggered[s.TriggerID]; dup {
 			return fmt.Errorf("%s record %d: trigger_id %s already triggered record %d — "+
-				"job 5 emits one book per event", topic, i, s.TriggerID, first)
+				"job 6 emits one book per event", topic, i, s.TriggerID, first)
 		}
 		triggered[s.TriggerID] = i
 
@@ -219,7 +219,7 @@ func checkSnapshotLineage(topic string, snapshots []events.OrderbookSnapshot) er
 
 // checkAggregatedLineage is the one exact, cross-job assertion available: every
 // level of the final aggregated record must name the id of a snapshot that
-// job 5 really emitted. A scenario feeds a single exchange, so the levels of the
+// job 6 really emitted. A scenario feeds a single exchange, so the levels of the
 // final book all come from its last snapshot.
 //
 // This is what makes the per-level design testable end to end. A per-record
@@ -249,7 +249,7 @@ func checkAggregatedLineage(topic string, final events.AggregatedSide,
 			return fmt.Errorf("%s level %d: source_id: %w", topic, i, err)
 		}
 		if !emitted[level.SourceID] {
-			return fmt.Errorf("%s level %d: source_id %s names no snapshot job 5 emitted",
+			return fmt.Errorf("%s level %d: source_id %s names no snapshot job 6 emitted",
 				topic, i, level.SourceID)
 		}
 		if level.SourceID != lastID {

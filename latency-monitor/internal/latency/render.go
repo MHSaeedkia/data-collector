@@ -70,8 +70,8 @@ func Render(w io.Writer, meta Meta, rec event.Record, m Metrics) {
 
 		b.WriteString("\n")
 		fmt.Fprintf(&b, "  source     exchange → job 1 in   %12s\n", dur(m.Source))
-		fmt.Fprintf(&b, "  pipeline   job 1 in → job 5 out  %12s\n", dur(m.Pipeline))
-		fmt.Fprintf(&b, "  write      job 5 out → kafka     %12s\n", dur(m.Write))
+		fmt.Fprintf(&b, "  pipeline   job 1 in → job 6 out  %12s\n", dur(m.Pipeline))
+		fmt.Fprintf(&b, "  write      job 6 out → kafka     %12s\n", dur(m.Write))
 	}
 
 	// End-to-end on every topic, whatever else the record lacks.

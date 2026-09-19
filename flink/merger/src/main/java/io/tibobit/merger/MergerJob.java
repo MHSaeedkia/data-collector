@@ -20,13 +20,13 @@ import java.util.regex.Pattern;
  *     -> Kafka output  p{id}-{side}-merged  (subject merged-order-book-event)
  *
  * This is NOT a stage of the raw-normalization pipeline and does not live in flink/normalizer/. It
- * reads that pipeline's finished output and publishes a second, parallel view of it. Job 6's
+ * reads that pipeline's finished output and publishes a second, parallel view of it. Job 7's
  * union-never-sum rule is a deliberate business decision and is untouched; both topics are live and
  * consumers choose.
  *
- * Reading job 6's output rather than job 5's per-exchange books costs one Kafka hop of latency and
- * buys a stateless job: job 6 has already unioned every exchange, so no MapState, no splitter and
- * no gap/reset handling are needed here. An exchange that job 6 dropped is already absent.
+ * Reading job 7's output rather than job 6's per-exchange books costs one Kafka hop of latency and
+ * buys a stateless job: job 7 has already unioned every exchange, so no MapState, no splitter and
+ * no gap/reset handling are needed here. An exchange that job 7 dropped is already absent.
  */
 public class MergerJob {
 

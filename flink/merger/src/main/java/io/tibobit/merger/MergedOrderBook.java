@@ -6,9 +6,9 @@ import java.util.List;
  * OUTPUT model: the price-merged book for one pair+side, published to
  * {@code p{pair_id}-{side}-merged} (subject {@code merged-order-book-event}).
  *
- * <p>Unlike job 6's aggregated record, this one has a record-level {@code sourceId}: the merger
+ * <p>Unlike job 7's aggregated record, this one has a record-level {@code sourceId}: the merger
  * consumes exactly one aggregated record per output record, so there is a single unambiguous
- * parent. Job 6 could not say that — its record fans in from every exchange at once, which is why
+ * parent. Job 7 could not say that — its record fans in from every exchange at once, which is why
  * its lineage lives per level.
  */
 public class MergedOrderBook {

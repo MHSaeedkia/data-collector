@@ -146,17 +146,20 @@ DB_QUERY = """
 # Each entry is one raw-pipeline job's output topic, so a stalled stage points at the
 # job that stopped emitting.
 #
+# Job 1's ex{id}-parsed-flink is NOT here: the parser resolves no pair, so its output is
+# per exchange. It is listed by hand in config.yaml `topics:`, next to ex{id}-raw.
+#
 # ex{id}-p{id}-rejected-flink is deliberately NOT monitored here: a silent dead-letter
 # means the pipeline is healthy, so a staleness check on it would report stale=1
 # permanently in the good case.
 TOPIC_SOURCES = ("db", "config", "both")
 
 NORMALIZER_STAGES = (
-    "raw-flink",                 # job 1 pair-extractor  out
-    "type-validated-raw-flink",  # job 2 type-validator  out
-    "rebased-flink",             # job 3 rebaser         out
-    "applied-precision-flink",   # job 4 precision       out
-    "orderbook-snapshot-flink",  # job 5 book-builder    out
+    "raw-flink",                 # job 2 pair-extractor  out
+    "type-validated-raw-flink",  # job 3 type-validator  out
+    "rebased-flink",             # job 4 rebaser         out
+    "applied-precision-flink",   # job 5 precision       out
+    "orderbook-snapshot-flink",  # job 6 book-builder    out
 )
 
 

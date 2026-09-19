@@ -1,12 +1,12 @@
 package io.tibobit.merger;
 
 /**
- * INPUT model: one level of job 6's aggregated book, decoded from subject
- * {@code aggregated-order-book-event}. Carries its own {@code exchangeId} because job 6 unions
+ * INPUT model: one level of job 7's aggregated book, decoded from subject
+ * {@code aggregated-order-book-event}. Carries its own {@code exchangeId} because job 7 unions
  * rather than sums — equal prices from different exchanges arrive here as separate, adjacent
  * entries. Turning exactly that into one summed entry is this job's whole purpose.
  *
- * <p>{@code sourceId} is the id of the job-5 snapshot the level came from; it is what ends up in
+ * <p>{@code sourceId} is the id of the job-6 snapshot the level came from; it is what ends up in
  * the merged level's {@code source_ids}.
  */
 public class AggregatedLevel {

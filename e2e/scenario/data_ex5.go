@@ -19,7 +19,7 @@
 //     jump 0 is the only possibility, not merely the default, and why the levels below move by
 //     large arbitrary seq steps rather than by 1.
 //
-// Because every frame is a full book with a sequence, job 2 takes its snapshot branch and nothing
+// Because every frame is a full book with a sequence, job 3 takes its snapshot branch and nothing
 // else: `seq <= lastSeq` is stale_or_duplicate (Ex5StaleSeq) and any forward seq is accepted, with
 // no contiguity rule. ex5 therefore has NO gap case, NO cold-start case, and can emit NO control
 // command — every scenario here asserts an empty control stream. It joins ex3, ex4 and ex9 in that
@@ -36,9 +36,9 @@
 //     Ex5NoiseFrames pins.
 //   - The `sequence_jump_tolerance` window. ex5 was the only exchange that ever stamped a nonzero
 //     one, so when it left the delta group the field lost its last user and was removed from the
-//     schema outright (2026-09-07). Job 2's contiguity check is a plain equality again.
+//     schema outright (2026-09-07). Job 3's contiguity check is a plain equality again.
 //
-// Every bitget market in the seed is a USDT market with rebase 0/0, so job 3 is the identity here
+// Every bitget market in the seed is a USDT market with rebase 0/0, so job 4 is the identity here
 // and there is nothing to assert about it — ex1 and ex4 are the only two exchanges that can.
 // Pair 1 (BTCUSDT) is price_precision 2 / quantity_precision 8.
 
@@ -141,7 +141,7 @@ var Ex5SnapshotStream = Scenario{
 	},
 }
 
-// Ex5StaleSeq — the whole of job 2's rule set for this exchange, in one scenario. A repeated or
+// Ex5StaleSeq — the whole of job 3's rule set for this exchange, in one scenario. A repeated or
 // older `seq` is out-of-order arrival and is dead-lettered stale_or_duplicate; 04 pins the other
 // half of the snapshot branch, that a forward seq is accepted however far it jumps, because a
 // snapshot feed has no contiguity rule to break. Note 02 and 03 carry LATER event times than 01
@@ -447,9 +447,9 @@ var Ex5NoiseFrames = Scenario{
 	},
 }
 
-// Ex5PrecisionDust — job 4 on a string-pair wire: prices truncate DOWN to the market's 2 places,
+// Ex5PrecisionDust — job 5 on a string-pair wire: prices truncate DOWN to the market's 2 places,
 // colliding ones merge with their quantities summed BEFORE the quantity is truncated, and a
-// quantity under the market's 8 places becomes "0", which job 5 reads as "no level here".
+// quantity under the market's 8 places becomes "0", which job 6 reads as "no level here".
 var Ex5PrecisionDust = Scenario{
 	ExchangeID: 5,
 	PairID:     1,
@@ -514,16 +514,16 @@ var Ex5PrecisionDust = Scenario{
 	},
 }
 
-// Ex5SeqCarriedOverFromDepth — the DEPLOY hazard, made reproducible: job 2 holding a `lastSeq`
+// Ex5SeqCarriedOverFromDepth — the DEPLOY hazard, made reproducible: job 3 holding a `lastSeq`
 // left over from the `depth` channel, where the sequence id was the inner `ts` in epoch MILLIS
 // (~1.8e12). A `books50` `seq` is ~7.9e11 — about a trillion LOWER — so every frame off the new
 // channel lands on `seq <= lastSeq` and is dead-lettered, and the whole exchange goes dark until
-// job 2's state is cleared.
+// job 3's state is cleared.
 //
 // Why the first source carries a millisecond value as its `seq`: the harness cancels and
 // resubmits every job before each scenario (warmup.Run), so no scenario can inherit state from
-// the one before it. Source 01 therefore stands in for the state a LIVE job 2 is holding at the
-// moment job 1 is redeployed — job 2 does not care how `lastSeq` got there, only what it is.
+// the one before it. Source 01 therefore stands in for the state a LIVE job 3 is holding at the
+// moment job 1 is redeployed — job 3 does not care how `lastSeq` got there, only what it is.
 // 01 is a legal `books50` frame in every other respect.
 //
 // The three things this pins, none of which is true of `Ex5StaleSeq`:
@@ -531,7 +531,7 @@ var Ex5PrecisionDust = Scenario{
 //   - 02, 03 and 04 carry the REAL captured seq values (787944892031 -> 903153 -> 916487), so the
 //     sequence is moving FORWARD across them and is still rejected every time. The lockout does
 //     not clear itself as the counter climbs.
-//   - The control stream is EMPTY. Job 2's `!resyncPending()` escape hatch is the only way a
+//   - The control stream is EMPTY. Job 3's `!resyncPending()` escape hatch is the only way a
 //     lower `seq` is ever accepted, and only askForSnapshot opens it — reachable from the update
 //     branch (no_baseline / awaiting_snapshot / sequence_gap) and from the silence timer, none of
 //     which a snapshot-only feed whose frames keep ARRIVING can reach. So nothing asks NiFi for
@@ -540,11 +540,11 @@ var Ex5PrecisionDust = Scenario{
 //     book rather than going visibly empty.
 //
 // The control experiment is every other ex5 scenario in this file: warmup resubmits the jobs, so
-// they meet a job 2 with EMPTY state and the same low seq values are accepted immediately. The
+// they meet a job 3 with EMPTY state and the same low seq values are accepted immediately. The
 // fix at deploy time is exactly that — resubmit job-type-validator alongside job-pair-extractor,
 // which every Makefile deploy target already does (they all run cancel-flink-jobs.sh first).
 //
-// ⚠ SINCE 2026-09-07 THE LOCKOUT IS BOUNDED, NOT PERMANENT. Job 2 now also measures health on the
+// ⚠ SINCE 2026-09-07 THE LOCKOUT IS BOUNDED, NOT PERMANENT. Job 3 now also measures health on the
 // last ACCEPTED event, so after one `staleness_threshold_seconds` (60 in 02_seed.sql) it asks for
 // a snapshot with reason `no_progress` and the next frame re-anchors `lastSeq`. This scenario
 // still asserts the lockout because it observes the window BEFORE that timer fires: the whole run
@@ -556,7 +556,7 @@ var Ex5SeqCarriedOverFromDepth = Scenario{
 	ExchangeID: 5,
 	PairID:     1,
 	Sources: []string{
-		// 01 the state job 2 carries over the deploy: a sequence id on the `depth` channel's
+		// 01 the state job 3 carries over the deploy: a sequence id on the `depth` channel's
 		// millisecond clock, 1800000000000 = 2027-01-15T08:00:00Z as a NUMBER.
 		`{
 	"id": "0e1f4b8c-2d3a-4f61-9c7e-5b8a1d2e3f40",

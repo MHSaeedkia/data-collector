@@ -25,7 +25,7 @@ public class OurProfitFunction extends RichMapFunction<AdjustedOrderBook, Adjust
 
     /**
      * Fallback when exchange_markets has no row for a level's (exchange, pair) — the pre-DB
-     * constant. This job has no dead-letter output to raise a missing row into (unlike job 3's
+     * constant. This job has no dead-letter output to raise a missing row into (unlike job 4's
      * no_rebase_row), and silently charging 0% would under-charge rather than merely go stale, so
      * it falls back to what used to be hardcoded instead of either.
      */

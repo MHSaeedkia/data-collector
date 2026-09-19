@@ -3,14 +3,14 @@ package io.tibobit.normalizer.model;
 import java.util.List;
 
 /**
- * Job-5 output: the full maintained book of one (exchange, pair), emitted on every accepted
+ * Job-6 output: the full maintained book of one (exchange, pair), emitted on every accepted
  * event (schema schemas/order_book_snapshot.avsc, subject order-book-snapshot). Both sides are
  * required here — a built book always has both, possibly empty. {@code lastSequenceId} is null
  * only for feeds with no ordering field (ex3 wallex).
  *
  * <p>{@code simulation} is NiFi's flag carried up the pipeline (0 = live, 1 = simulation). The book
  * is state built from many events, so the emitted snapshot carries the flag of the LAST accepted
- * event for this (exchange, pair) — in practice a feed does not switch mid-stream. Job 6 stamps it
+ * event for this (exchange, pair) — in practice a feed does not switch mid-stream. Job 7 stamps it
  * onto every level so the aggregated book stays attributable per exchange.
  *
  * <p>Lineage is split across two granularities here, because this is where the pipeline genuinely
@@ -26,7 +26,7 @@ public class OrderBookSnapshot {
     private String id = "";
     private String triggerId = "";
     private long eventTime;
-    // Carried from the triggering job-4 event; null when that exchange sends no clock of its own.
+    // Carried from the triggering job-5 event; null when that exchange sends no clock of its own.
     private Long exchangeEventTime;
     private Long lastSequenceId;
     private List<PriceLevel> asks;

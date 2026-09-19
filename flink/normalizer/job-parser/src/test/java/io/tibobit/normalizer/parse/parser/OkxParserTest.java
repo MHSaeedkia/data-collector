@@ -47,7 +47,7 @@ class OkxParserTest {
     /**
      * Given the captured ex8 update, When parsed, Then the jump is the DYNAMIC
      * {@code seqId - prevSeqId} (4429784551 - 4429784547 = 4), the four-element levels keep only
-     * price and qty, and the qty-"0" delete survives verbatim (job 5 needs it to remove a level).
+     * price and qty, and the qty-"0" delete survives verbatim (job 6 needs it to remove a level).
      */
     @Test
     @DisplayName("parses the captured update with the dynamic jump and the qty-0 delete")
@@ -69,21 +69,21 @@ class OkxParserTest {
     /**
      * The invariant the whole channel switch rests on, pinned on the real consecutive pair.
      *
-     * <p>Job 2 checks {@code seq == lastSeq + jump}. Substituting this parser's dynamic jump gives
+     * <p>Job 3 checks {@code seq == lastSeq + jump}. Substituting this parser's dynamic jump gives
      * {@code seqId == lastSeq + (seqId - prevSeqId)}, which reduces to {@code prevSeqId == lastSeq}
-     * — okx's own documented contiguity rule, enforced exactly with no change to job 2 and no
+     * — okx's own documented contiguity rule, enforced exactly with no change to job 3 and no
      * window or tolerance. So for the snapshot→update transition the update's
      * {@code sequenceId - sequenceJump} must equal the snapshot's {@code sequenceId}.
      */
     @Test
-    @DisplayName("the dynamic jump makes job 2's check reduce to prevSeqId == lastSeq")
+    @DisplayName("the dynamic jump makes job 3's check reduce to prevSeqId == lastSeq")
     void dynamicJumpReducesToPrevSeqIdChaining() throws Exception {
         RawOrderBookEvent snapshot =
                 parser.parse(Fixtures.bytes("ex8-snapshot.json")).get(0).getEvent();
         RawOrderBookEvent update =
                 parser.parse(Fixtures.bytes("ex8-update.json")).get(0).getEvent();
 
-        // what job 2 computes: expected == lastSeq + jump, with lastSeq = the snapshot's seq
+        // what job 3 computes: expected == lastSeq + jump, with lastSeq = the snapshot's seq
         long expected = snapshot.getSequenceId() + update.getSequenceJump();
         assertThat(update.getSequenceId()).isEqualTo(expected);
         // ... which is the same statement as prevSeqId == lastSeq
@@ -93,7 +93,7 @@ class OkxParserTest {
 
     /**
      * Given okx's documented no-change keepalive, which repeats the counter
-     * ({@code seqId == prevSeqId}), When parsed, Then the jump is 0 — job 2's window then accepts
+     * ({@code seqId == prevSeqId}), When parsed, Then the jump is 0 — job 3's window then accepts
      * {@code seq == lastSeq} and the book is left exactly as it was, which is what a no-op means.
      * No special-casing needed anywhere; this test exists so the behaviour is deliberate.
      */
@@ -116,7 +116,7 @@ class OkxParserTest {
     /**
      * Given WS frames whose counter fields are missing or not integral, When parsed, Then the
      * whole frame is discarded rather than emitted with a guessed sequence — without both fields
-     * the chain cannot be expressed and job 2 would silently mis-validate.
+     * the chain cannot be expressed and job 3 would silently mis-validate.
      */
     @Test
     @DisplayName("discards a WS frame missing seqId or prevSeqId")
@@ -160,7 +160,7 @@ class OkxParserTest {
      * frames are sequenced by. It is that a snapshot's {@code seqId} is not any later update's
      * {@code prevSeqId}: the counter advances between NiFi's fetch and the next WS frame, so
      * seeding {@code lastSeq} from it would break the next chain check rather than repair it.
-     * Null hands job 2 the {@code baselinePending} bootstrap instead.
+     * Null hands job 3 the {@code baselinePending} bootstrap instead.
      */
     @Test
     @DisplayName("the REST snapshot is null-seq so it never seeds the update window")

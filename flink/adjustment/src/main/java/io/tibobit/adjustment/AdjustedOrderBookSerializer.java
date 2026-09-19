@@ -18,10 +18,10 @@ import java.util.List;
  * <p>
  * <b>Its own subject, as of step 3.</b> The pass-through version reused
  * {@code aggregated-order-book-event}, which was right while the record was
- * byte-identical to job 6's. It is not any more: the adjusted event carries the
+ * byte-identical to job 7's. It is not any more: the adjusted event carries the
  * three rates that were applied, so it is a different shape and needs a schema
  * of its own. That is a NEW subject, not an evolution of the aggregated one —
- * job 6's contract with {@code orderbook-viewer/} is frozen and must not grow fields because
+ * job 7's contract with {@code orderbook-viewer/} is frozen and must not grow fields because
  * a downstream job wanted them.
  *
  * <p>
@@ -72,7 +72,7 @@ public class AdjustedOrderBookSerializer implements SerializationSchema<Adjusted
         }
 
         // `side` is an Avro ENUM, not a free string — a plain String here NPEs inside the
-        // serializer at first emit, which is how the `reset` symbol broke job 2 live once.
+        // serializer at first emit, which is how the `reset` symbol broke job 3 live once.
         return new GenericRecordBuilder(schema)
                 .set("pair_id", book.getPairId())
                 .set("side", new GenericData.EnumSymbol(sideSchema, book.getSide()))

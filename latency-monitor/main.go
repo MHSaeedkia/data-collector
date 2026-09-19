@@ -1,5 +1,5 @@
 // Command latency-monitor tails one Kafka topic and prints, for every record,
-// where its time went: how long each of jobs 1–5 held it, how long it waited in
+// where its time went: how long each of jobs 1–6 held it, how long it waited in
 // Kafka between them, and how the whole journey compares against the exchange's
 // own clock and the broker's write time.
 //

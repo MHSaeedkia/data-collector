@@ -24,12 +24,12 @@ public final class Decimals {
         return value.stripTrailingZeros().toPlainString();
     }
 
-    /** Job-3 rebase: shift the decimal point by {@code rebase} powers of ten (exact, no rounding). */
+    /** Job-4 rebase: shift the decimal point by {@code rebase} powers of ten (exact, no rounding). */
     public static BigDecimal rebase(BigDecimal value, int rebase) {
         return value.scaleByPowerOfTen(rebase);
     }
 
-    /** Job-4 precision: truncate (round DOWN, never half-up) to {@code precision} decimal places. */
+    /** Job-5 precision: truncate (round DOWN, never half-up) to {@code precision} decimal places. */
     public static BigDecimal truncate(BigDecimal value, int precision) {
         return value.setScale(precision, RoundingMode.DOWN);
     }

@@ -9,7 +9,7 @@ import "orderbook-e2e/events"
 
 // Ex1WsSnapshotsReplaceWholesale — REVISED 2026-09-02: WS pushes are full snapshots, not deltas
 // (see NobitexParser's javadoc). Each WS push REPLACES the book wholesale — it does not merge into
-// whatever REST or an earlier WS push left resting — and job 2 never checks the gap between WS
+// whatever REST or an earlier WS push left resting — and job 3 never checks the gap between WS
 // offsets (only the seq<=last stale check applies), so 05's jump from offset 1001 to 9000 is
 // silently accepted rather than treated as a hole. This scenario used to be named
 // Ex1RestThenWsResync and tested the opposite (delta) assumption's REST-resync bootstrap, which no
@@ -400,13 +400,13 @@ var Ex1WsSnapshotAloneEstablishesBaseline = Scenario{
 	},
 }
 
-// Ex1WsGapAcceptedStaleRejected — REVISED 2026-09-02: a WS push is a snapshot, so job 2 never
+// Ex1WsGapAcceptedStaleRejected — REVISED 2026-09-02: a WS push is a snapshot, so job 3 never
 // jump-checks it — 04's offset skip (1001 -> 1005, expected 1002) is silently ACCEPTED, unlike a
 // true delta feed where it would gap. The one ordering guard that DOES still apply to a sequenced
 // snapshot is seq<=last: 05 arrives with offset 1002, which is now behind the already-accepted
 // 1005, so it is rejected stale_or_duplicate and the book is untouched by it. No reset, no
 // snapshot_request — the control plane is never engaged, because that machinery lives entirely in
-// job 2's "update" branch and this exchange no longer sends that type. Used to be named
+// job 3's "update" branch and this exchange no longer sends that type. Used to be named
 // Ex1SequenceGap and asserted a sequence_gap/reset/resync episode that can no longer occur here.
 var Ex1WsGapAcceptedStaleRejected = Scenario{
 	ExchangeID: 1,
@@ -1052,10 +1052,10 @@ var Ex1StaleRestReplay = Scenario{
 	},
 }
 
-// Ex1PrecisionDust — job 4 on a nobitex feed: prices that collide once truncated to the market's
+// Ex1PrecisionDust — job 5 on a nobitex feed: prices that collide once truncated to the market's
 // 2 places merge into one level with their quantities summed, and a quantity below the market's 8
-// places truncates to zero, which job 5 reads as a delete. Pair 1 rebases by 10^0, so the numbers
-// that move here moved in job 4 and nowhere else. WS frames are snapshots (2026-09-02): 02 REPLACES
+// places truncates to zero, which job 6 reads as a delete. Pair 1 rebases by 10^0, so the numbers
+// that move here moved in job 5 and nowhere else. WS frames are snapshots (2026-09-02): 02 REPLACES
 // the REST book wholesale, so the 62649.5 bid that 02's payload never re-sends is GONE, not merely
 // left untouched — the same silent-loss shape the real capture that prompted this fix showed.
 var Ex1PrecisionDust = Scenario{
@@ -1141,11 +1141,11 @@ var Ex1PrecisionDust = Scenario{
 	},
 }
 
-// Ex1RebaseToman — job 3's IRR→Toman case. Nobitex quotes IRT markets in rials; the platform
+// Ex1RebaseToman — job 4's IRR→Toman case. Nobitex quotes IRT markets in rials; the platform
 // stores tomans, so `exchange_markets(1,'1K_SHIBIRT')` carries price_amount_rebase -1 and the
 // price is shifted one place down before anything else sees it. Volume is untouched (rebase 0).
 // The prices are chosen so the shift lands a third decimal on the market's 2 places, which
-// job 4 then truncates DOWN — proving rebase runs first and truncation second. The WS frame is a
+// job 5 then truncates DOWN — proving rebase runs first and truncation second. The WS frame is a
 // snapshot (2026-09-02): it REPLACES the book wholesale, so 852.34 (bid) and 854.1 (ask) — not
 // resent by 02's payload — are gone from the result, not merely left untouched.
 var Ex1RebaseToman = Scenario{
@@ -1234,7 +1234,7 @@ var Ex1RebaseToman = Scenario{
 	},
 }
 
-// Ex1RebaseScaledUnit — job 3's scaled-unit case, and the only pair in the suite where BOTH
+// Ex1RebaseScaledUnit — job 4's scaled-unit case, and the only pair in the suite where BOTH
 // rebase exponents are non-zero. Nobitex quotes PEPE per 1,000,000 units, so
 // `exchange_markets(1,'1M_PEPEUSDT')` is price -6 / volume +6: the price divides by a million
 // and the quantity multiplies by one, landing on per-1-PEPE numbers. Pair 17 is also the only

@@ -17,7 +17,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import java.util.regex.Pattern;
 
 /**
- * Job 5 entry point: book builder.
+ * Job 6 entry point: book builder.
  *
  * Pipeline:
  *   Kafka input  ex{id}-p{id}-applied-precision-flink  (RawOrderBookEvent, subject raw-order-book-event)
@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  *     -> BookBuildFunction (apply snapshot/update to keyed state, emit the full book)
  *     -> Kafka output  ex{id}-p{id}-orderbook-snapshot-flink  (subject order-book-snapshot)
  *
- * No dead-letter: everything arriving here was already validated by job 2.
+ * No dead-letter: everything arriving here was already validated by job 3.
  */
 public class BookBuilderJob {
 

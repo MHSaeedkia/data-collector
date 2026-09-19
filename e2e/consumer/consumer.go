@@ -82,9 +82,9 @@ func ReadAggregated(ctx context.Context, broker, registryURL, topic string, wait
 }
 
 // ReadControlCommands returns every control-plane command on topic, in the order
-// job 2 emitted them.
+// job 3 emitted them.
 //
-// The Kafka key is read as well — it is part of what job 2 writes, and nothing
+// The Kafka key is read as well — it is part of what job 3 writes, and nothing
 // else in the record would catch it being built from the wrong pair.
 func ReadControlCommands(ctx context.Context, registryURL, broker, topic string,
 	wait time.Duration) ([]events.ControlCommand, error) {

@@ -16,7 +16,7 @@ import io.tibobit.normalizer.model.RawOrderBookEvent;
 import io.tibobit.normalizer.model.RejectedOrderBookEvent;
 
 /**
- * Job 2 — type validation, keyed by {@code (exchange_id, pair_id)}. Applies the
+ * Job 3 — type validation, keyed by {@code (exchange_id, pair_id)}. Applies the
  * sequence rules decided in memory/project_raw_pipeline_decision.md; valid
  * events go to the main output, rejects to the {@link #REJECTED} side output
  * (dead-letter). Two rule kinds, selected by what the parser stamped on the
@@ -71,7 +71,7 @@ import io.tibobit.normalizer.model.RejectedOrderBookEvent;
  * {@code reason} that made the stream untrustworthy and repeated on an interval
  * until something resolves the condition. That whole feature is one piece of
  * state, {@link #resyncRequestedAt}, and one method, {@link #askForSnapshot}.
- * Job 2 is the only producer of those commands.
+ * Job 3 is the only producer of those commands.
  *
  * <p>
  * <b>Silence.</b> The rules above can only fire when something arrives, so a
@@ -136,7 +136,7 @@ public class TypeValidateFunction
      *
      * <p>
      * There is deliberately no companion reason for a market that has NEVER
-     * sent anything. Job 2 can only notice a market it has heard from, because
+     * sent anything. Job 3 can only notice a market it has heard from, because
      * a keyed function has no state for a key no event ever created; noticing
      * the rest would mean importing the full subscription roster, which is a
      * monitoring question and already answered by the staleness exporter (see
@@ -148,7 +148,7 @@ public class TypeValidateFunction
 
     /**
      * Control-plane reason for a market that is ARRIVING but not PROGRESSING:
-     * frames keep coming and job 2 has accepted none of them for longer than
+     * frames keep coming and job 3 has accepted none of them for longer than
      * the market's {@code staleness_threshold_seconds}. Like {@link #STALE} it
      * is raised by the timer, never by an event, so it appears only on
      * {@code control-plane}.
@@ -156,7 +156,7 @@ public class TypeValidateFunction
      * <p>
      * The condition it exists for is a sequence counter that RE-BASED: a
      * snapshot-only feed whose {@code sequence_id} restarts lower than the one
-     * job 2 already accepted (ex2/ex4 Centrifugo {@code pub.offset} when the
+     * job 3 already accepted (ex2/ex4 Centrifugo {@code pub.offset} when the
      * channel history is recreated, ex5 {@code seq} if it turns out to be
      * per-connection). Every frame then fails the snapshot branch's
      * {@code seq <= lastSeq} test forever. Such a feed reaches none of the
@@ -176,7 +176,7 @@ public class TypeValidateFunction
 
     /**
      * Event {@code type} of the synthetic reset marker emitted onto the main
-     * stream on a gap. Job 5 turns it into an emptied book so the exchange
+     * stream on a gap. Job 6 turns it into an emptied book so the exchange
      * drops out of the aggregated view instead of serving its pre-gap diverged
      * book.
      */
@@ -460,7 +460,7 @@ public class TypeValidateFunction
 
     /**
      * The silence check. A market that was sending and stopped is one nobody
-     * downstream can notice: no event arrives, so no rule runs, and job 5 keeps
+     * downstream can notice: no event arrives, so no rule runs, and job 6 keeps
      * serving a frozen book as if it were live. So every key carries a
      * processing-time deadline at
      * {@code lastArrival + staleness_threshold_seconds}, and when it passes
@@ -496,7 +496,7 @@ public class TypeValidateFunction
             // Unsubscribed (or the row is gone) while the timer was in flight. Stop
             // watching -- but empty the book on the way out, because "we no longer
             // carry this market" is downstream indistinguishable from "the book is
-            // still what it was" otherwise: job 5 keeps its MapState, job 6 keeps the
+            // still what it was" otherwise: job 6 keeps its MapState, job 7 keeps the
             // exchange in the union, and every consumer of the snapshot and aggregated
             // topics goes on being served a book with no feed behind it, forever.
             // Deliberately NO snapshot_request -- we are dropping this market, not
@@ -880,7 +880,7 @@ public class TypeValidateFunction
         //
         // The envelope gets its own id: the dead-letter topic is a topic. The event
         // inside
-        // keeps the id job 1 gave it — deliberately NOT restamped, since it is being
+        // keeps the id job 2 gave it — deliberately NOT restamped, since it is being
         // recorded, not
         // forwarded, and that id is what links this record back to the raw stream.
         RejectedOrderBookEvent rejection = new RejectedOrderBookEvent(event, reason, System.currentTimeMillis());

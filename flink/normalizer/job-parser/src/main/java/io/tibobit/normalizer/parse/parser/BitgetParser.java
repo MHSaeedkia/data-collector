@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * ex5 bitget — the {@code books50} channel: bitget's own {@code action}/{@code arg}/{@code data}
  * envelope, market key = {@code arg.instId}, {@code data} an ARRAY of book objects whose
- * {@code asks}/{@code bids} are [price, qty] STRING pairs. Ordering field for job 2 is
+ * {@code asks}/{@code bids} are [price, qty] STRING pairs. Ordering field for job 3 is
  * {@code data[i].seq} (jump 0 = snapshot feed); event time is {@code data[i].ts}, a STRING of
  * epoch millis. See sample-raw-data.md § ex5.
  *
@@ -22,7 +22,7 @@ import java.util.List;
  *
  * <ul>
  *   <li><b>No {@code "update"} frames.</b> ex5 is not a delta feed. There is no qty-{@code "0"}
- *       delete, no cold start, no {@code no_baseline} and no {@code sequence_gap} — job 2 can
+ *       delete, no cold start, no {@code no_baseline} and no {@code sequence_gap} — job 3 can
  *       only ever reach its snapshot branch for this exchange, so ex5 emits no control command.
  *       It joins ex3, ex4 and ex9 as a snapshot-only feed.</li>
  *   <li><b>No REST stream on {@code ex5-raw}.</b> The second stream added 2026-08-23 (a
@@ -33,14 +33,14 @@ import java.util.List;
  *       back on the wire, so the ordering field is a real monotonic counter again rather than the
  *       {@code ts} clock the {@code depth} channel forced. {@code sequenceJump} is 0. ex5 was the
  *       only exchange that ever stamped a jump tolerance, so when it left the delta group the
- *       field lost its last user and was <b>dropped from the schema and from job 2</b> on
+ *       field lost its last user and was <b>dropped from the schema and from job 3</b> on
  *       2026-09-07.</li>
  * </ul>
  *
  * <p><b>{@code pseq} is read by nobody, and it is NOT a predecessor pointer.</b> The obvious guess
  * — that it chains each frame to the one before, the job ex8/okx's {@code prevSeqId} does — is
  * wrong on this channel: it reads <b>0 on every frame</b> (5 consecutive live captures,
- * 2026-09-07). Nothing would work if it were adopted as a chain. Job 2 only asks that {@code seq}
+ * 2026-09-07). Nothing would work if it were adopted as a chain. Job 3 only asks that {@code seq}
  * move forward, which is all a snapshot feed can promise.
  *
  * <p><b>Why {@code seq} can be ordered on but never gap-checked</b>, measured on those same five

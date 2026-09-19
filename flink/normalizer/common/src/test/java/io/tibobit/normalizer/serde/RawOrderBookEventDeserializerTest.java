@@ -74,8 +74,8 @@ class RawOrderBookEventDeserializerTest {
     }
 
     /**
-     * Given an event stamped by job 1 only, When round-tripped, Then the pair-extract timings
-     * survive and every unreached stage stays null — jobs 2–5 read these to measure latency.
+     * Given an event stamped by job 2 only, When round-tripped, Then the pair-extract timings
+     * survive and every unreached stage stays null — jobs 3–6 read these to measure latency.
      */
     @Test
     @DisplayName("round-trips pipeline_timings, leaving unreached stages null")

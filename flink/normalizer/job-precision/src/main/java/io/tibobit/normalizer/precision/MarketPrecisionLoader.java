@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * Loads the per-pair decimal places from markets as {@code pair_id → MarketPrecision}. Keyed by
  * pair alone — precision is a property of the market, not of the exchange reporting it (unlike
- * job 3's rebase exponents, which are per exchange_markets row). Plugged into RefreshingLookup so
+ * job 4's rebase exponents, which are per exchange_markets row). Plugged into RefreshingLookup so
  * precision edits are picked up without a job restart.
  */
 public class MarketPrecisionLoader implements RefreshingLookup.Loader<Integer, MarketPrecision> {

@@ -159,7 +159,7 @@ class BookBuildFunctionTest {
     }
 
     @Test
-    @DisplayName("quantity 0 inside a snapshot never rests in the book (job 4 dust)")
+    @DisplayName("quantity 0 inside a snapshot never rests in the book (job 5 dust)")
     void zeroQuantityInSnapshotIsNotStored() throws Exception {
         OrderBookSnapshot out = process(event("snapshot", levels("10", "1", "11", "0"), List.of()));
 
@@ -300,7 +300,7 @@ class BookBuildFunctionTest {
 
         assertThat(out.getAsks()).isEmpty();
         assertThat(out.getBids()).isEmpty();
-        // Job 6 drops the exchange on an empty book — but while it is still in flight the record
+        // Job 7 drops the exchange on an empty book — but while it is still in flight the record
         // must not claim to be live data.
         assertThat(out.getSimulation()).isEqualTo(1);
     }
@@ -321,7 +321,7 @@ class BookBuildFunctionTest {
 
     // ---- lineage -----------------------------------------------------------------
 
-    /** Job 4 stamped an id on every event that reaches here; these stand in for those. */
+    /** Job 5 stamped an id on every event that reaches here; these stand in for those. */
     private static RawOrderBookEvent from(RawOrderBookEvent event, String id) {
         event.setId(id);
         return event;

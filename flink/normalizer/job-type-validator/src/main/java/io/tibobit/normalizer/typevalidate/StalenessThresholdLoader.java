@@ -12,7 +12,7 @@ import io.tibobit.normalizer.lookup.RefreshingLookup;
 /**
  * Loads the watch list — every SUBSCRIBED market and its staleness threshold —
  * from {@code exchange_markets} as {@code "{exchange_id}|{market_id}" ->
- * WatchedMarket}, keyed the way job 2 sees events (market_id IS the pipeline's
+ * WatchedMarket}, keyed the way job 3 sees events (market_id IS the pipeline's
  * pair_id). Plugged into {@link RefreshingLookup} so both a threshold edit and
  * a new subscription are picked up without a job restart.
  *
@@ -21,7 +21,7 @@ import io.tibobit.normalizer.lookup.RefreshingLookup;
  * TypeValidateFunction} arms no silence timer for it. That is what makes
  * unsubscribing take effect on its own, and it is also why a market that has
  * never sent an event is invisible here — it has no keyed state to watch.
- * Never- received markets are the staleness exporter's job, not job 2's (see
+ * Never- received markets are the staleness exporter's job, not job 3's (see
  * memory/project_staleness_exporter.md).
  *
  * <p>

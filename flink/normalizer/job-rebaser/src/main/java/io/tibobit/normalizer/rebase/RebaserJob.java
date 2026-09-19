@@ -20,7 +20,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import java.util.regex.Pattern;
 
 /**
- * Job 3 entry point: rebase.
+ * Job 4 entry point: rebase.
  *
  * Pipeline:
  *   Kafka input  ex{id}-p{id}-type-validated-raw-flink  (RawOrderBookEvent, subject raw-order-book-event)
@@ -82,7 +82,7 @@ public class RebaserJob {
                         .build())
                 .name("rebased-sink");
 
-        // Missing exchange_markets row -> the SAME dead-letter topic job 2 writes.
+        // Missing exchange_markets row -> the SAME dead-letter topic job 3 writes.
         DataStream<RejectedOrderBookEvent> rejected = rebased.getSideOutput(RebaseFunction.REJECTED);
         rejected.sinkTo(KafkaSink.<RejectedOrderBookEvent>builder()
                         .setBootstrapServers(bootstrapServers)

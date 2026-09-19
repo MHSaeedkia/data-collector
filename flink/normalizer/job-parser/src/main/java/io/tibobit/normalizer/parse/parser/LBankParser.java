@@ -17,12 +17,12 @@ import java.util.List;
  *
  * <p><b>Sequence id is null and the jump is 0</b> (user decision 2026-08-26). The wire has no
  * counter — the only monotonic field is the timestamp, and re-using it as a sequence would
- * impose a cadence the exchange never promised. A null sequence puts ex9 on job 2's event-time
+ * impose a cadence the exchange never promised. A null sequence puts ex9 on job 3's event-time
  * branch instead, where the whole test is "not older than the last accepted frame"; that is
  * exactly the guarantee a full-snapshot feed needs, because any accepted frame replaces the
  * book outright. ex9 is the THIRD exchange on that branch, after ex3/wallex and the ex1/ex2
  * REST snapshots, and like ex3 it never sends an update, so the {@code baselinePending} flag
- * job 2 sets is never consumed.
+ * job 3 sets is never consumed.
  *
  * <p>Note that guard is {@code <}, not {@code <=}: two frames with the SAME {@code TS} are both
  * accepted and the book is simply re-emitted unchanged (user decision 2026-08-26 — equal is not

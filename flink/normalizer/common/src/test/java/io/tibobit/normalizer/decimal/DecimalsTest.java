@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests the pure BigDecimal helpers the rebase (job 3) and precision (job 4) stages are built
+ * Tests the pure BigDecimal helpers the rebase (job 4) and precision (job 5) stages are built
  * on. Values are always BigDecimal-from-wire-string (memory/project_bigdecimal_rules.md); these
  * pin the exact string/scale behaviour so a library-behaviour surprise (stripTrailingZeros
  * producing 1E+3, setScale rounding half-up) can never reach the wire.
@@ -47,7 +47,7 @@ class DecimalsTest {
      * Given a value with more decimals than the market precision, When truncated, Then digits
      * are cut (round DOWN) — never rounded half-up, which would fabricate a price the exchange
      * never quoted. Values already within precision gain trailing zeros only in scale, and
-     * truncation can legitimately reach exactly zero (the job-4 truncate-to-zero hazard).
+     * truncation can legitimately reach exactly zero (the job-5 truncate-to-zero hazard).
      */
     @Test
     @DisplayName("truncate cuts digits toward zero, never rounds up")

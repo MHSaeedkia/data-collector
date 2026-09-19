@@ -55,7 +55,7 @@ func Plan(subscriptions []domain.Subscription, r config.Retentions) []domain.Top
 		for _, stage := range normalizerStages {
 			add(prefix+"-"+stage, r.Input)
 		}
-		// Shared dead-letter for jobs 2 and 3.
+		// Shared dead-letter for jobs 3 and 4.
 		add(prefix+"-rejected-flink", r.Rejected)
 	}
 
@@ -72,9 +72,9 @@ func Plan(subscriptions []domain.Subscription, r config.Retentions) []domain.Top
 
 	// Output topics — one per pair+side. Three parallel views of the same
 	// cross-exchange book:
-	//   p{id}-{side}          normalizer job 6 — levels UNIONED, each keeping its own exchange_id
+	//   p{id}-{side}          normalizer job 7 — levels UNIONED, each keeping its own exchange_id
 	//   p{id}-{side}-merged   flink/merger     — levels SUMMED, one per price, exchange_ids as a list
-	//   p{id}-{side}-adjusted flink/adjustment — job 6's record with commission/profit/slippage applied
+	//   p{id}-{side}-adjusted flink/adjustment — job 7's record with commission/profit/slippage applied
 	// The -merged and -adjusted families are created here (not in their own
 	// projects) for the same reason as every other topic: their sources read
 	// from `latest`, so the topic must exist before the job starts.

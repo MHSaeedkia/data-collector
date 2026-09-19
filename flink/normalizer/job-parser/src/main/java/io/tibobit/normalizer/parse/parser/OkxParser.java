@@ -32,16 +32,16 @@ import java.util.List;
  *
  * <p><b>The jump is DYNAMIC — {@code seqId - prevSeqId} per message, the ex7 pattern.</b> okx
  * chains every {@code books} frame to its predecessor: {@code prevSeqId} is the {@code seqId} of
- * the message before it. Algebraically job 2's {@code seq == lastSeq + jump} then reduces to
+ * the message before it. Algebraically job 3's {@code seq == lastSeq + jump} then reduces to
  * <b>{@code prevSeqId == lastSeq}</b> — okx's own documented contiguity rule, enforced exactly,
- * with no change to job 2 and no window or tolerance anywhere. Measured over 6,516 consecutive
+ * with no change to job 3 and no window or tolerance anywhere. Measured over 6,516 consecutive
  * live transitions on 5 markets: <b>6,516 chained, 0 broken</b>, while the raw {@code seqId} step
  * took 90–172 DISTINCT values per market (3 … 960), so no fixed jump could ever have worked.
  *
  * <p>Two okx-documented edge cases fall out correctly and need no special-casing. A no-change
- * keepalive carries {@code seqId == prevSeqId}, i.e. jump 0, and job 2's window accepts
+ * keepalive carries {@code seqId == prevSeqId}, i.e. jump 0, and job 3's window accepts
  * {@code seq == lastSeq} — a no-op, which is what it is. A counter RESET (okx may restart
- * {@code seqId} lower after maintenance) breaks the chain, so job 2 raises {@code sequence_gap},
+ * {@code seqId} lower after maintenance) breaks the chain, so job 3 raises {@code sequence_gap},
  * empties the book and asks the control plane — which is the correct response to a reset.
  *
  * <p><b>A WS snapshot is jump 0 — ordered, never jump-checked</b> (the platform-wide invariant).
@@ -55,7 +55,7 @@ import java.util.List;
  * counter the WS frames now use. It is that a snapshot's {@code seqId} is not any later update's
  * {@code prevSeqId} — the counter advances between NiFi's fetch and the next WS frame, so seeding
  * {@code lastSeq} from it would break the very next chain check and gap immediately. Null instead
- * hands job 2 the {@code baselinePending} bootstrap ex1/ex2/ex6 already take: order this body
+ * hands job 3 the {@code baselinePending} bootstrap ex1/ex2/ex6 already take: order this body
  * by EVENT TIME, then let the first WS update after it adopt its own {@code seqId} as the
  * baseline. {@code data.ts} is still the event time — a real timestamp, just not a comparable
  * sequence.
@@ -65,13 +65,13 @@ import java.util.List;
  * re-seeds {@code lastSeq} exactly and the next update chains to it — no baseline gap at all. The
  * REST branch is kept as the fallback for however NiFi chooses to answer.
  *
- * <p>{@code checksum} is okx's CRC32 book-integrity value. It is ignored: job 5 builds the book
+ * <p>{@code checksum} is okx's CRC32 book-integrity value. It is ignored: job 6 builds the book
  * and nothing in the platform verifies a checksum.
  *
  * <p><b>Why the REST branch existing at all is the fix (found live 2026-09-05).</b> Without it
  * job 1 dropped the resync answer on the floor: no {@code arg} means {@code arg.instId} is null,
- * which discarded the whole frame. So a gap on ex8 was TERMINAL — job 2 emitted a reset, asked for
- * a snapshot, NiFi fetched one and published it, and job 2 never saw it. Every later update
+ * which discarded the whole frame. So a gap on ex8 was TERMINAL — job 3 emitted a reset, asked for
+ * a snapshot, NiFi fetched one and published it, and job 3 never saw it. Every later update
  * dead-lettered as {@code awaiting_snapshot} and the market stayed dark until the job restarted.
  */
 public class OkxParser implements RawExchangeParser {
@@ -140,7 +140,7 @@ public class OkxParser implements RawExchangeParser {
             }
             long seqId = book.get("seqId").asLong();
             // A snapshot is ordered, never jump-checked, and its prevSeqId is the -1 sentinel.
-            // An update chains: jump = seqId - prevSeqId makes job 2's check `prevSeqId == lastSeq`.
+            // An update chains: jump = seqId - prevSeqId makes job 3's check `prevSeqId == lastSeq`.
             long jump = "snapshot".equals(type) ? 0L : seqId - book.get("prevSeqId").asLong();
             RawOrderBookEvent event = new RawOrderBookEvent(0, 0, type,
                     seqId, jump, Long.parseLong(book.get("ts").asText()),

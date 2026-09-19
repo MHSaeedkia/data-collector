@@ -11,7 +11,7 @@ import java.util.Map;
 
 /**
  * Loads the rebase exponents from exchange_markets as
- * {@code "{exchange_id}|{market_id}" → RebaseFactors} — keyed the way job 3 sees events
+ * {@code "{exchange_id}|{market_id}" → RebaseFactors} — keyed the way job 4 sees events
  * (market_id IS the pipeline's pair_id), not by the exchange's market string. Plugged into
  * RefreshingLookup so rebase edits are picked up without a job restart.
  */

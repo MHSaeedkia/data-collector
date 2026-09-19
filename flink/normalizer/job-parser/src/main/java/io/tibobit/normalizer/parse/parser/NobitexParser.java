@@ -23,7 +23,7 @@ import java.util.List;
  *       snapshots" one. So this is a second snapshot source, ordered by its own counter rather
  *       than event time (strictly better than the REST branch's null-seq ordering) →
  *       {@code type="snapshot"}, {@code sequence_id=pub.offset}, {@code sequence_jump=0}
- *       (unchecked on a snapshot — see job 2); event time = {@code data.lastUpdate}.</li>
+ *       (unchecked on a snapshot — see job 3); event time = {@code data.lastUpdate}.</li>
  * </ul>
  *
  * Anything else (connect acks, pings, malformed frames) is dropped by the whitelist rule.

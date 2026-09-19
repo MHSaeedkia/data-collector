@@ -123,7 +123,7 @@ PostgreSQL is initialized with a `markets` database containing two tables:
 ├── flink/
 │   ├── run-job.sh             # builds + submits any job below; run with no arg to list them
 │   ├── run-local.sh           # runs one job in-process instead — no Flink cluster at all
-│   ├── normalizer/            # raw-normalization pipeline (6 chained Flink jobs + common/)
+│   ├── normalizer/            # raw-normalization pipeline (7 chained Flink jobs + common/)
 │   └── merger/                # sums the aggregated book's levels per price (p{id}-{side}-merged)
 ├── monitoring/                # Prometheus scrape config + alert rules, Alertmanager, Grafana (prod only)
 ├── nifi/
@@ -151,6 +151,7 @@ cd flink
 ./run-job.sh job-rebaser
 ./run-job.sh job-type-validator
 ./run-job.sh job-pair-extractor
+./run-job.sh job-parser
 
 # Or run a single job on your own machine, with no Flink cluster and no Flink image:
 # an in-process MiniCluster, pointed at the stack's published ports. Ctrl-C stops it.

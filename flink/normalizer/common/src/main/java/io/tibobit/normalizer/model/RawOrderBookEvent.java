@@ -3,7 +3,7 @@ package io.tibobit.normalizer.model;
 import java.util.List;
 
 /**
- * The ONE shared event on all job 1–4 topics (schema schemas/raw_order_book_event.avsc,
+ * The ONE shared event on all job 2–5 topics (schema schemas/raw_order_book_event.avsc,
  * subject raw-order-book-event). Semantics pinned in memory/project_avro_schema.md:
  *
  * <ul>
@@ -19,7 +19,7 @@ import java.util.List;
  *       last one we accepted". 0 = snapshot feed, or a snapshot on a delta feed — out-of-order
  *       check only.</li>
  *   <li>{@code simulation}: NiFi's flag from the raw payload — 0 = live, 1 = simulation, other
- *       values undefined, absent = 0. Set by job 1 and carried unchanged by jobs 2–4. It is NOT
+ *       values undefined, absent = 0. Set by job 1 and carried unchanged by jobs 2–5. It is NOT
  *       part of any keying or validation rule; it only rides along.</li>
  *   <li>{@code id}/{@code sourceIds}: record lineage. Unlike {@code simulation}, these are
  *       RE-STAMPED at every hop — each job mints a fresh {@code id} when it writes the event to

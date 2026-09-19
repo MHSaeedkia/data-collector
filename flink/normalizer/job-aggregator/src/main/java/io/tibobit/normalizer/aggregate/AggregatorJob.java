@@ -24,8 +24,8 @@ import java.util.regex.Pattern;
  *     -> keyBy(pair_id, side) -> CrossExchangeAggregator (union across exchanges, sort)
  *     -> Kafka output  p{id}-{side}  (subject aggregated-order-book-event — the frozen web contract)
  *
- * Consumes job 5's full per-exchange books directly. Job 2's reset marker becomes an empty book
- * in job 5, which drops that exchange from the union here. No dead-letter: everything arriving
+ * Consumes job 6's full per-exchange books directly. Job 3's reset marker becomes an empty book
+ * in job 6, which drops that exchange from the union here. No dead-letter: everything arriving
  * here is valid.
  */
 public class AggregatorJob {

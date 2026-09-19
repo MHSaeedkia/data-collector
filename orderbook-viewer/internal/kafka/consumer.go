@@ -40,7 +40,7 @@ const (
 	// wants both views. Same record rate and same shape of consumer, so
 	// they share this client rather than needing a third.
 	aggregatedPattern = `^p[0-9]+-(asks|bids)(-merged)?$`
-	// Job 5's per-exchange books: one record holds both sides.
+	// Job 6's per-exchange books: one record holds both sides.
 	snapshotPattern = `^ex[0-9]+-p[0-9]+-orderbook-snapshot-flink$`
 )
 
@@ -78,7 +78,7 @@ func NewAggregatedConsumer(broker string) (*Consumer, error) {
 	return newConsumer(broker, "agg", aggregatedPattern, kgo.NewOffset().AtEnd())
 }
 
-// NewSnapshotConsumer reads job 5's per-exchange books, also from the
+// NewSnapshotConsumer reads job 6's per-exchange books, also from the
 // latest offset. These topics carry a full book on every event, one per
 // exchange × pair, so replaying their retention window at startup would
 // cost far more than it is worth.

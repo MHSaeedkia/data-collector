@@ -5,21 +5,21 @@
 //   - The channel is `orderbook:{numeric market id}` — the id IS the exchange_markets.market
 //     string, so the lookup key is `4|12`, not a symbol. There is no symbol anywhere in the frame.
 //   - Sides are named `buys`/`sells`, and BOTH arrive price-DESCENDING, so the best ask is the
-//     LAST element. Job 1 keeps wire order and job 5 sorts, which is what these scenarios pin.
+//     LAST element. Job 1 keeps wire order and job 6 sorts, which is what these scenarios pin.
 //   - Levels are 7-element JSON-NUMBER arrays `[price, qty, notional, false, null, n, millis]`.
 //     Only the first two are read; the parser accepts any array of length >= 2.
 //   - There is no message-level timestamp on the wire, so job 1 stamps processing time and every
 //     scenario here sets IgnoreEventTime — the same as ex3.
 //
 // Unlike ex3, ex4 DOES have an ordering field: `pub.offset`, carried as sequence_id with jump 0.
-// Every frame is a snapshot, so job 2 takes its snapshot branch — `seq <= lastSeq` is rejected
+// Every frame is a snapshot, so job 3 takes its snapshot branch — `seq <= lastSeq` is rejected
 // stale_or_duplicate and any forward offset is accepted, however large. There is no gap rule for
 // a snapshot feed, which Ex4StaleOffset pins from both sides.
 //
 // Pair 1 (market "12", BTC/USDT) is price_precision 2 / quantity_precision 8 with rebase 0/0.
 // Pair 2 (market "2", BTC/IRT) rebases -1/0, and pair 17 (market "552", PEPE/USDT) rebases
 // -2/+2 at precision 10/10 — ramzinex is the only exchange besides nobitex whose seed carries
-// non-identity rebase rows, so it is the only other place job 3 can be asserted.
+// non-identity rebase rows, so it is the only other place job 4 can be asserted.
 
 package scenario
 
@@ -152,7 +152,7 @@ var Ex4RamzinexSnapshots = Scenario{
 	},
 }
 
-// Ex4StaleOffset — job 2's snapshot branch from both sides: an offset that does not move forward
+// Ex4StaleOffset — job 3's snapshot branch from both sides: an offset that does not move forward
 // is stale_or_duplicate, and a forward offset is accepted however far it jumps. A snapshot feed
 // has no contiguity rule, so the huge jump in 04 must NOT be read as a gap.
 var Ex4StaleOffset = Scenario{
@@ -245,7 +245,7 @@ var Ex4StaleOffset = Scenario{
 }
 
 // Ex4NoiseFrames — everything that is not a Centrifugo orderbook publication for a known numeric
-// market is dropped by job 1 without a dead-letter and without touching the book.
+// market is dropped by jobs 1–2 without a dead-letter and without touching the book.
 var Ex4NoiseFrames = Scenario{
 	ExchangeID:      4,
 	PairID:          1,
@@ -401,7 +401,7 @@ var Ex4NoiseFrames = Scenario{
 
 // Ex4RebaseToman — ramzinex quotes BTC/IRT in rials and we store tomans, so market "2" carries
 // price_amount_rebase -1. The wire prices are chosen so the shift lands a third decimal on a
-// 2-place market: that only truncates away if job 3 runs BEFORE job 4, which is what pins the
+// 2-place market: that only truncates away if job 4 runs BEFORE job 5, which is what pins the
 // order of the two jobs. Frame 02 adds the other consequence — two rial prices that were distinct
 // on the wire collide after the shift and merge into one level with their quantities summed.
 var Ex4RebaseToman = Scenario{
@@ -496,7 +496,7 @@ var Ex4RebaseToman = Scenario{
 // by -2 and quantity by +2. It is the mirror image of the dust rule everywhere else in this
 // suite — here the rebase SAVES a quantity that would have truncated away un-rebased (5e-12 of a
 // 100-PEPE unit is 5e-10 whole PEPE, which survives at 10 places), while a hundredth of that
-// still dies. Both only work if job 3 runs before job 4.
+// still dies. Both only work if job 4 runs before job 5.
 var Ex4RebaseScaledUnit = Scenario{
 	ExchangeID:      4,
 	PairID:          17,

@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Sums job 6's unioned levels into one level per price.
+ * Sums job 7's unioned levels into one level per price.
  *
  * <pre>
  *   in  (aggregated, union)         out (merged, summed)
@@ -20,10 +20,10 @@ import java.util.UUID;
  *   {ex:1, price:11, qty:5, src:A}  {price:11, qty:5, exchange_ids:[1],   source_ids:[A]}
  * </pre>
  *
- * <p>Stateless, one record in / one record out: job 6 has already done the cross-exchange fan-in,
+ * <p>Stateless, one record in / one record out: job 7 has already done the cross-exchange fan-in,
  * so a single aggregated record is the complete book for that pair+side and the merge is a pure
  * function of it. That is the entire reason this job needs no keyed state, no per-exchange MapState
- * and no reset handling — an exchange that job 6 dropped is simply already absent from the input.
+ * and no reset handling — an exchange that job 7 dropped is simply already absent from the input.
  */
 public class PriceMergeFunction implements MapFunction<AggregatedOrderBook, MergedOrderBook> {
 
@@ -65,7 +65,7 @@ public class PriceMergeFunction implements MapFunction<AggregatedOrderBook, Merg
     /**
      * Asks ascending, bids descending — the same convention as every other book in the pipeline.
      * The tie is between a live and a simulated level at one price (nothing else can collide after
-     * grouping), and live sorts first. Input order would very nearly do here, since job 6 already
+     * grouping), and live sorts first. Input order would very nearly do here, since job 7 already
      * sorts by price, but its tie-break is quantity — which says nothing about where the simulated
      * twin lands. Sorting explicitly is what makes the output deterministic.
      */

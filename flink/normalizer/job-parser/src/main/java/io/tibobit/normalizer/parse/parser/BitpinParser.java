@@ -22,7 +22,7 @@ import java.util.List;
  *       (see its javadoc): captures show every push resends the WHOLE book, so the 2026-07-25
  *       "these are deltas" call was wrong → {@code type="snapshot"},
  *       {@code sequence_id=pub.offset}, {@code sequence_jump=0} (unchecked on a snapshot — see
- *       job 2); event time = {@code data.event_time}.</li>
+ *       job 3); event time = {@code data.event_time}.</li>
  * </ul>
  *
  * Anything else (connect acks, pings, malformed frames) is dropped by the whitelist rule.

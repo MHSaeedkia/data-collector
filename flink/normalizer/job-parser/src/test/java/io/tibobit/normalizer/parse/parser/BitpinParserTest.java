@@ -23,7 +23,7 @@ class BitpinParserTest {
 
     /**
      * Given the REST snapshot, When parsed, Then the market comes from the injected `pair`
-     * field, it is a snapshot with NO sequence id (job 2 resyncs off it), event time is the
+     * field, it is a snapshot with NO sequence id (job 3 resyncs off it), event time is the
      * epoch-millis event_time taken verbatim (the REST side sends a NUMBER, unlike the WS
      * side's ISO string), and trailing-zero level strings survive verbatim ("62672.30").
      */

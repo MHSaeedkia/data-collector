@@ -4,7 +4,7 @@
 //
 //   - The envelope is an array `["{market}@{side}", [levels…], {"simulation": N, "id": "…"}]`;
 //     buyDepth is bids, sellDepth is asks, and the side that is not in the message stays NULL —
-//     "no report for this side", which job 5 must leave alone even though the event is a snapshot.
+//     "no report for this side", which job 6 must leave alone even though the event is a snapshot.
 //   - Levels are objects with JSON-NUMBER price/quantity (every other exchange sends strings),
 //     so the values come off the wire as BigDecimal-from-literal.
 //   - It is the one exchange whose NiFi-injected fields are NOT root fields: an array has no root
@@ -15,9 +15,9 @@
 //   - There is no sequence field and no timestamp anywhere on the wire. Job 1 stamps processing
 //     time, so `EventTime` is wall-clock and every scenario here sets IgnoreEventTime.
 //
-// That last point is why none of these scenarios expect a rejection. Job 2 keys its null-sequence
+// That last point is why none of these scenarios expect a rejection. Job 3 keys its null-sequence
 // guard on event time, and processing time only ever moves forward, so the guard can never fire
-// for ex3; job 3 only dead-letters a missing rebase row, and pair resolution and the rebase
+// for ex3; job 4 only dead-letters a missing rebase row, and pair resolution and the rebase
 // factors come from the same `exchange_markets` row, so a frame that got a pair_id has one. ex3
 // cannot produce a dead-letter at all — its whole failure surface is drops (job 1) and book state.
 //
@@ -214,9 +214,9 @@ var Ex3EmptySideWipe = Scenario{
 	},
 }
 
-// Ex3PrecisionDust — JSON-number levels still go through job 4: prices truncate DOWN to the
+// Ex3PrecisionDust — JSON-number levels still go through job 5: prices truncate DOWN to the
 // market's 2 places (colliding ones merging into one level with their quantities summed) and a
-// quantity below the market's 8 places truncates to zero, which job 5 reads as a delete.
+// quantity below the market's 8 places truncates to zero, which job 6 reads as a delete.
 var Ex3PrecisionDust = Scenario{
 	ExchangeID:      3,
 	PairID:          1,
@@ -297,7 +297,7 @@ var Ex3PrecisionDust = Scenario{
 }
 
 // Ex3NoiseFrames — everything that is not a well-formed depth message for a known market is
-// dropped by job 1 without a dead-letter and without touching the book.
+// dropped by jobs 1–2 without a dead-letter and without touching the book.
 var Ex3NoiseFrames = Scenario{
 	ExchangeID:      3,
 	PairID:          1,

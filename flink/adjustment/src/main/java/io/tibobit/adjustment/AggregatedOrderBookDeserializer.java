@@ -15,7 +15,7 @@ import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroDes
  * Decodes Confluent-wire-format Avro bytes (schema
  * schemas/aggregated_order_book_event.avsc, subject
  * {@code aggregated-order-book-event}) into an {@link AggregatedOrderBook} —
- * job 6's output, this job's input. The reader schema is fetched from the
+ * job 7's output, this job's input. The reader schema is fetched from the
  * Schema Registry at first use — never from a local/bundled copy.
  */
 public class AggregatedOrderBookDeserializer implements DeserializationSchema<AggregatedOrderBook> {

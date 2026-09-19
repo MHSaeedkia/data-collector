@@ -77,7 +77,7 @@ type wireMerged struct {
 	Levels    []wireMergedLevel `avro:"levels"`
 }
 
-// wireSnapLevel/wireSnapshot mirror order_book_snapshot.avsc (job 5).
+// wireSnapLevel/wireSnapshot mirror order_book_snapshot.avsc (job 6).
 // Fields the UI has no use for (trigger_id, last_sequence_id,
 // pipeline_timings) are simply absent — hamba skips schema fields with no
 // struct counterpart.
@@ -118,7 +118,7 @@ func NewDecoder(registryURL string) *Decoder {
 
 // Decode parses the Confluent wire header, resolves the writer schema by
 // id, and decodes the Avro payload into books. An aggregated record
-// yields one book; a job-5 snapshot holds both sides in one record and
+// yields one book; a job-6 snapshot holds both sides in one record and
 // yields two.
 func (d *Decoder) Decode(value []byte) ([]domain.RawBook, error) {
 	if len(value) < 5 || value[0] != magicByte {
@@ -205,7 +205,7 @@ func decodeMerged(sch avro.Schema, payload []byte) ([]domain.RawBook, error) {
 	}}, nil
 }
 
-// decodeSnapshot splits job 5's two-sided record into one book per side
+// decodeSnapshot splits job 6's two-sided record into one book per side
 // and pushes its record-level exchange_id/simulation down onto every
 // level, so the rest of the app sees the same shape the aggregator
 // produces. Both sides are always emitted, including empty ones: an empty

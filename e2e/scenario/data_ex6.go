@@ -4,14 +4,14 @@
 // What makes ex6 different:
 //
 //   - `type: "snapshot" | "delta"` is the regime discriminator; "delta" becomes our "update".
-//   - The sequence id is `data.u` with jump 1, so job 2's FULL delta ruleset applies here —
+//   - The sequence id is `data.u` with jump 1, so job 3's FULL delta ruleset applies here —
 //     no_baseline, sequence_gap (plus the synthetic reset that empties the book),
 //     awaiting_snapshot and stale_or_duplicate are all reachable. The sibling `data.seq` is
 //     non-contiguous bybit-internal metadata and is never read.
 //   - Sides are the abbreviated `b`/`a`, and a delta may carry only one of them. A MISSING key is
-//     a null side — "no report" — which job 5 leaves untouched on either kind of event
+//     a null side — "no report" — which job 6 leaves untouched on either kind of event
 //     (Ex6OneSidedDelta, the only place that can be proved on updates). A present-but-empty array
-//     is a real report, but it only CLEARS on a snapshot: job 5 clears a side before merging only
+//     is a real report, but it only CLEARS on a snapshot: job 6 clears a side before merging only
 //     when the type is snapshot, so on an update an empty array merges nothing. The live feed
 //     sends exactly that (`"b": []` on a one-sided delta) — see Ex6RestSnapshotResync source 02.
 //   - The event time is `cts` (matching-engine time), not the outer `ts` (gateway send time).
@@ -19,7 +19,7 @@
 //     response puts its book under `result` instead of `data` and is NULL-SEQ, because its
 //     `result.u` is on a different counter from the WS feed's (Ex6RestSnapshotResync).
 //
-// Every bybit market in the seed is a USDT market with rebase 0/0, so job 3 is the identity here.
+// Every bybit market in the seed is a USDT market with rebase 0/0, so job 4 is the identity here.
 // Pair 1 (BTCUSDT) is price_precision 2 / quantity_precision 8.
 
 package scenario
@@ -278,7 +278,7 @@ var Ex6OneSidedDelta = Scenario{
 }
 
 // Ex6SequenceGap — the whole gap episode. A jump in `u` dead-letters the gap event AND puts a
-// synthetic reset on the main stream, which job 5 turns into a fully emptied book so bybit drops
+// synthetic reset on the main stream, which job 6 turns into a fully emptied book so bybit drops
 // out of the aggregated view instead of serving a book it can no longer trust. Every delta after
 // that is awaiting_snapshot until a real snapshot re-syncs.
 var Ex6SequenceGap = Scenario{
@@ -404,7 +404,7 @@ var Ex6SequenceGap = Scenario{
 				{Price: "62898", Quantity: "1.5"},
 			},
 		},
-		{ // the reset job 2 emitted for 03 — an empty book carrying the gap event's own time.
+		{ // the reset job 3 emitted for 03 — an empty book carrying the gap event's own time.
 			// 03's own levels never reached the book; it was dead-lettered.
 			ExchangeID: 6,
 			PairID:     1,
@@ -435,7 +435,7 @@ var Ex6SequenceGap = Scenario{
 	},
 	WantRejects: []string{"sequence_gap", "awaiting_snapshot"},
 	// One command for the episode, not one per rejected event: the second update
-	// rejects on the same unresolved gap, and job 2 does not re-ask.
+	// rejects on the same unresolved gap, and job 3 does not re-ask.
 	WantControlCommands: []events.ControlCommand{
 		{Action: "snapshot_request", Reason: "sequence_gap", ExchangeID: 6, PairID: 1, Simulation: 1},
 	},
@@ -559,7 +559,7 @@ var Ex6NoBaseline = Scenario{
 }
 
 // Ex6NoiseFrames — everything that is not a well-formed bybit book frame for a known market is
-// dropped by job 1 without a dead-letter and without touching the book or the sequence state.
+// dropped by jobs 1–2 without a dead-letter and without touching the book or the sequence state.
 var Ex6NoiseFrames = Scenario{
 	ExchangeID: 6,
 	PairID:     1,
@@ -619,7 +619,7 @@ var Ex6NoiseFrames = Scenario{
 	"data": { "s": "BTCUSDT", "u": 601, "seq": 111416318520 },
 	"cts": 1800000000400
 }`,
-		// 06 a market ex6 has no exchange_markets row for — dropped before job 2, so its far
+		// 06 a market ex6 has no exchange_markets row for — dropped before job 3, so its far
 		// forward u never poisons the sequence state
 		`{
 	"id": "ad2b97da-1cd3-4987-803b-fc9ba4f18c3e",
@@ -681,7 +681,7 @@ var Ex6NoiseFrames = Scenario{
 	},
 }
 
-// Ex6PrecisionDust — job 4 on a delta feed, where the truncation rules bite hardest. 02 is an
+// Ex6PrecisionDust — job 5 on a delta feed, where the truncation rules bite hardest. 02 is an
 // UPDATE whose ask quantity is real on the wire but truncates to zero, which deletes a level that
 // was already resting; and whose two bids collide at 2 places, so the merged sum replaces the
 // resting quantity rather than adding to it.
@@ -732,7 +732,7 @@ var Ex6PrecisionDust = Scenario{
 			Asks:       []events.PriceLevel{{Price: "62800.11", Quantity: "0.5"}},
 			Bids:       []events.PriceLevel{{Price: "62799.99", Quantity: "1.75"}},
 		},
-		{ // after 02 — 9e-9 truncated to "0" at the price the book was holding, so job 5 deleted
+		{ // after 02 — 9e-9 truncated to "0" at the price the book was holding, so job 6 deleted
 			// the resting level; the merged 0.3 REPLACED the resting 1.75, it did not add to it
 			ExchangeID: 6,
 			PairID:     1,
@@ -763,12 +763,12 @@ var Ex6PrecisionDust = Scenario{
 // 04 carries that real value (38992362) while the WS feed sits at 8xx, which makes a wrong
 // implementation fail loudly in EITHER direction — adopt it and source 05's u=806 is instantly
 // `stale_or_duplicate`; treat it as a forward jump and it is a `sequence_gap`. Null-seq is what
-// keeps it correct: job 2 orders this body by EVENT TIME (`result.cts`, the same matching-engine
+// keeps it correct: job 3 orders this body by EVENT TIME (`result.cts`, the same matching-engine
 // clock the WS branch reads) and lets source 05 adopt its own `u` as the fresh baseline. ONE
 // reject and ONE control command is the whole assertion — a second of either means the loop.
 //
 // Source 02 also pins the shape the live capture actually sends: `"b": []`, a present-but-EMPTY
-// side on a delta. It is a real report, not a null side, but on an UPDATE job 5 merges it and
+// side on a delta. It is a real report, not a null side, but on an UPDATE job 6 merges it and
 // therefore changes nothing — only a SNAPSHOT clears a side. Ex6OneSidedDelta covers the null
 // (absent-key) case; this covers the empty one.
 var Ex6RestSnapshotResync = Scenario{
@@ -914,7 +914,7 @@ var Ex6RestSnapshotResync = Scenario{
 				{Price: "77499.8", Quantity: "4"},
 			},
 		},
-		{ // the reset job 2 emitted for 03 — an empty book carrying the gap event's own time
+		{ // the reset job 3 emitted for 03 — an empty book carrying the gap event's own time
 			ExchangeID: 6,
 			PairID:     1,
 			Simulation: 1,
@@ -993,14 +993,14 @@ var Ex6RestSnapshotResync = Scenario{
 // Two things have to be true at once, and they pull in opposite directions.
 //
 // The counter restarted, so `u` is no longer comparable to the running one — source 03 carries
-// u=1 against a live feed sitting at 250644437. Sequenced, job 2 orders 1 against that and dead-
+// u=1 against a live feed sitting at 250644437. Sequenced, job 3 orders 1 against that and dead-
 // letters it `stale_or_duplicate`, and then every following delta (u=2, u=3) is `<= lastSeq` too:
 // the market goes dark until the no-progress timer notices, minutes later. So job 1 stamps it
 // NULL-SEQ and it re-anchors through the same baselinePending bootstrap the REST body uses
 // (Ex6RestSnapshotResync).
 //
 // But it is still a FULL BOOK, and the instruction is to overwrite. So it stays `type: "snapshot"`
-// and keeps its levels — job 5 replaces both sides wholesale. Emitting it as an empty `reset`
+// and keeps its levels — job 6 replaces both sides wholesale. Emitting it as an empty `reset`
 // instead would clear the book and leave only the deltas that follow, which carry just the
 // changed levels, to refill it: source 03's 77500.3 ask and 77499.7 bid would be missing from
 // every book after it. That is why the asserted books after 03 are the restart's own, not empty.
@@ -1008,7 +1008,7 @@ var Ex6RestSnapshotResync = Scenario{
 // **The load-bearing assertion is the empty control stream.** A restart needs no
 // `snapshot_request`: the exchange has already sent the snapshot a resync would have asked for.
 // Asking anyway would put a command on `control-plane` for every bybit restart on every
-// subscribed market and have the collector answer each with a REST call it did not need. Job 2's
+// subscribed market and have the collector answer each with a REST call it did not need. Job 3's
 // null-seq branch reaches no `askForSnapshot`, and its `resyncTrusted()` CLEARS an outstanding
 // request rather than adding one — so this scenario asserts both empty rejects and empty
 // commands, and a regression in either direction shows up here rather than on the live feed.
@@ -1189,7 +1189,7 @@ var Ex6ServiceRestart = Scenario{
 	},
 }
 
-// Ex6RestartThenSnapshot — the e2e for job 2's `lastSeq.clear()` (added 2026-09-08). Scenario 64
+// Ex6RestartThenSnapshot — the e2e for job 3's `lastSeq.clear()` (added 2026-09-08). Scenario 64
 // covers the restart followed by a DELTA, which is the common case and the one `baselinePending`
 // was built for. This covers the restart followed by another SNAPSHOT, which took a different
 // branch and was broken.
@@ -1365,7 +1365,7 @@ var Ex6RestartThenSnapshot = Scenario{
 // reset must fire NO control command of its own, and must SILENCE one already outstanding.
 //
 // The sequence is the awkward one: a gap has already emptied the book (source 03) and put a
-// `snapshot_request` on `control-plane`, so job 2 is holding every update as `awaiting_snapshot`
+// `snapshot_request` on `control-plane`, so job 3 is holding every update as `awaiting_snapshot`
 // (source 04) — and then the answer that arrives is not the requested WS snapshot but bybit
 // restarting (source 05). Two things must happen at once. The restart has to be ACCEPTED even
 // though the null-seq branch's out-of-order guard is live (it is skipped while a resync is
@@ -1517,7 +1517,7 @@ var Ex6RestartAnswersPendingResync = Scenario{
 				{Price: "77499.8", Quantity: "4"},
 			},
 		},
-		{ // the reset job 2 emitted for 03 — empty, carrying the gap event's own time
+		{ // the reset job 3 emitted for 03 — empty, carrying the gap event's own time
 			ExchangeID: 6, PairID: 1, Simulation: 1,
 			EventTime: "2027-01-15T08:00:02Z",
 			Asks:      []events.PriceLevel{},
@@ -1575,7 +1575,7 @@ var Ex6RestartAnswersPendingResync = Scenario{
 // reasons. Source 04 then continues from 801 as if 03 had never arrived.
 //
 // Drop the `"snapshot".equals(type)` half of the guard and this fails: 03 becomes a null-seq
-// UPDATE, which job 2 accepts and job 5 merges (it clears a side only for a snapshot), so the
+// UPDATE, which job 3 accepts and job 6 merges (it clears a side only for a snapshot), so the
 // suite sees four snapshots and no reject instead of three and one.
 var Ex6UOneOnADeltaIsNotARestart = Scenario{
 	ExchangeID: 6,
@@ -1714,7 +1714,7 @@ var Ex6UOneOnADeltaIsNotARestart = Scenario{
 // behaviour. The guard exists to stop a replayed REST snapshot overwriting a newer book, and it
 // cannot tell that apart from a matching engine that came back with a slightly stale clock. When
 // it misfires the frame is dropped silently — `out_of_order` is not an asking reason — and
-// recovery waits on job 2's no-progress timer. Whether a restart should be exempt is a product
+// recovery waits on job 3's no-progress timer. Whether a restart should be exempt is a product
 // decision; if it ever is taken, this scenario is the one to invert.
 var Ex6RestartOutOfOrder = Scenario{
 	ExchangeID: 6,

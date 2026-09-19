@@ -29,7 +29,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
  *
  * This is NOT a stage of the raw-normalization pipeline and does not live in
  * flink/normalizer/. It reads that pipeline's finished output and publishes a
- * parallel view of it, exactly as flink/merger does — job 6's output is
+ * parallel view of it, exactly as flink/merger does — job 7's output is
  * untouched and every view is a separate topic consumers choose between.
  *
  * <p>
@@ -51,7 +51,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
  * Each stage also writes the rate it applied onto the record, so the published
  * event says what was charged and not merely what the answer was. That is why
  * the output has a schema of its own ({@code adjusted-order-book-event}) rather
- * than reusing job 6's.
+ * than reusing job 7's.
  *
  * <p>
  * Every stage is {@code .name()}d, which is what makes the chain readable in
@@ -91,9 +91,9 @@ public class AdjustmentJob {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // One lookup per stage, same as job 3/4's per-operator ownership of a RefreshingLookup —
+        // One lookup per stage, same as job 4/5's per-operator ownership of a RefreshingLookup —
         // each stage polls exchange_markets independently rather than sharing one instance across
-        // operators, which is what job 3 does too.
+        // operators, which is what job 4 does too.
         RefreshingLookup<String, AdjustmentFactors> commissionFactors = new RefreshingLookup<>(
                 new AdjustmentFactorsLoader(postgresUrl, postgresUser, postgresPassword), refreshIntervalMs);
         RefreshingLookup<String, AdjustmentFactors> profitFactors = new RefreshingLookup<>(

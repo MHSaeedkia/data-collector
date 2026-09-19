@@ -64,7 +64,7 @@ class CrossExchangeAggregatorTest {
         return new AggregatedLevel(exchangeId, simulation, sourceOf(exchangeId), price, qty);
     }
 
-    /** Stands in for the job-5 snapshot id that SnapshotSplitter stamps onto each level. */
+    /** Stands in for the job-6 snapshot id that SnapshotSplitter stamps onto each level. */
     private static String sourceOf(int exchangeId) {
         return "snapshot-of-ex" + exchangeId;
     }
@@ -209,7 +209,7 @@ class CrossExchangeAggregatorTest {
     // ---- reset: empty book ⇒ exchange drops out ---------------------------------
 
     @Test
-    @DisplayName("an empty book (job 5 reset) drops that exchange from the union, others intact")
+    @DisplayName("an empty book (job 6 reset) drops that exchange from the union, others intact")
     void emptyBookDropsExchangeOthersIntact() throws Exception {
         send(book(1, "asks", 100, lvl(1, "100", "1")));
         send(book(2, "asks", 100, lvl(2, "101", "1")));

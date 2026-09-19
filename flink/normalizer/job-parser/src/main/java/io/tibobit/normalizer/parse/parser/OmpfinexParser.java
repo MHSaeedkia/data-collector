@@ -24,7 +24,7 @@ import java.util.List;
  *       update ids folded into this message. Sequence id = data.u, jump = u - U (dynamic per
  *       message — CONFIRMED against consecutive live samples: a message's U equals the previous
  *       message's u). The first update after a snapshot has U == the snapshot's lastUpdateId
- *       (CONFIRMED), so job 2's ordinary snapshot-acceptance path seeds the correct baseline
+ *       (CONFIRMED), so job 3's ordinary snapshot-acceptance path seeds the correct baseline
  *       directly — no null-seq/baselinePending special-casing needed, unlike ex1/ex2. Sides are
  *       a/b (asks/bids), string pairs; qty "0" = level delete (same convention as bybit/okx). A
  *       side key is always present, possibly an empty array — passed through as-is, which is

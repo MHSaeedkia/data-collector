@@ -268,7 +268,7 @@ func TestDecoder_Decode_SimulationIsPerLevel(t *testing.T) {
 
 // source_id is per level for exactly the same reason simulation is: the levels
 // of one record come from different exchanges, so they come from different
-// job-5 snapshots. Two levels at the same price must keep different parents.
+// job-6 snapshots. Two levels at the same price must keep different parents.
 func TestDecoder_Decode_SourceIDIsPerLevel(t *testing.T) {
 	registryURL, _ := newTestRegistry(t, 2, aggregatedOrderBookEventSchema)
 	dec := NewDecoder(registryURL)
@@ -293,7 +293,7 @@ func TestDecoder_Decode_SourceIDIsPerLevel(t *testing.T) {
 	assert.Equal(t, "77777777-7777-4777-8777-777777777777", rb.ID)
 }
 
-// Job 5's record holds both sides at once, so one message becomes two
+// Job 6's record holds both sides at once, so one message becomes two
 // books — and its record-level exchange_id/simulation are pushed down
 // onto every level, which is what lets the rest of the app treat a
 // per-exchange book exactly like an aggregated one.

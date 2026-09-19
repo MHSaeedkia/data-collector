@@ -215,7 +215,7 @@ class TypeValidateFunctionTest {
      * algebraically to <b>"the predecessor it names is the one we last accepted"</b>.
      *
      * <p>So the jump varies message to message and none of the values would pass as a constant —
-     * that is the point. Job 2 needs no knowledge of any of this; it is pinned here because the
+     * that is the point. Job 3 needs no knowledge of any of this; it is pinned here because the
      * reduction is the whole correctness argument for both exchanges.
      */
     @Test
@@ -579,7 +579,7 @@ class TypeValidateFunctionTest {
 
     // ---- lineage ----------------------------------------------------------------
     /**
-     * Every incoming event arrives with the id job 1 gave it.
+     * Every incoming event arrives with the id job 2 gave it.
      */
     private static RawOrderBookEvent from(RawOrderBookEvent event, String id) {
         event.setId(id);
@@ -1035,7 +1035,7 @@ class TypeValidateFunctionTest {
     // ---- staleness: silence detection --------------------------------------------
     //
     // A market that stops sending is emptied and re-asked for. A market that has NEVER
-    // sent anything is deliberately NOT job 2's business (see TypeValidateFunction.STALE):
+    // sent anything is deliberately NOT job 3's business (see TypeValidateFunction.STALE):
     // it has no keyed state to watch, and the answer there is an alert from the staleness
     // exporter, not a snapshot request the collector cannot act on.
     //
@@ -1183,7 +1183,7 @@ class TypeValidateFunctionTest {
      * Given a SNAPSHOT-ONLY feed whose sequence counter re-based below the last accepted one
      * (ex2/ex4 Centrifugo {@code pub.offset} recreated, ex5 {@code seq} on a reconnect, or a
      * job-1 change to what the sequence MEANS), When a whole threshold passes with frames
-     * arriving and none accepted, Then job 2 asks for a snapshot and the NEXT frame is
+     * arriving and none accepted, Then job 3 asks for a snapshot and the NEXT frame is
      * accepted whatever its sequence id, re-anchoring {@code lastSeq} on the new base.
      *
      * <p>Before 2026-09-07 this key stayed dead-lettered until an operator restarted the job:
