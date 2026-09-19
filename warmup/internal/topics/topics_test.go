@@ -38,6 +38,7 @@ func TestPlan_CoversEveryTopicFamily(t *testing.T) {
 		{Name: "ex1-p2-orderbook-snapshot-flink", RetentionMS: "3600000"},
 		{Name: "ex1-p2-rejected-flink", RetentionMS: "7200000"},
 		{Name: "ex1-raw", RetentionMS: "172800000"},
+		{Name: "ex1-parsed-flink", RetentionMS: "3600000"},
 		{Name: "p2-asks", RetentionMS: "21600000"},
 		{Name: "p2-asks-merged", RetentionMS: "21600000"},
 		{Name: "p2-asks-adjusted", RetentionMS: "21600000"},
@@ -53,6 +54,9 @@ func TestPlan_PutsStagesBeforeOutputs(t *testing.T) {
 	got := names(Plan([]domain.Subscription{{PairID: 2, ExchangeID: 1}}, retentions))
 
 	assert.Less(t, slices.Index(got, "ex1-p2-raw-flink"), slices.Index(got, "p2-asks"))
+	// Job 1's output is per exchange, not per pair, so it is planned in the raw block rather
+	// than the stage block — it still has to land before the outputs.
+	assert.Less(t, slices.Index(got, "ex1-parsed-flink"), slices.Index(got, "p2-asks"))
 }
 
 func TestPlan_DeduplicatesSharedTopics(t *testing.T) {
@@ -76,6 +80,7 @@ func TestPlan_DeduplicatesSharedTopics(t *testing.T) {
 		assert.Equalf(t, 1, n, "topic %s planned %d times; a duplicate in one create batch is rejected by the broker", name, n)
 	}
 	assert.Equal(t, 1, seen["ex1-raw"])
+	assert.Equal(t, 1, seen["ex1-parsed-flink"])
 	assert.Equal(t, 1, seen["ex6-raw"])
 	assert.Equal(t, 1, seen["p2-asks"])
 }
@@ -88,8 +93,8 @@ func TestPlan_SizeMatchesTheShellScriptItReplaced(t *testing.T) {
 		}
 	}
 
-	// 1 control + 450*(5 stages + 1 rejected) + 9 raw + 50*6 outputs
-	assert.Len(t, Plan(subs, retentions), 1+450*6+9+50*6)
+	// 1 control + 450*(5 per-pair stages + 1 rejected) + 9 raw + 9 parsed + 50*6 outputs
+	assert.Len(t, Plan(subs, retentions), 1+450*6+9+9+50*6)
 }
 
 func TestDiff_CreatesMissingAndAltersChangedRetention(t *testing.T) {

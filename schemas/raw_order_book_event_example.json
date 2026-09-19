@@ -17,6 +17,8 @@
 		{ "price": "62760.1", "quantity": "1.204" }
 	],
 	"pipeline_timings": {
+		"parse_in": "2026-07-14T06:23:25.131Z",
+		"parse_out": "2026-07-14T06:23:25.133Z",
 		"pair_extract_in": "2026-07-14T06:23:25.140Z",
 		"pair_extract_out": "2026-07-14T06:23:25.142Z",
 		"type_validate_in": null,

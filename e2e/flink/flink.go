@@ -28,6 +28,7 @@ var jobModules = []string{
 	"job-rebaser",
 	"job-type-validator",
 	"job-pair-extractor",
+	"job-parser",
 }
 
 const (

@@ -34,13 +34,14 @@ const (
 // own commands and not the previous scenario's.
 const ControlTopic = "control-plane"
 
-// normalizerStages are the raw pipeline's intermediate stages, one per job output.
+// normalizerStages are the raw pipeline's per-(exchange, pair) intermediate stages, one per job
+// output. Job 1's output is per exchange and lives in plan() directly, next to ex{id}-raw.
 var normalizerStages = []string{
-	"raw-flink",                // job 1 pair-extractor out
-	"type-validated-raw-flink", // job 2 type-validator out
-	"rebased-flink",            // job 3 rebaser        out
-	"applied-precision-flink",  // job 4 precision      out
-	"orderbook-snapshot-flink", // job 5 book-builder   out
+	"raw-flink",                // job 2 pair-extractor out
+	"type-validated-raw-flink", // job 3 type-validator out
+	"rebased-flink",            // job 4 rebaser        out
+	"applied-precision-flink",  // job 5 precision      out
+	"orderbook-snapshot-flink", // job 6 book-builder   out
 }
 
 type topic struct {
@@ -137,7 +138,7 @@ func waitGone(ctx context.Context, adm *kadm.Client, names []string) error {
 func plan(exchangeID, pairID int64) []topic {
 	prefix := fmt.Sprintf("ex%d-p%d", exchangeID, pairID)
 
-	plan := make([]topic, 0, len(normalizerStages)+5)
+	plan := make([]topic, 0, len(normalizerStages)+6)
 	for _, stage := range normalizerStages {
 		plan = append(plan, topic{prefix + "-" + stage, inputRetentionMS})
 	}
@@ -151,6 +152,9 @@ func plan(exchangeID, pairID int64) []topic {
 		topic{ControlTopic, controlRetentionMS},
 		// Raw topic for the exchange (NiFi publishes verbatim exchange payloads here).
 		topic{fmt.Sprintf("ex%d-raw", exchangeID), rawRetentionMS},
+		// Job 1's output, per exchange rather than per pair: the parser resolves no pair,
+		// so there is no p{id} segment to put in the name.
+		topic{fmt.Sprintf("ex%d-parsed-flink", exchangeID), inputRetentionMS},
 		// Output topics, one per side (Flink aggregation writes the aggregated book here).
 		topic{fmt.Sprintf("p%d-asks", pairID), outputRetentionMS},
 		topic{fmt.Sprintf("p%d-bids", pairID), outputRetentionMS},

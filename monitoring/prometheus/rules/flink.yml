@@ -25,7 +25,7 @@
 groups:
     - name: flink-cluster
       rules:
-          # Guards every rule below it. `numRunningJobs != 8` cannot fire when
+          # Guards every rule below it. `numRunningJobs != 9` cannot fire when
           # the JobManager is gone, because the series is gone too — a dead
           # JobManager would otherwise be the quietest failure of the set.
           - alert: FlinkJobManagerDown
@@ -42,14 +42,16 @@ groups:
 
           # The whole first class of failures in the review collapses into this
           # one number: a job that died, was never submitted, or exhausted its
-          # restart budget all end up here. 8, not 7 — `ALL_JOBS := adjustment
-          # merger $(NORMALIZER_JOBS)`. Update this if a job is added.
+          # restart budget all end up here. 9, not 7 — `ALL_JOBS := adjustment
+          # merger $(NORMALIZER_JOBS)`, and NORMALIZER_JOBS became 7 when job 1
+          # split into job-parser + job-pair-extractor. Update this if a job is
+          # added.
           #
           # `for: 5m` is deliberately longer than a full `make run-all-jobs`,
-          # which submits all eight in well under a minute, so an ordinary
+          # which submits all nine in well under a minute, so an ordinary
           # deploy does not page anyone.
           - alert: FlinkJobCountWrong
-            expr: flink_jobmanager_numRunningJobs != 8
+            expr: flink_jobmanager_numRunningJobs != 9
             for: 5m
             labels:
                 severity: critical
@@ -69,7 +71,7 @@ groups:
             annotations:
                 summary: "Only {{ $value }} of 4 TaskManagers are registered"
                 description: >-
-                    The cluster runs 8 jobs in 8 slots with nothing spare, so a
+                    The cluster runs 9 jobs in 15 of its 16 slots, so a
                     lost TaskManager leaves jobs unschedulable. A TaskManager
                     that is up but unregistered is usually the HA keys: every
                     TaskManager needs the same high-availability block as the

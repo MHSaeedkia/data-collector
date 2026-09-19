@@ -1,4 +1,4 @@
-# Builds the six normalizer job jars INSIDE a container.
+# Builds the seven normalizer job jars INSIDE a container.
 #
 # The e2e harness runs on CI machines that have no JDK and no Maven, so nothing
 # about the build may depend on the host beyond Docker itself. The final stage
@@ -17,6 +17,7 @@ WORKDIR /src
 # dependencies — and the package step below is what actually has to succeed.
 COPY pom.xml .
 COPY common/pom.xml common/
+COPY job-parser/pom.xml job-parser/
 COPY job-pair-extractor/pom.xml job-pair-extractor/
 COPY job-type-validator/pom.xml job-type-validator/
 COPY job-rebaser/pom.xml job-rebaser/
@@ -32,6 +33,7 @@ RUN mvn -B -q dependency:go-offline -DskipTests \
     || echo "go-offline incomplete; package will fetch the remainder"
 
 COPY common common
+COPY job-parser job-parser
 COPY job-pair-extractor job-pair-extractor
 COPY job-type-validator job-type-validator
 COPY job-rebaser job-rebaser
@@ -48,7 +50,7 @@ RUN mvn -B -q package -DskipTests \
 # shaded artifactId does not always match the module directory, and shade
 # leaves an original-*.jar behind next to the real one.
 RUN mkdir /jars && \
-    for m in job-pair-extractor job-type-validator job-rebaser \
+    for m in job-parser job-pair-extractor job-type-validator job-rebaser \
              job-precision job-book-builder job-aggregator; do \
         jar="$(find "$m/target" -maxdepth 1 -name '*-1.0-SNAPSHOT.jar' ! -name 'original-*' | head -1)"; \
         [ -n "$jar" ] || { echo "no shaded jar built for $m" >&2; exit 1; }; \

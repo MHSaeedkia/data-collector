@@ -1,8 +1,9 @@
 package io.tibobit.normalizer.pairextract;
 
 import io.tibobit.normalizer.lookup.RefreshingLookup;
+import io.tibobit.normalizer.model.ParsedBookEvent;
 import io.tibobit.normalizer.model.RawOrderBookEvent;
-import io.tibobit.normalizer.pairextract.parser.Parsers;
+import io.tibobit.normalizer.serde.ParsedBookEventDeserializer;
 import io.tibobit.normalizer.serde.RawOrderBookEventSerializer;
 
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -16,22 +17,22 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import java.util.regex.Pattern;
 
 /**
- * Job 1 entry point: pair extraction.
+ * Job 2 entry point: pair extraction.
  *
  * Pipeline (stateless — no keying needed):
- *   Kafka input topics  ex{id}-raw        (verbatim exchange payloads, one topic per exchange)
- *     -> source (regex, topic name captured for exchange_id — RawTopicDeserializer)
- *     -> PairExtractFunction (per-exchange parse + market → pair_id via exchange_markets)
+ *   Kafka input topics  ex{id}-parsed-flink  (ParsedBookEvent, subject parsed-book-event,
+ *        one topic per exchange)
+ *     -> source (regex)
+ *     -> PairExtractFunction (market → pair_id via exchange_markets)
  *     -> Kafka output topic  ex{exchange_id}-p{pair_id}-raw-flink  (per-record routing,
  *        subject raw-order-book-event)
+ *
+ * <p>Reads a value-only deserializer, unlike the job-parser source it used to be fused with:
+ * exchange_id is ON the record here, so there is no need to parse it out of the topic name.
  */
 public class PairExtractorJob {
 
-    // Deliberately matches every ex{n}-raw topic, including exchanges with no parser yet:
-    // scope lives in Parsers.byExchangeId(), and PairExtractFunction drops unparsered exchanges
-    // with a counter. Landing ex7 (2026-08-24) and ex9 (2026-08-25) both needed no change here,
-    // and with ex9 the map now covers every seeded exchange.
-    private static final Pattern RAW_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-raw");
+    private static final Pattern INPUT_TOPIC_PATTERN = Pattern.compile("ex[0-9]+-parsed-flink");
 
     public static void main(String[] args) throws Exception {
         String bootstrapServers = getEnv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092");
@@ -44,13 +45,13 @@ public class PairExtractorJob {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        KafkaSource<RawExchangeMessage> source = KafkaSource.<RawExchangeMessage>builder()
+        KafkaSource<ParsedBookEvent> source = KafkaSource.<ParsedBookEvent>builder()
                 .setBootstrapServers(bootstrapServers)
-                .setTopicPattern(RAW_TOPIC_PATTERN)
+                .setTopicPattern(INPUT_TOPIC_PATTERN)
                 .setGroupId(groupId)
                 // Start at the tip: we want the live feed, not historical replay.
                 .setStartingOffsets(OffsetsInitializer.latest())
-                .setDeserializer(new RawTopicDeserializer())
+                .setValueOnlyDeserializer(new ParsedBookEventDeserializer(schemaRegistryUrl))
                 .build();
 
         RefreshingLookup<String, Integer> markets = new RefreshingLookup<>(
@@ -58,8 +59,8 @@ public class PairExtractorJob {
                 refreshIntervalMs);
 
         DataStream<RawOrderBookEvent> events = env
-                .fromSource(source, WatermarkStrategy.noWatermarks(), "raw-source")
-                .flatMap(new PairExtractFunction(Parsers.byExchangeId(), markets))
+                .fromSource(source, WatermarkStrategy.noWatermarks(), "parsed-flink-source")
+                .flatMap(new PairExtractFunction(markets))
                 .name("pair-extract");
 
         events.sinkTo(KafkaSink.<RawOrderBookEvent>builder()

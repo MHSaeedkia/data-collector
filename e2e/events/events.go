@@ -163,6 +163,8 @@ type ControlCommand struct {
 }
 
 type PipelineTimings struct {
+	ParseIn         *int64 `json:"parse_in"`
+	ParseOut        *int64 `json:"parse_out"`
 	PairExtractIn   *int64 `json:"pair_extract_in"`
 	PairExtractOut  *int64 `json:"pair_extract_out"`
 	TypeValidateIn  *int64 `json:"type_validate_in"`

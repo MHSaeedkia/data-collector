@@ -12,10 +12,11 @@
 
     <artifactId>job-pair-extractor</artifactId>
 
-    <!-- Job 1: pair extraction. Consumes verbatim exchange payloads from ex{id}-raw, parses
-         them per exchange (the ONLY place per-exchange wire formats are known), resolves the
-         market string to pair_id via exchange_markets, and emits one structured
-         RawOrderBookEvent per (exchange, pair) to ex{id}-p{id}-raw-flink. -->
+    <!-- Job 2: pair extraction. Consumes ParsedBookEvent from ex{id}-parsed-flink, resolves the
+         exchange's own market string to pair_id via exchange_markets, and emits one
+         RawOrderBookEvent per (exchange, pair) to ex{id}-p{id}-raw-flink. The per-exchange wire
+         formats moved to job-parser on 2026-09-19, which is why this no longer needs jackson;
+         the DB read is all that is left here. -->
 
     <dependencies>
         <dependency>
@@ -31,10 +32,6 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-kafka</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>

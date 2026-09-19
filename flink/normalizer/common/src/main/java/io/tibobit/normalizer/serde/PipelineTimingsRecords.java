@@ -33,6 +33,8 @@ final class PipelineTimingsRecords {
     static GenericRecord toRecord(PipelineTimings timings, Schema fieldSchema) {
         PipelineTimings t = timings != null ? timings : new PipelineTimings();
         return new GenericRecordBuilder(recordType(fieldSchema))
+                .set("parse_in", t.getParseIn())
+                .set("parse_out", t.getParseOut())
                 .set("pair_extract_in", t.getPairExtractIn())
                 .set("pair_extract_out", t.getPairExtractOut())
                 .set("type_validate_in", t.getTypeValidateIn())
@@ -52,6 +54,8 @@ final class PipelineTimingsRecords {
             return t;
         }
         GenericRecord r = (GenericRecord) avroRecord;
+        t.setParseIn((Long) r.get("parse_in"));
+        t.setParseOut((Long) r.get("parse_out"));
         t.setPairExtractIn((Long) r.get("pair_extract_in"));
         t.setPairExtractOut((Long) r.get("pair_extract_out"));
         t.setTypeValidateIn((Long) r.get("type_validate_in"));

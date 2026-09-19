@@ -19,10 +19,14 @@ func at(t *testing.T, s string) *time.Time {
 }
 
 // The timings off the record the user captured from
-// ex1-p1-orderbook-snapshot-flink.
+// ex1-p1-orderbook-snapshot-flink, with a parse pair added in front: the capture
+// predates the 2026-09-19 job-1 split, so the real record had none. 9ms between
+// parse_out and pair_extract_in is the hop that split introduced.
 func sample(t *testing.T) *event.Timings {
 	t.Helper()
 	return &event.Timings{
+		ParseIn:         at(t, "2026-09-14T11:04:26.961Z"),
+		ParseOut:        at(t, "2026-09-14T11:04:26.962Z"),
 		PairExtractIn:   at(t, "2026-09-14T11:04:26.971Z"),
 		PairExtractOut:  at(t, "2026-09-14T11:04:26.972Z"),
 		TypeValidateIn:  at(t, "2026-09-14T11:04:28.569Z"),
@@ -42,19 +46,21 @@ func TestComputeOnTheCapturedRecord(t *testing.T) {
 
 	m := Compute(rec, kafka)
 
-	require.Len(t, m.Stages, 5)
+	require.Len(t, m.Stages, 6)
 	// Job latency: out - in, per job.
 	assert.Equal(t, time.Millisecond, *m.Stages[0].Job)
-	assert.Equal(t, time.Duration(0), *m.Stages[1].Job)
-	assert.Equal(t, time.Duration(0), *m.Stages[4].Job)
+	assert.Equal(t, time.Millisecond, *m.Stages[1].Job)
+	assert.Equal(t, time.Duration(0), *m.Stages[2].Job)
+	assert.Equal(t, time.Duration(0), *m.Stages[5].Job)
 	// Inter-job latency: this job's in minus the previous job's out.
 	assert.Nil(t, m.Stages[0].Gap, "the first job has no predecessor to wait for")
-	assert.Equal(t, 1597*time.Millisecond, *m.Stages[1].Gap)
-	assert.Equal(t, 4003*time.Millisecond, *m.Stages[2].Gap)
-	assert.Equal(t, 417*time.Millisecond, *m.Stages[3].Gap)
-	assert.Equal(t, 225*time.Millisecond, *m.Stages[4].Gap)
+	assert.Equal(t, 9*time.Millisecond, *m.Stages[1].Gap, "the hop the job-1 split added")
+	assert.Equal(t, 1597*time.Millisecond, *m.Stages[2].Gap)
+	assert.Equal(t, 4003*time.Millisecond, *m.Stages[3].Gap)
+	assert.Equal(t, 417*time.Millisecond, *m.Stages[4].Gap)
+	assert.Equal(t, 225*time.Millisecond, *m.Stages[5].Gap)
 	// Totals.
-	assert.Equal(t, 6243*time.Millisecond, *m.Pipeline)
+	assert.Equal(t, 6253*time.Millisecond, *m.Pipeline)
 	assert.Equal(t, 286*time.Millisecond, *m.Write)
 }
 
@@ -76,7 +82,7 @@ func TestComputeWithAnExchangeClock(t *testing.T) {
 
 	m := Compute(rec, *at(t, "2026-09-14T11:04:33.500Z"))
 
-	assert.Equal(t, 825*time.Millisecond, *m.Source)    // 26.146 -> 26.971
+	assert.Equal(t, 815*time.Millisecond, *m.Source)    // 26.146 -> 26.961
 	assert.Equal(t, 7354*time.Millisecond, *m.EndToEnd) // 26.146 -> 33.500
 }
 
@@ -94,8 +100,12 @@ func TestComputeOnPartialTimings(t *testing.T) {
 
 	assert.Equal(t, 1629*time.Millisecond, *m.Pipeline) // 26.971 -> 28.600
 	assert.Equal(t, 100*time.Millisecond, *m.Write)     // 28.600 -> kafka
-	assert.Nil(t, m.Stages[2].Job)
-	assert.Nil(t, m.Stages[2].Gap)
+	// A record written before the split, or read off a topic job 1 never stamped: the
+	// parse stage is simply absent, and the stage after it has no predecessor to wait for.
+	assert.Nil(t, m.Stages[0].Job)
+	assert.Nil(t, m.Stages[1].Gap)
+	assert.Nil(t, m.Stages[3].Job)
+	assert.Nil(t, m.Stages[3].Gap)
 }
 
 // A topic with no pipeline_timings at all (the terminal p{id}-{side} family).
@@ -118,7 +128,7 @@ func TestComputeKeepsNegativeDurations(t *testing.T) {
 
 	m := Compute(rec, *at(t, "2026-09-14T11:04:27.000Z"))
 
-	assert.Equal(t, -71*time.Millisecond, *m.Stages[0].Job)
+	assert.Equal(t, -71*time.Millisecond, *m.Stages[1].Job)
 }
 
 func TestRenderShowsEveryStampAndNAForTheUnknown(t *testing.T) {
@@ -131,10 +141,11 @@ func TestRenderShowsEveryStampAndNAForTheUnknown(t *testing.T) {
 	got := out.String()
 
 	assert.Contains(t, got, "offset=1505638")
-	assert.Contains(t, got, "1 pair-extract")
-	assert.Contains(t, got, "5 book-build")
+	assert.Contains(t, got, "1 parse")
+	assert.Contains(t, got, "2 pair-extract")
+	assert.Contains(t, got, "6 book-build")
 	assert.Contains(t, got, "1.597s") // the inter-job wait
-	assert.Contains(t, got, "6.243s") // the pipeline total
+	assert.Contains(t, got, "6.253s") // the pipeline total
 	assert.Contains(t, got, "286ms")  // the write latency
 	assert.Contains(t, got, "n/a")    // source and end-to-end, with no exchange clock
 	assert.NotContains(t, got, "0001-01-01", "a missing stamp must never render as the zero time")

@@ -9,10 +9,11 @@
     <version>1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <!-- Raw-normalization pipeline: 6 chained Flink jobs (pair-extract -> type-validate ->
-         rebase -> precision -> book-build -> aggregator) sharing the common/ module. -->
+    <!-- Raw-normalization pipeline: 7 chained Flink jobs (parse -> pair-extract -> type-validate
+         -> rebase -> precision -> book-build -> aggregator) sharing the common/ module. -->
     <modules>
         <module>common</module>
+        <module>job-parser</module>
         <module>job-pair-extractor</module>
         <module>job-type-validator</module>
         <module>job-rebaser</module>

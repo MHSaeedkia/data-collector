@@ -2,7 +2,7 @@
 // Centrifugo WS deltas carrying a Binance-style u/U range on channel
 // "public-market:r-depth-{market}". The conventions these follow are in data.go.
 //
-// Confirmed from OmpfinexParser (io.tibobit.normalizer.pairextract.parser),
+// Confirmed from OmpfinexParser (io.tibobit.normalizer.parse.parser),
 // verified against live samples:
 //   - The market comes from the channel suffix on updates
 //     ("public-market:r-depth-14" -> market "14") and from the top-level

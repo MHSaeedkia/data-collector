@@ -2,14 +2,14 @@ FLINK_RUN := ./flink/run-job.sh
 
 # Jobs are listed DOWNSTREAM-FIRST and must be submitted in this order: every source reads from
 # `latest`, so a job started after its upstream would miss whatever the upstream produced in between.
-NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job-type-validator job-pair-extractor
+NORMALIZER_JOBS := job-aggregator job-book-builder job-precision job-rebaser job-type-validator job-pair-extractor job-parser
 # merger sits downstream of job-aggregator (it reads p{id}-{side}), so it goes before the whole chain.
 # adjustment and merger both read job 6's p{id}-{side}, so both are downstream of it and go first.
 ALL_JOBS := adjustment merger $(NORMALIZER_JOBS)
 
 # Per-job parallelism: PARALLELISM_<job>, falling back to DEFAULT_PARALLELISM. Every job needs that
 # many task slots, so the total must fit taskmanager.numberOfTaskSlots (50 in docker-compose.yml,
-# 4 x 8 = 32 in docker-compose.prod.yml).
+# 4 x 4 = 16 in docker-compose.prod.yml — the 9 jobs need 15 of those, so prod has ONE spare slot).
 # Override from the command line, e.g. `make run-all-jobs PARALLELISM_merger=3`.
 DEFAULT_PARALLELISM := 1
 # Sized from live Flink metrics on 2026-09-13, against ~1200 books/s out of job-book-builder:
@@ -39,8 +39,11 @@ warmup:
 watch:
 	@$(MAKE) -C latency-monitor run TOPIC=$(TOPIC)
 
-# Full raw pipeline: the 5 upstream normalizer jobs plus the terminal aggregator that unions their
+# Full raw pipeline: the 6 upstream normalizer jobs plus the terminal aggregator that unions their
 # per-exchange books, all on the one Flink cluster in docker-compose.yml.
+#
+# ⚠ `warmup` MUST have been run for the CURRENT schemas and topics before these submit anything.
+# Both this target and prod-deploy do it; run-normalizer-jobs and run-all-jobs do NOT.
 refresh-normalizer:
 	-git pull origin
 	docker compose -f docker-compose.yml down -v
@@ -75,7 +78,7 @@ PROD_COMPOSE := docker compose -f docker-compose.prod.yml
 prod-up:
 	$(PROD_COMPOSE) up -d --build
 
-# Full deploy: bring the stack up, seed topics/schemas, then submit all 8 jobs downstream-first.
+# Full deploy: bring the stack up, seed topics/schemas, then submit all 9 jobs downstream-first.
 # Cancels first — HA (M3) resubmits the previous job graphs on its own, so submitting on top of a
 # recovered cluster would leave two of everything running.
 prod-deploy: prod-up

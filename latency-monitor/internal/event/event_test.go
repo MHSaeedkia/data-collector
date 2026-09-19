@@ -43,6 +43,8 @@ type writeLvl struct {
 }
 
 type writeTimes struct {
+	ParseIn         *time.Time `avro:"parse_in"`
+	ParseOut        *time.Time `avro:"parse_out"`
 	PairExtractIn   *time.Time `avro:"pair_extract_in"`
 	PairExtractOut  *time.Time `avro:"pair_extract_out"`
 	TypeValidateIn  *time.Time `avro:"type_validate_in"`
@@ -105,6 +107,8 @@ func snapshotSchema(t *testing.T) (string, avro.Schema) {
 // The captured record the user pasted from ex1-p1-orderbook-snapshot-flink.
 func sampleTimings(t *testing.T) *writeTimes {
 	return &writeTimes{
+		ParseIn:         at(t, "2026-09-14T11:04:26.961Z"),
+		ParseOut:        at(t, "2026-09-14T11:04:26.962Z"),
 		PairExtractIn:   at(t, "2026-09-14T11:04:26.971Z"),
 		PairExtractOut:  at(t, "2026-09-14T11:04:26.972Z"),
 		TypeValidateIn:  at(t, "2026-09-14T11:04:28.569Z"),
@@ -144,12 +148,15 @@ func TestDecodeReadsTimingsFromTheRealSchema(t *testing.T) {
 	assert.Equal(t, "2026-09-14T11:04:26.146Z", rec.ExchangeEventTime.UTC().Format(time.RFC3339Nano))
 
 	stages := rec.Timings.Stages()
-	require.Len(t, stages, 5)
-	assert.Equal(t, "1 pair-extract", stages[0].Name)
+	require.Len(t, stages, 6)
+	assert.Equal(t, "1 parse", stages[0].Name)
 	require.NotNil(t, stages[0].In)
-	assert.Equal(t, "2026-09-14T11:04:26.971Z", stages[0].In.UTC().Format(time.RFC3339Nano))
-	require.NotNil(t, stages[4].Out)
-	assert.Equal(t, "2026-09-14T11:04:33.214Z", stages[4].Out.UTC().Format(time.RFC3339Nano))
+	assert.Equal(t, "2026-09-14T11:04:26.961Z", stages[0].In.UTC().Format(time.RFC3339Nano))
+	assert.Equal(t, "2 pair-extract", stages[1].Name)
+	require.NotNil(t, stages[1].In)
+	assert.Equal(t, "2026-09-14T11:04:26.971Z", stages[1].In.UTC().Format(time.RFC3339Nano))
+	require.NotNil(t, stages[5].Out)
+	assert.Equal(t, "2026-09-14T11:04:33.214Z", stages[5].Out.UTC().Format(time.RFC3339Nano))
 }
 
 // A null exchange clock is the normal state for ex3/ex4 and ex7 updates, so it
@@ -192,10 +199,11 @@ func TestDecodeToleratesPartialTimings(t *testing.T) {
 
 	require.NoError(t, err)
 	stages := rec.Timings.Stages()
-	require.Len(t, stages, 5)
-	assert.NotNil(t, stages[0].In)
-	assert.Nil(t, stages[1].In)
-	assert.Nil(t, stages[4].Out)
+	require.Len(t, stages, 6)
+	assert.Nil(t, stages[0].In, "written before the job-1 split, so no parse stamp")
+	assert.NotNil(t, stages[1].In)
+	assert.Nil(t, stages[2].In)
+	assert.Nil(t, stages[5].Out)
 }
 
 func TestDecodeRejectsANonAvroValue(t *testing.T) {

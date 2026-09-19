@@ -32,6 +32,14 @@
 		},
 		{
 			"type": "java",
+			"name": "flink: job-parser",
+			"request": "launch",
+			"mainClass": "io.tibobit.normalizer.parse.ParserJob",
+			"projectName": "job-parser",
+			"envFile": "${workspaceFolder}/.vscode/flink-local.env"
+		},
+		{
+			"type": "java",
 			"name": "flink: job-pair-extractor",
 			"request": "launch",
 			"mainClass": "io.tibobit.normalizer.pairextract.PairExtractorJob",

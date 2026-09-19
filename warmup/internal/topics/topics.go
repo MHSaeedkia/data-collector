@@ -10,13 +10,15 @@ import (
 	"orderbook-warmup/internal/domain"
 )
 
-// normalizerStages are the raw pipeline's intermediate stages, one per job output.
+// normalizerStages are the raw pipeline's per-(exchange, pair) intermediate stages, one per job
+// output. Job 1's output is NOT here: the parser does not know the pair yet, so it writes one
+// topic per exchange instead — see the ex%d-parsed-flink block below.
 var normalizerStages = []string{
-	"raw-flink",                // job 1 pair-extractor out
-	"type-validated-raw-flink", // job 2 type-validator out
-	"rebased-flink",            // job 3 rebaser        out
-	"applied-precision-flink",  // job 4 precision      out
-	"orderbook-snapshot-flink", // job 5 book-builder   out
+	"raw-flink",                // job 2 pair-extractor out
+	"type-validated-raw-flink", // job 3 type-validator out
+	"rebased-flink",            // job 4 rebaser        out
+	"applied-precision-flink",  // job 5 precision      out
+	"orderbook-snapshot-flink", // job 6 book-builder   out
 }
 
 // Plan lists every topic the pipeline needs, in creation order.
@@ -57,9 +59,15 @@ func Plan(subscriptions []domain.Subscription, r config.Retentions) []domain.Top
 		add(prefix+"-rejected-flink", r.Rejected)
 	}
 
-	// Raw topics — one per exchange (NiFi publishes verbatim exchange payloads here).
+	// Per-exchange topics, both ends of job 1:
+	//   ex{id}-raw           NiFi publishes verbatim exchange payloads here
+	//   ex{id}-parsed-flink  job 1 parser out — parsed, but the pair is still the exchange's
+	//                        own market string, so there is no p{id} segment to put in the name
+	// Created alongside the stage topics above and before the outputs, for the same reason: job
+	// 2's source reads from `latest`.
 	for _, id := range distinct(subs, func(s domain.Subscription) int64 { return s.ExchangeID }) {
 		add(fmt.Sprintf("ex%d-raw", id), r.Raw)
+		add(fmt.Sprintf("ex%d-parsed-flink", id), r.Input)
 	}
 
 	// Output topics — one per pair+side. Three parallel views of the same

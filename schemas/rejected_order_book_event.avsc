@@ -101,6 +101,8 @@
 							"name": "PipelineTimings",
 							"doc": "Per-step latency timings; each job fills its own two fields (null = not yet reached). See memory/project_raw_pipeline_decision.md.",
 							"fields": [
+								{ "name": "parse_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
+								{ "name": "parse_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
 								{ "name": "pair_extract_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
 								{ "name": "pair_extract_out", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },
 								{ "name": "type_validate_in", "type": ["null", { "type": "long", "logicalType": "timestamp-millis" }], "default": null },

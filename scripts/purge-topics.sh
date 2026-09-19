@@ -65,8 +65,10 @@ kafka_run() {
     printf '%s' "$out"
 }
 
-# Must stay in step with warmup.sh's NORMALIZER_STAGES — same duplication, same drift trap
-# as the exporter's copy. A stage missing here is silently NOT purged.
+# Must stay in step with warmup/internal/topics's normalizerStages (the Go tool that replaced
+# warmup.sh) — same duplication, same drift trap as the exporter's copy. A stage missing here is
+# silently NOT purged. Job 1's ex{id}-parsed-flink is not a per-pair stage, so it is in the
+# pattern below rather than in this list.
 NORMALIZER_STAGES=(
     raw-flink
     type-validated-raw-flink
@@ -76,10 +78,10 @@ NORMALIZER_STAGES=(
 )
 stages_alt=$(IFS='|'; echo "${NORMALIZER_STAGES[*]}")
 
-# Every family warmup.sh creates. Matching the live topic list rather than re-deriving from
+# Every family warmup creates. Matching the live topic list rather than re-deriving from
 # postgres is deliberate: it also catches topics for markets that have since been
 # unsubscribed, which are exactly the ones left holding stale data.
-TOPIC_PATTERN="^(control-plane|ex[0-9]+-raw|ex[0-9]+-p[0-9]+-(${stages_alt}|rejected-flink)|p[0-9]+-(asks|bids)(-merged)?)$"
+TOPIC_PATTERN="^(control-plane|ex[0-9]+-raw|ex[0-9]+-parsed-flink|ex[0-9]+-p[0-9]+-(${stages_alt}|rejected-flink)|p[0-9]+-(asks|bids)(-merged)?)$"
 
 step "Preflight"
 log "container=$KAFKA_CONTAINER bootstrap=$KAFKA_BOOTSTRAP dry_run=$DRY_RUN"

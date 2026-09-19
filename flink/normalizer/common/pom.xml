@@ -70,6 +70,7 @@
                                 <resource>
                                     <directory>${project.basedir}/../../../schemas</directory>
                                     <includes>
+                                        <include>parsed_book_event.avsc</include>
                                         <include>raw_order_book_event.avsc</include>
                                         <include>order_book_snapshot.avsc</include>
                                         <include>rejected_order_book_event.avsc</include>

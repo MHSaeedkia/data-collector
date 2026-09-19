@@ -25,6 +25,8 @@ const magicByte = 0x0
 // per job per phase. Null means "not yet reached this stage", so a record read
 // off an early topic has most of them empty — that is data, not an error.
 type Timings struct {
+	ParseIn         *time.Time `avro:"parse_in"`
+	ParseOut        *time.Time `avro:"parse_out"`
 	PairExtractIn   *time.Time `avro:"pair_extract_in"`
 	PairExtractOut  *time.Time `avro:"pair_extract_out"`
 	TypeValidateIn  *time.Time `avro:"type_validate_in"`
@@ -44,18 +46,23 @@ type Stage struct {
 	Out  *time.Time
 }
 
-// Stages returns the five jobs in the order the record passes through them.
+// Stages returns the six jobs in the order the record passes through them.
 // Nil receiver yields nil: a record from a topic with no timings at all.
+//
+// parse was split out of pair-extract on 2026-09-19. The wait rendered in front
+// of pair-extract is therefore the Kafka hop that split introduced — measuring
+// it is why the two got their own field pair instead of sharing one.
 func (t *Timings) Stages() []Stage {
 	if t == nil {
 		return nil
 	}
 	return []Stage{
-		{"1 pair-extract", t.PairExtractIn, t.PairExtractOut},
-		{"2 type-validate", t.TypeValidateIn, t.TypeValidateOut},
-		{"3 rebase", t.RebaseIn, t.RebaseOut},
-		{"4 precision", t.PrecisionIn, t.PrecisionOut},
-		{"5 book-build", t.BookBuildIn, t.BookBuildOut},
+		{"1 parse", t.ParseIn, t.ParseOut},
+		{"2 pair-extract", t.PairExtractIn, t.PairExtractOut},
+		{"3 type-validate", t.TypeValidateIn, t.TypeValidateOut},
+		{"4 rebase", t.RebaseIn, t.RebaseOut},
+		{"5 precision", t.PrecisionIn, t.PrecisionOut},
+		{"6 book-build", t.BookBuildIn, t.BookBuildOut},
 	}
 }
 

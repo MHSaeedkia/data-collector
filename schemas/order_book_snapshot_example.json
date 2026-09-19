@@ -16,6 +16,8 @@
 		{ "price": "62759", "quantity": "0.08", "source_id": "5555aaaa-5555-4555-8555-555555555555" }
 	],
 	"pipeline_timings": {
+		"parse_in": "2026-07-14T06:23:25.131Z",
+		"parse_out": "2026-07-14T06:23:25.133Z",
 		"pair_extract_in": "2026-07-14T06:23:25.140Z",
 		"pair_extract_out": "2026-07-14T06:23:25.142Z",
 		"type_validate_in": "2026-07-14T06:23:25.150Z",
